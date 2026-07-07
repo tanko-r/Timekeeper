@@ -1,7 +1,7 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useAsync, Spinner, ErrorBox, fmtHours, todayStr, addDays,
-  emitToast, BillableBadge, fmtStamp,
+  emitToast, BillableBadge, fmtStamp, Icon,
 } from '/js/ui.js';
 
 export function ExportView({ refreshKey, bumpRefresh }) {
@@ -13,11 +13,16 @@ export function ExportView({ refreshKey, bumpRefresh }) {
     () => api.get(`/api/export/preview?from=${from}&to=${to}&includeDrafts=${includeDrafts ? 1 : 0}`),
     [from, to, includeDrafts, refreshKey]);
 
-  async function doExport() {
+  async function doExport(format) {
     const r = await api.post('/api/export', { from, to, includeDrafts });
     if (r.count === 0) { emitToast('Nothing to export in that range.'); return; }
-    downloadText(`timekeeper-${from}${from !== to ? `_${to}` : ''}.csv`, r.csv);
-    emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'} — CSV downloaded`);
+    const range = `${from}${from !== to ? `_${to}` : ''}`;
+    if (format === 'tim') {
+      downloadText(`time_${range.replace(/-/g, '')}.TIM`, r.tim, 'text/plain');
+    } else {
+      downloadText(`timekeeper-${range}.csv`, r.csv);
+    }
+    emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'} — ${format === 'tim' ? '.TIM' : 'CSV'} downloaded`);
     bumpRefresh();
   }
 
@@ -49,14 +54,17 @@ export function ExportView({ refreshKey, bumpRefresh }) {
           Include drafts
         </label>
         <div class="spacer" style=${{ flex: 1 }}></div>
-        <button class="btn" onClick=${copyText} disabled=${!data || data.count === 0}>📋 Copy text summary</button>
-        <button class="btn btn-primary" onClick=${doExport} disabled=${!data || data.count === 0}>
-          📤 Export CSV${data ? ` (${data.count})` : ''}
+        <button class="btn" onClick=${copyText} disabled=${!data || data.count === 0}>
+          <${Icon} name="clipboard" size=${16} /> Copy text</button>
+        <button class="btn" onClick=${() => doExport('csv')} disabled=${!data || data.count === 0}>
+          <${Icon} name="download" size=${16} /> CSV${data ? ` (${data.count})` : ''}</button>
+        <button class="btn btn-primary" onClick=${() => doExport('tim')} disabled=${!data || data.count === 0}>
+          <${Icon} name="export" size=${16} /> .TIM${data ? ` (${data.count})` : ''}
         </button>
       </div>
       <p class="muted small" style=${{ marginBottom: 0 }}>
-        Only finalized entries export by default. Exporting stamps each entry with an “exported”
-        timestamp — you can re-export any time.
+        Only finalized entries export by default. The .TIM file imports directly into
+        DTE Axiom/TimeSaver (constants in Settings). Exporting stamps each entry — re-export any time.
       </p>
     </div>
 

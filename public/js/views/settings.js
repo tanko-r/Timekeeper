@@ -6,10 +6,77 @@ export function SettingsView({ settings, reloadSettings, authState, reloadAuth }
     <div class="page-head"><h1>Settings</h1></div>
     <div class="grid" style=${{ maxWidth: '760px' }}>
       <${GeneralCard} settings=${settings} reloadSettings=${reloadSettings} />
+      <${AiCard} settings=${settings} reloadSettings=${reloadSettings} />
+      <${TimCard} settings=${settings} reloadSettings=${reloadSettings} />
       <${TaskCodesCard} />
       <${ValidationCard} settings=${settings} reloadSettings=${reloadSettings} />
       <${RemoteCard} authState=${authState} reloadAuth=${reloadAuth} />
       <${BackupCard} settings=${settings} reloadSettings=${reloadSettings} />
+    </div>`;
+}
+
+function AiCard({ settings, reloadSettings }) {
+  const [status, setStatus] = useState(null);
+  const cfg = settings.ai || {};
+  const reload = () => api.get('/api/ai/status').then(setStatus).catch(() => {});
+  useEffect(() => { reload(); }, []);
+
+  // David's picks float to the top of the model list.
+  const preferred = ['gemma4:12b', 'llama3.1:8b'];
+  const models = status
+    ? [...new Set([...preferred.filter((m) => status.models.includes(m)), ...status.models])]
+    : preferred;
+
+  return html`
+    <div class="card">
+      <h2>AI narrative assist</h2>
+      <p class="muted small">
+        Uses a local model through Ollama on this machine — nothing leaves the box.
+        Type a brief description in an entry (or the timer-stop popup) and it drafts the
+        narrative; optionally it splits the time into task lines.
+        ${status ? (status.reachable
+          ? html` <span style=${{ color: 'var(--status-good)' }}>Ollama detected (${status.models.length} models).</span>`
+          : html` <span style=${{ color: 'var(--status-serious)' }}>Ollama not reachable at ${cfg.url}.</span>`) : ''}
+      </p>
+      <div class="row">
+        <label class="checkbox-row">
+          <input type="checkbox" checked=${!!cfg.enabled}
+            onChange=${async (e) => { await save({ ai: { enabled: e.target.checked } }, reloadSettings); reload(); }} />
+          Enable AI assist
+        </label>
+        <${Field} label="Model">
+          <select value=${cfg.model} style=${{ minWidth: '190px' }}
+            onChange=${(e) => save({ ai: { model: e.target.value } }, reloadSettings)}>
+            ${models.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
+          </select>
+        <//>
+        <${Field} label="Ollama URL">
+          <input type="text" defaultValue=${cfg.url} style=${{ minWidth: '220px' }}
+            onBlur=${(e) => save({ ai: { url: e.target.value.trim() } }, reloadSettings).then(reload)} />
+        <//>
+      </div>
+    </div>`;
+}
+
+function TimCard({ settings, reloadSettings }) {
+  const cfg = settings.tim || {};
+  const field = (key, label, hint) => html`
+    <${Field} label=${label} hint=${hint}>
+      <input type="text" defaultValue=${cfg[key] || ''}
+        onBlur=${(e) => save({ tim: { [key]: e.target.value.trim() } }, reloadSettings)} />
+    <//>`;
+  return html`
+    <div class="card">
+      <h2>.TIM export (DTE Axiom / TimeSaver)</h2>
+      <p class="muted small">
+        The Export page can generate a .TIM import file alongside the CSV, using these
+        firm constants on every line.
+      </p>
+      <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+        ${field('email', 'Timekeeper email', 'lmb / op fields')}
+        ${field('timekeeperId', 'Timekeeper ID', 'tk field')}
+        ${field('u2', 'U2 code', '')}
+      </div>
     </div>`;
 }
 
@@ -36,13 +103,6 @@ function GeneralCard({ settings, reloadSettings }) {
         <${Field} label="Daily target (hours)" hint="Colors the calendar and dashboard meter">
           <input type="number" min="0" step="0.5" defaultValue=${s.targets?.dailyHours ?? 8}
             onBlur=${(e) => save({ targets: { dailyHours: Number(e.target.value) || 0 } }, reloadSettings)} />
-        <//>
-        <${Field} label="When a timer stops" hint="Where the time lands">
-          <select value=${s.timerStopAction} onChange=${(e) => save({ timerStopAction: e.target.value }, reloadSettings)}>
-            <option value="ask">Ask me each time</option>
-            <option value="new">Always create a new entry</option>
-            <option value="append">Append to today’s draft for that CM</option>
-          </select>
         <//>
         <${Field} label="Idle timer nudge (hours)" hint="Flag a running timer after this long">
           <input type="number" min="0.5" step="0.5" defaultValue=${s.idleNudgeHours ?? 3}

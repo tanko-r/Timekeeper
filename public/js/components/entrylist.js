@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import {
-  html, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp,
+  html, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
 } from '/js/ui.js';
 
 // Card list of entries with inline actions. onChanged() after any mutation.
@@ -50,8 +50,9 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
               <span class="muted mono small">${e.cm.cm_number}</span>
               <${BillableBadge} billable=${e.billable} />
               <${StatusChip} entry=${e} />
-              ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>📤 exported</span>` : null}
-              ${e.source === 'timer' ? html`<span class="chip" title="Created by a timer">⏱</span>` : null}
+              ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>
+                <${Icon} name="export" size=${12} /> exported</span>` : null}
+              ${e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
             <p class="narrative">${e.narrative || html`<em class="muted">No narrative yet</em>`}</p>
             ${e.tasks.length > 1 ? html`
@@ -65,13 +66,13 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
             <div class="hours">${fmtHours(e.total, increment)}</div>
             <div class="entry-actions">
               ${e.status === 'draft' ? html`
-                <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}>✎</button>
-                <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}>🔒</button>
-                <button class="btn btn-ghost btn-sm" title="Delete" onClick=${() => del(e)}>🗑</button>` : html`
-                <button class="btn btn-ghost btn-sm" title="View" onClick=${() => openEditor({ id: e.id })}>👁</button>
-                <button class="btn btn-ghost btn-sm" title="Unlock" onClick=${() => unlock(e)}>🔓</button>`}
-              <button class="btn btn-ghost btn-sm" title="Copy to date…"
-                onClick=${() => openEditor({ copyFrom: e.id })}>⧉</button>
+                <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}><${Icon} name="edit" size=${16} /></button>
+                <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>
+                <button class="btn btn-ghost btn-sm" title="Delete" onClick=${() => del(e)}><${Icon} name="trash" size=${16} /></button>` : html`
+                <button class="btn btn-ghost btn-sm" title="View" onClick=${() => openEditor({ id: e.id })}><${Icon} name="eye" size=${16} /></button>
+                <button class="btn btn-ghost btn-sm" title="Unlock" onClick=${() => unlock(e)}><${Icon} name="unlock" size=${16} /></button>`}
+              <button class="btn btn-ghost btn-sm" title="Copy to today"
+                onClick=${() => openEditor({ copyFrom: e.id })}><${Icon} name="copy" size=${16} /></button>
             </div>
           </div>
         </div>`)}

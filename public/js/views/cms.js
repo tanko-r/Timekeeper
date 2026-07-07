@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, emitToast, BillableBadge, fmtStamp,
+  html, useState, useAsync, Spinner, ErrorBox, emitToast, BillableBadge, fmtStamp, Icon,
 } from '/js/ui.js';
 import { NewCmModal } from '/js/components/cmpicker.js';
 
@@ -44,7 +44,7 @@ export function CmsView({ refreshKey, bumpRefresh }) {
         <input type="checkbox" checked=${showArchived} onChange=${(e) => setShowArchived(e.target.checked)} />
         Show archived
       </label>
-      <button class="btn btn-primary" onClick=${() => setEditing('new')}>＋ New CM</button>
+      <button class="btn btn-primary" onClick=${() => setEditing('new')}><${Icon} name="plus" size=${16} /> New CM</button>
     </div>
 
     <div class="card" style=${{ marginBottom: '12px' }}>
@@ -70,11 +70,11 @@ export function CmsView({ refreshKey, bumpRefresh }) {
                 <td class="small muted">${cm.last_used_at ? fmtStamp(cm.last_used_at) : '—'}</td>
                 <td>
                   <div class="row" style=${{ gap: '2px', flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
-                    <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => setEditing(cm)}>✎</button>
+                    <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => setEditing(cm)}><${Icon} name="edit" size=${16} /></button>
                     <button class="btn btn-ghost btn-sm" title=${cm.status === 'archived' ? 'Unarchive' : 'Archive'}
-                      onClick=${() => toggleArchive(cm)}>${cm.status === 'archived' ? '📂' : '🗄'}</button>
+                      onClick=${() => toggleArchive(cm)}><${Icon} name=${cm.status === 'archived' ? 'archiveRestore' : 'archive'} size=${16} /></button>
                     <button class="btn btn-ghost btn-sm" title=${cm.entry_count > 0 ? 'Has entries — archive instead' : 'Delete'}
-                      disabled=${cm.entry_count > 0} onClick=${() => del(cm)}>🗑</button>
+                      disabled=${cm.entry_count > 0} onClick=${() => del(cm)}><${Icon} name="trash" size=${16} /></button>
                   </div>
                 </td>
               </tr>`)}

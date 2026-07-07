@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, fmtHours, addDays, todayStr,
+  html, useState, useAsync, Spinner, ErrorBox, fmtHours, addDays, todayStr, Icon,
 } from '/js/ui.js';
 import { nav } from '/js/app.js';
 
@@ -82,9 +82,9 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
 
   return html`
     <div class="page-head">
-      <button class="btn" onClick=${() => shift(-1)}>‹</button>
+      <button class="btn" onClick=${() => shift(-1)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${mode === 'month' ? monthLabel : `Week of ${weekFor(anchor)[0]}`}</h1>
-      <button class="btn" onClick=${() => shift(1)}>›</button>
+      <button class="btn" onClick=${() => shift(1)}><${Icon} name="chevronRight" size=${16} /></button>
       <button class="btn btn-sm" onClick=${() => setAnchor(todayStr())}>Today</button>
       <div class="spacer"></div>
       <div class="row" style=${{ gap: '4px' }}>

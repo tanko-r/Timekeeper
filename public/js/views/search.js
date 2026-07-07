@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours,
-  emitToast, BillableBadge, StatusChip, Modal, Confirm,
+  emitToast, BillableBadge, StatusChip, Modal, Confirm, Icon,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 
@@ -115,10 +115,10 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
     ${selected.size > 0 ? html`
       <div class="card row" style=${{ position: 'sticky', top: '8px', zIndex: 40 }}>
         <strong>${selected.size} selected</strong>
-        <button class="btn btn-sm" onClick=${() => bulk('finalize')}>🔒 Finalize</button>
-        <button class="btn btn-sm" onClick=${() => bulk('unlock')}>🔓 Unlock</button>
-        <button class="btn btn-sm" onClick=${() => setReassigning(true)}>📁 Reassign CM</button>
-        <button class="btn btn-sm btn-danger" onClick=${() => bulk('delete')}>🗑 Delete</button>
+        <button class="btn btn-sm" onClick=${() => bulk('finalize')}><${Icon} name="lock" size=${14} /> Finalize</button>
+        <button class="btn btn-sm" onClick=${() => bulk('unlock')}><${Icon} name="unlock" size=${14} /> Unlock</button>
+        <button class="btn btn-sm" onClick=${() => setReassigning(true)}><${Icon} name="briefcase" size=${14} /> Reassign CM</button>
+        <button class="btn btn-sm btn-danger" onClick=${() => bulk('delete')}><${Icon} name="trash" size=${14} /> Delete</button>
       </div>` : null}
 
     ${error ? html`<${ErrorBox} error=${error} />` : loading && !data ? html`<${Spinner} />` : html`

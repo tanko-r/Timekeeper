@@ -1,6 +1,6 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm,
+  html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
@@ -58,27 +58,28 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     <div class="page-head">
       <h1>${fmtDateLong(d.date)}</h1>
       <div class="spacer"></div>
-      <button class="btn" onClick=${finalizeToday}>🔒 Finalize today</button>
-      <button class="btn" onClick=${exportToday}>📤 Export today</button>
-      <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>＋ New entry (n)</button>
+      <button class="btn" onClick=${finalizeToday}><${Icon} name="lock" size=${16} /> Finalize today</button>
+      <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export today</button>
+      <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
+        <${Icon} name="plus" size=${16} /> New entry (n)</button>
     </div>
 
     ${hasAlerts ? html`
       <div class="alert-banner" style=${{ marginBottom: '14px' }}>
         <div class="row">
-          <strong>Needs attention:</strong>
+          <strong><${Icon} name="alert" size=${16} /> Needs attention:</strong>
           ${alerts.invalidDrafts.map((a) => html`
             <button key=${a.id} class="alert-pill" title=${a.codes.join(', ')}
               onClick=${() => openEditor({ id: a.id })}>
-              ✍️ ${a.short_name} — ${a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
+              ${a.short_name} — ${a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
             </button>`)}
           ${alerts.backlogCount > 0 ? html`
             <button class="alert-pill" onClick=${() => nav('#/search')}>
-              📚 ${alerts.backlogCount} older draft${alerts.backlogCount === 1 ? '' : 's'} need review
+              ${alerts.backlogCount} older draft${alerts.backlogCount === 1 ? '' : 's'} need review
             </button>` : null}
           ${alerts.unexportedFinalized > 0 ? html`
             <button class="alert-pill" onClick=${() => nav('#/export')}>
-              📤 ${alerts.unexportedFinalized} finalized ${alerts.unexportedFinalized === 1 ? 'entry' : 'entries'} not yet exported
+              ${alerts.unexportedFinalized} finalized ${alerts.unexportedFinalized === 1 ? 'entry' : 'entries'} not yet exported
             </button>` : null}
         </div>
       </div>` : null}
@@ -88,7 +89,6 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <${TargetMeter} billable=${d.today.billable} nonbillable=${d.today.nonbillable} target=${d.today.target} />
     </div>
 
-    <div class="section-title"><h2>Timers</h2></div>
     <${TimerGrid} settings=${settings} onEntryChanged=${bumpRefresh} openEditor=${openEditor} />
 
     <div class="section-title">

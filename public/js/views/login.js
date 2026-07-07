@@ -1,5 +1,5 @@
 import { api } from '/js/api.js';
-import { html, useState, Field } from '/js/ui.js';
+import { html, useState, Field, Icon } from '/js/ui.js';
 
 export function LoginView({ passwordSet, onLogin }) {
   const [password, setPassword] = useState('');
@@ -25,7 +25,7 @@ export function LoginView({ passwordSet, onLogin }) {
   if (!passwordSet) {
     return html`
       <div class="login-wrap"><div class="card login-card">
-        <div class="brand">⏱ Time<span>keeper</span></div>
+        <div class="brand"><${Icon} name="timer" size=${22} /> Time<span>keeper</span></div>
         <p>Remote access is disabled until a password is set.</p>
         <p class="muted small">Open Timekeeper from your home network and set one under
           Settings → Remote access.</p>
@@ -34,7 +34,7 @@ export function LoginView({ passwordSet, onLogin }) {
 
   return html`
     <div class="login-wrap"><div class="card login-card">
-      <div class="brand">⏱ Time<span>keeper</span></div>
+      <div class="brand"><${Icon} name="timer" size=${22} /> Time<span>keeper</span></div>
       <p class="muted small">You’re connecting remotely — enter your app password.</p>
       <form onSubmit=${submit}>
         <${Field} label="Password">

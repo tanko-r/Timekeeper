@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  addDays, todayStr, emitToast, Confirm,
+  addDays, todayStr, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { nav } from '/js/app.js';
@@ -48,14 +48,14 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
 
   return html`
     <div class="page-head">
-      <button class="btn" title="Previous day ([)" onClick=${() => nav(`#/day/${addDays(day, -1)}`)}>‹</button>
+      <button class="btn" title="Previous day ([)" onClick=${() => nav(`#/day/${addDays(day, -1)}`)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${fmtDateLong(day)}</h1>
-      <button class="btn" title="Next day (])" onClick=${() => nav(`#/day/${addDays(day, 1)}`)}>›</button>
+      <button class="btn" title="Next day (])" onClick=${() => nav(`#/day/${addDays(day, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
       ${day !== todayStr() ? html`<button class="btn btn-sm" onClick=${() => nav(`#/day/${todayStr()}`)}>Today</button>` : null}
       <div class="spacer"></div>
       <span class="muted">${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
-      <button class="btn" onClick=${finalizeDay}>🔒 Finalize day</button>
-      <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}>＋ Entry</button>
+      <button class="btn" onClick=${finalizeDay}><${Icon} name="lock" size=${16} /> Finalize day</button>
+      <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}><${Icon} name="plus" size=${16} /> Entry</button>
     </div>
     ${loading && !data ? html`<${Spinner} />` : html`
       <${EntryList} entries=${entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />`}

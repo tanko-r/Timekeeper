@@ -59,7 +59,6 @@ const clickText = async (selector, text) => {
   await page.waitForFunction((sel, t) =>
     [...document.querySelectorAll(sel)].some((el) => el.textContent.trim().includes(t)),
   { timeout: 5000 }, selector, text);
-  // Real mouse events — components may listen on mousedown, not click.
   const box = await page.evaluate((sel, t) => {
     const el = [...document.querySelectorAll(sel)].find((x) => x.textContent.trim().includes(t));
     el.scrollIntoView({ block: 'center' });
@@ -72,21 +71,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 console.log(`E2E against ${base}`);
 
-await step('app shell renders (dashboard)', async () => {
+await step('app shell renders (dashboard, SVG icons)', async () => {
   await page.goto(base, { waitUntil: 'networkidle0' });
-  await waitFor('.sidebar .brand');
+  await waitFor('.sidebar .brand svg');
   await waitFor('.timer-new');
 });
 
-await step('create CM through picker in new-entry editor', async () => {
+await step('create CM through picker inside the editor (portal modals)', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');
   await type('.modal .cmpicker input', '100001-000012');
   await clickText('.cmpicker-item .name', 'New client/matter');
-  await waitFor('.modal .modal input[placeholder="000000-000000"]', 3000).catch(() => {});
-  // NewCmModal fields
-  const nameInput = await page.$$eval('.modal', (ms) => ms.length);
-  if (nameInput < 2) throw new Error('CM modal did not open');
+  await page.waitForFunction(() => document.querySelectorAll('.modal').length >= 2, { timeout: 4000 });
   await page.evaluate(() => {
     const modal = [...document.querySelectorAll('.modal')].pop();
     const inputs = modal.querySelectorAll('input[type="text"]');
@@ -97,24 +93,35 @@ await step('create CM through picker in new-entry editor', async () => {
   await sleep(400);
 });
 
-await step('fill entry: task line + narrative autosaves', async () => {
+await step('entry: total + task line + narrative autosave, allocation chip', async () => {
+  // total drives the single line
+  await page.evaluate(() => {
+    const modal = document.querySelector('.modal-wide');
+    const total = modal.querySelector('.total-input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(total, '1.2');
+    total.dispatchEvent(new Event('input', { bubbles: true }));
+  });
   await page.evaluate(() => {
     const modal = document.querySelector('.modal-wide');
     const select = modal.querySelector('.task-line select');
     select.value = 'Review';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await page.evaluate(() => {
-    const modal = document.querySelector('.modal-wide');
-    const num = modal.querySelector('.task-line input[type="number"]');
-    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-    set.call(num, '1.2');
-    num.dispatchEvent(new Event('input', { bubbles: true }));
-  });
   await page.type('.modal-wide textarea', 'Reviewed lease agreement and drafted renewal-terms summary for client.');
   await page.waitForFunction(
     () => document.querySelector('.saving-dot')?.textContent.includes('Saved'),
     { timeout: 6000 });
+  // second line defaults to the remainder → allocation stays clean
+  await clickText('.modal-wide button', 'Add task line');
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
+  const lineVal = await page.$eval('.modal-wide .task-line:nth-of-type(2) input[type="number"]',
+    (el) => el.value);
+  if (Number(lineVal) !== 0) throw new Error(`remainder default wrong: ${lineVal}`);
+  await page.evaluate(() => { // remove it again
+    [...document.querySelectorAll('.modal-wide .task-line')][1]
+      .querySelector('button[title="Remove line"]').click();
+  });
   await shot('editor');
 });
 
@@ -127,30 +134,97 @@ await step('dashboard shows the entry and meter', async () => {
   await page.waitForFunction(
     () => document.body.textContent.includes('Acme lease dispute'), { timeout: 5000 });
   await waitFor('.meter-bar');
-  await shot('dashboard');
 });
 
-await step('create + start + stop a timer (new entry)', async () => {
+await step('create timer; sub-increment stop keeps the clock', async () => {
   await page.click('.timer-new');
   await type('.modal input[placeholder="e.g. Acme — research"]', 'Acme research');
   await page.click('.modal .cmpicker input');
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Acme');
   await clickText('.modal button', 'Create');
-  await sleep(300);
-  await clickText('.timer-card button', 'Start');
-  await sleep(1500);
-  await clickText('.timer-card button', 'Stop');
-  await sleep(600); // under increment → discard toast, clock reset
-  const clock = await page.$eval('.timer-clock', (el) => el.textContent);
-  if (!/00:0[01]/.test(clock)) throw new Error(`clock not reset: ${clock}`);
+  await waitFor('.timer-card');
+  await page.click('.timer-card button[title="Start"]');
+  await sleep(1400);
+  await page.click('.timer-card button[title="Stop & file time"]');
+  await sleep(500);
+  const clock = await page.$eval('.timer-clock', (el) => el.textContent.trim());
+  if (clock !== '0.0') throw new Error(`expected 0.0 tenths, got ${clock}`);
+  const sub = await page.$eval('.timer-sub .mono', (el) => el.textContent.trim());
+  if (!/00:0[12]/.test(sub)) throw new Error(`sub-clock lost the seconds: ${sub}`);
+});
+
+await step('context menu: backdated start (10m ago) → stop → narrative popup', async () => {
+  await page.click('.timer-card button[title="Timer menu"]');
+  await waitFor('.ctx-menu');
+  await clickText('.ctx-menu .ctx-inline button', '10m');
+  await page.waitForFunction(() => document.querySelector('.timer-card.running'), { timeout: 4000 });
+  await page.click('.timer-card button[title="Stop & file time"]');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.modal')].some((m) => m.textContent.includes('filed')),
+    { timeout: 5000 });
+  await page.type('.modal textarea', 'Legal research regarding lease renewal options and notice deadlines.');
+  await shot('stop-popup');
+  await clickText('.modal button', 'Done');
+  await sleep(500);
+  const entries = await page.$$eval('.entry-card', (els) => els.length);
+  if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);
+});
+
+await step('timer clock is editable in place', async () => {
+  await page.click('.timer-clock');
+  await waitFor('.clock-input');
+  await page.evaluate(() => {
+    const inp = document.querySelector('.clock-input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(inp, '1.4');
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(
+    () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
+    { timeout: 4000 });
+});
+
+await step('groups: create, assign via menu, collapse; A-Z present', async () => {
+  await clickText('button', 'New group');
+  await type('.modal input[placeholder="e.g. Litigation"]', 'Litigation');
+  await clickText('.modal button', 'Create');
+  await page.waitForFunction(() => document.body.textContent.includes('Litigation'), { timeout: 4000 });
+
+  await page.click('.timer-card button[title="Timer menu"]');
+  await waitFor('.ctx-menu select');
+  await page.evaluate(() => {
+    const sel = document.querySelector('.ctx-menu select');
+    sel.value = sel.querySelector('option:not([value=""])').value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForFunction(() => {
+    const sections = [...document.querySelectorAll('.timer-section')];
+    const lit = sections.find((s) => s.textContent.includes('Litigation'));
+    return lit && lit.querySelector('.timer-card');
+  }, { timeout: 4000 });
+
+  // collapse hides the cards
+  await page.evaluate(() => {
+    const head = [...document.querySelectorAll('.group-head')].find((h) => h.textContent.includes('Litigation'));
+    head.querySelector('button').click();
+  });
+  await page.waitForFunction(() => {
+    const sections = [...document.querySelectorAll('.timer-section')];
+    const lit = sections.find((s) => s.textContent.includes('Litigation'));
+    return lit && !lit.querySelector('.timer-card');
+  }, { timeout: 4000 });
+  await shot('groups');
+
+  const az = await page.$$eval('button', (els) => els.some((b) => b.textContent.includes('A–Z')));
+  if (!az) throw new Error('A–Z button missing');
 });
 
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');
   await page.waitForFunction(() => document.querySelectorAll('.cal-day').length === 42);
-  await shot('calendar');
 });
 
 await step('search finds the entry', async () => {
@@ -160,21 +234,25 @@ await step('search finds the entry', async () => {
     () => document.querySelectorAll('table.tk tbody tr').length >= 1
       && document.body.textContent.includes('Acme'),
     { timeout: 5000 });
-  await shot('search');
 });
 
 await step('stats renders bars', async () => {
   await page.goto(`${base}/#/stats`, { waitUntil: 'networkidle0' });
   await waitFor('.stat-tiles');
   await waitFor('.bar-row');
-  await shot('stats');
 });
 
-await step('export preview + settings render', async () => {
+await step('export view offers CSV, .TIM, and text', async () => {
   await page.goto(`${base}/#/export`, { waitUntil: 'networkidle0' });
-  await page.waitForFunction(() => document.body.textContent.includes('Export CSV'));
+  await page.waitForFunction(() => document.body.textContent.includes('.TIM'));
+  await page.waitForFunction(() => document.body.textContent.includes('CSV'));
   await shot('export');
+});
+
+await step('settings shows AI + .TIM cards', async () => {
   await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.body.textContent.includes('AI narrative assist'));
+  await page.waitForFunction(() => document.body.textContent.includes('.TIM export'));
   await page.waitForFunction(() => document.body.textContent.includes('Task codes'));
   await shot('settings');
 });
@@ -193,7 +271,6 @@ server.close();
 db.close();
 rmSync(dir, { recursive: true, force: true });
 
-// Benign noise filter: favicon fetch etc.
 const real = problems.filter((p) => !p.includes('favicon'));
 if (real.length) {
   console.error(`\nE2E PROBLEMS (${real.length}):`);

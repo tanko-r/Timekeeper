@@ -1,5 +1,5 @@
 import { api } from '/js/api.js';
-import { html, React, useState, useEffect, useCallback, Spinner } from '/js/ui.js';
+import { html, React, useState, useEffect, useCallback, Spinner, Icon } from '/js/ui.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
 import { DayView } from '/js/views/day.js';
@@ -26,13 +26,13 @@ export function nav(to) {
 }
 
 const NAV = [
-  ['dashboard', 'Dashboard', '⏱'],
-  ['calendar', 'Calendar', '📅'],
-  ['search', 'Search', '🔎'],
-  ['stats', 'Stats', '📊'],
-  ['cms', 'Clients/Matters', '📁'],
-  ['export', 'Export', '📤'],
-  ['settings', 'Settings', '⚙️'],
+  ['dashboard', 'Dashboard', 'layout'],
+  ['calendar', 'Calendar', 'calendar'],
+  ['search', 'Search', 'search'],
+  ['stats', 'Stats', 'stats'],
+  ['cms', 'Clients/Matters', 'briefcase'],
+  ['export', 'Export', 'export'],
+  ['settings', 'Settings', 'settings'],
 ];
 
 // ---------- theme ----------
@@ -216,12 +216,12 @@ function App() {
   return html`
     <div class="shell">
       <nav class="sidebar">
-        <div class="brand">⏱ Time<span>keeper</span></div>
+        <div class="brand"><${Icon} name="timer" size=${21} /> Time<span>keeper</span></div>
         ${NAV.map(([path, label, icon]) => html`
           <button key=${path}
             class=${'navlink' + (active === path ? ' active' : '')}
             onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
-            <span>${icon}</span> ${label}
+            <${Icon} name=${icon} size=${18} /> ${label}
           </button>`)}
         <div class="foot">Press <kbd>?</kbd> for shortcuts</div>
       </nav>
