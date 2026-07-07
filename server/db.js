@@ -98,6 +98,18 @@ const MIGRATIONS = [
     ('Travel', 7), ('Court Appearance', 8), ('Due Diligence', 9),
     ('Closing', 10);
   `,
+  // v2 — timer groups + day-accumulator timer model (round 2)
+  `
+  CREATE TABLE timer_groups (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    collapsed  INTEGER NOT NULL DEFAULT 0
+  );
+  ALTER TABLE timers ADD COLUMN group_id INTEGER REFERENCES timer_groups(id);
+  ALTER TABLE timers ADD COLUMN linked_entry_id INTEGER;
+  ALTER TABLE timers ADD COLUMN last_stopped_at TEXT;
+  `,
 ];
 
 const SEED_SETTINGS = {
@@ -109,11 +121,14 @@ const SEED_SETTINGS = {
   },
   rounding: { enabled: true, increment: 0.1, mode: 'nearest' },
   targets: { dailyHours: 8.0 },
-  timerStopAction: 'ask',
   idleNudgeHours: 3,
   backup: { keep: 14 },
   auth: { mode: 'remote-only' },
   theme: 'auto',
+  // Local-LLM narrative assist (Ollama). Off until enabled in Settings.
+  ai: { enabled: false, model: 'llama3.1:8b', url: 'http://127.0.0.1:11434' },
+  // DTE Axiom / Intapp TimeSaver .TIM export constants (from David's prototype).
+  tim: { email: 'TIMEKEEPER@EXAMPLE.COM', timekeeperId: '1001', u2: 'GEN01' },
 };
 
 export function openDb(dbPath) {

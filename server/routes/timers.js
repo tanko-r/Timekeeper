@@ -1,28 +1,76 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
-import { todayLocal } from '../lib/dates.js';
+import { todayLocal, localMidnightMs } from '../lib/dates.js';
 import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
-import { loadEntry, syncNarrative, enrich } from './entries.js';
+import { loadEntry, syncNarrative } from './entries.js';
 
-const TIMER_COLS = 'id, name, cm_id, task_code, sort_order, running, accumulated_seconds, last_started_at, last_reset_date, created_at';
+// Round-2 timer model: the clock accumulates for the whole day across
+// start/stops. Each stop syncs the day total into ONE linked draft entry.
+// "fresh" zeroes the clock and unlinks so later time files to a new entry.
+
+const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
+  accumulated_seconds, last_started_at, last_reset_date, created_at,
+  group_id, linked_entry_id, last_stopped_at`;
+
+const TENTH_SECONDS = 360;
+
+function roundingCfg(db) {
+  return getSetting(db, 'rounding') || {};
+}
 
 function minIncrement(db) {
   return (getSetting(db, 'validation') || {}).minIncrement || 0.1;
 }
 
-// Create a draft entry from timer output (used by stop→new and midnight banking).
-export function createTimerEntry(db, timer, date, hours, nowIso) {
-  const cm = db.prepare('SELECT id, billable FROM cms WHERE id=?').get(timer.cm_id);
-  const info = db.prepare(`INSERT INTO entries
-    (date, cm_id, narrative, billable, status, source, created_at, updated_at)
-    VALUES (?, ?, '', ?, 'draft', 'timer', ?, ?)`)
-    .run(date, timer.cm_id, cm ? cm.billable : 1, nowIso, nowIso);
-  db.prepare(
-    'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
-  ).run(info.lastInsertRowid, timer.task_code || '', hours, '');
-  db.prepare('UPDATE cms SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
-  return info.lastInsertRowid;
+// File `hours` into the timer's linked entry for `dateStr`, creating and
+// (re)linking as needed. Returns { entryId, relinked, previousTotal }.
+function syncToEntry(db, timer, hours, dateStr, nowIso) {
+  let relinked = false;
+  let previousTotal = null;
+  let entry = null;
+  if (timer.linked_entry_id) {
+    entry = db.prepare(
+      'SELECT id, cm_id, date, status, deleted_at, total_override FROM entries WHERE id=?'
+    ).get(timer.linked_entry_id);
+    const valid = entry && !entry.deleted_at && entry.status === 'draft'
+      && entry.date === dateStr && entry.cm_id === timer.cm_id;
+    if (!valid) {
+      relinked = !!entry;
+      previousTotal = entry ? entry.total_override : null;
+      entry = null;
+    }
+  }
+
+  let entryId;
+  db.transaction(() => {
+    if (entry) {
+      db.prepare('UPDATE entries SET total_override=?, updated_at=? WHERE id=?')
+        .run(hours, nowIso, entry.id);
+      const lines = db.prepare(
+        'SELECT id FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entry.id);
+      if (lines.length === 1) {
+        // single line mirrors the total; user-added splits are left alone
+        db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?').run(hours, lines[0].id);
+      }
+      syncNarrative(db, entry.id);
+      entryId = entry.id;
+    } else {
+      const cm = db.prepare('SELECT id, billable FROM cms WHERE id=?').get(timer.cm_id);
+      const info = db.prepare(`INSERT INTO entries
+        (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
+        VALUES (?, ?, '', ?, 'draft', ?, 'timer', ?, ?)`)
+        .run(dateStr, timer.cm_id, cm ? cm.billable : 1, hours, nowIso, nowIso);
+      db.prepare(
+        'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
+      ).run(info.lastInsertRowid, timer.task_code || '', hours, '');
+      entryId = info.lastInsertRowid;
+      db.prepare('UPDATE timers SET linked_entry_id=? WHERE id=?').run(entryId, timer.id);
+    }
+    db.prepare('UPDATE cms SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
+  })();
+
+  return { entryId, relinked, previousTotal };
 }
 
 // Lazy midnight reset — safe to call on every request; no-op when up to date.
@@ -30,23 +78,21 @@ export function applyRollovers(db, clock) {
   const today = todayLocal(clock());
   const stale = db.prepare(`SELECT ${TIMER_COLS} FROM timers WHERE last_reset_date < ?`).all(today);
   if (stale.length === 0) return;
-  const rounding = getSetting(db, 'rounding') || {};
+  const rounding = roundingCfg(db);
   const minInc = minIncrement(db);
   const nowIso = clock().toISOString();
-  db.transaction(() => {
-    for (const timer of stale) {
-      const r = rollover(timer, today);
-      const hours = secondsToHours(r.bankSeconds, rounding);
-      if (hours >= minInc - 1e-9 && hours > 0) {
-        createTimerEntry(db, timer, r.bankDate, hours, nowIso);
-      } else if (r.bankSeconds > 0) {
-        console.log(`timer ${timer.id} (${timer.name}): dropped ${r.bankSeconds}s below minimum increment at midnight reset`);
-      }
-      db.prepare(
-        'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_reset_date=? WHERE id=?'
-      ).run(timer.running ? r.restartIso : null, today, timer.id);
+  for (const timer of stale) {
+    const r = rollover(timer, today);
+    const hours = secondsToHours(r.bankSeconds, rounding);
+    if (hours >= minInc - 1e-9 && hours > 0) {
+      syncToEntry(db, timer, hours, r.bankDate, nowIso);
+    } else if (r.bankSeconds > 0) {
+      console.log(`timer ${timer.id} (${timer.name}): dropped ${r.bankSeconds}s below minimum increment at midnight reset`);
     }
-  })();
+    db.prepare(
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_reset_date=?, linked_entry_id=NULL WHERE id=?'
+    ).run(timer.running ? r.restartIso : null, today, timer.id);
+  }
 }
 
 export function timersRouter({ db, clock }) {
@@ -56,13 +102,14 @@ export function timersRouter({ db, clock }) {
 
   const withElapsed = (t) => ({ ...t, elapsed_seconds: elapsedSeconds(t, clock().getTime()) });
 
+  const listStmt = () => db.prepare(`SELECT ${TIMER_COLS},
+      (SELECT cm_number FROM cms WHERE cms.id = timers.cm_id) AS cm_number,
+      (SELECT short_name FROM cms WHERE cms.id = timers.cm_id) AS cm_short_name
+    FROM timers ORDER BY sort_order, id`);
+
   r.get('/', (req, res) => {
     applyRollovers(db, clock);
-    const rows = db.prepare(`SELECT ${TIMER_COLS},
-        (SELECT cm_number FROM cms WHERE cms.id = timers.cm_id) AS cm_number,
-        (SELECT short_name FROM cms WHERE cms.id = timers.cm_id) AS cm_short_name
-      FROM timers ORDER BY sort_order, id`).all();
-    res.json(rows.map(withElapsed));
+    res.json(listStmt().all().map(withElapsed));
   });
 
   r.post('/', (req, res) => {
@@ -71,10 +118,14 @@ export function timersRouter({ db, clock }) {
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cm = db.prepare('SELECT id FROM cms WHERE id=?').get(b.cm_id);
     if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
+    if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
+      return res.status(400).json({ error: 'Unknown group.' });
+    }
     const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
     const info = db.prepare(
-      'INSERT INTO timers (name, cm_id, task_code, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(name, cm.id, b.task_code ? String(b.task_code) : null, max + 1, todayLocal(clock()), now());
+      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(name, cm.id, b.task_code ? String(b.task_code) : null,
+      b.group_id ?? null, max + 1, todayLocal(clock()), now());
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
   });
 
@@ -93,12 +144,18 @@ export function timersRouter({ db, clock }) {
     if (b.cm_id !== undefined && !db.prepare('SELECT id FROM cms WHERE id=?').get(b.cm_id)) {
       return res.status(400).json({ error: 'Unknown CM.' });
     }
+    if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
+      return res.status(400).json({ error: 'Unknown group.' });
+    }
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=? WHERE id=?').run(
+    const cmChanged = b.cm_id !== undefined && b.cm_id !== timer.cm_id;
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
+      b.group_id !== undefined ? b.group_id : timer.group_id,
+      cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       timer.id);
     res.json(withElapsed(getTimer.get(timer.id)));
   });
@@ -110,15 +167,47 @@ export function timersRouter({ db, clock }) {
     res.json({ ok: true });
   });
 
+  r.post('/:id/duplicate', (req, res) => {
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
+    const info = db.prepare(
+      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(`${timer.name} (copy)`, timer.cm_id, timer.task_code, timer.group_id,
+      max + 1, todayLocal(clock()), now());
+    res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
+  });
+
   r.post('/:id/start', (req, res) => {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    const b = req.body || {};
+    const backdated = b.minutesAgo != null || b.atLastStop;
+
+    if (timer.running) {
+      if (backdated) {
+        return res.status(409).json({ error: 'Timer is already running — pause it before a backdated start.' });
+      }
+    } else {
+      let startMs = clock().getTime();
+      if (b.atLastStop && timer.last_stopped_at) {
+        startMs = Date.parse(timer.last_stopped_at);
+      } else if (b.minutesAgo != null) {
+        const mins = Number(b.minutesAgo);
+        if (!Number.isFinite(mins) || mins < 0 || mins > 24 * 60) {
+          return res.status(400).json({ error: 'minutesAgo must be 0–1440.' });
+        }
+        startMs = clock().getTime() - mins * 60_000;
+      }
+      // never reach behind today's midnight — yesterday is banked and closed
+      startMs = Math.max(startMs, localMidnightMs(todayLocal(clock())));
+      db.prepare('UPDATE timers SET running=1, last_started_at=? WHERE id=?')
+        .run(new Date(startMs).toISOString(), timer.id);
+    }
+
     const others = db.prepare(
       'SELECT name FROM timers WHERE running=1 AND id != ?').all(timer.id).map((t) => t.name);
-    if (!timer.running) {
-      db.prepare('UPDATE timers SET running=1, last_started_at=? WHERE id=?').run(now(), timer.id);
-    }
     const out = { timer: withElapsed(getTimer.get(timer.id)) };
     if (others.length > 0) {
       out.warning = `${others.join(', ')} ${others.length === 1 ? 'is' : 'are'} also running.`;
@@ -126,95 +215,127 @@ export function timersRouter({ db, clock }) {
     res.json(out);
   });
 
-  r.post('/:id/pause', (req, res) => {
-    applyRollovers(db, clock);
-    const timer = getTimer.get(req.params.id);
-    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
-    pauseTimer(timer);
-    res.json({ timer: withElapsed(getTimer.get(timer.id)) });
-  });
-
-  r.get('/:id/stop-context', (req, res) => {
-    applyRollovers(db, clock);
-    const timer = getTimer.get(req.params.id);
-    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
-    const seconds = elapsedSeconds(timer, clock().getTime());
-    const rounding = getSetting(db, 'rounding') || {};
-    const drafts = db.prepare(
-      "SELECT id FROM entries WHERE cm_id=? AND date=? AND status='draft' AND deleted_at IS NULL ORDER BY id DESC"
-    ).all(timer.cm_id, todayLocal(clock()));
-    res.json({
-      timer: withElapsed(timer),
-      hours_preview: secondsToHours(seconds, rounding),
-      todayDrafts: drafts.map((d) => loadEntry(db, d.id)),
-    });
-  });
-
+  // Stop = pause + file the day total into the linked entry (create/relink as
+  // needed). Never zeroes the clock; sub-increment totals just wait for more.
   r.post('/:id/stop', (req, res) => {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
-    const b = req.body || {};
+
     const seconds = elapsedSeconds(timer, clock().getTime());
-    const rounding = getSetting(db, 'rounding') || {};
-    const hours = secondsToHours(seconds, rounding);
-    const banking = hours >= minIncrement(db) - 1e-9 && hours > 0;
+    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
+      .run(seconds, now(), timer.id);
 
-    // Resolve and validate the append target BEFORE touching the clock —
-    // an error here must never destroy accrued time.
-    let target = null;
-    if (banking && b.action === 'append') {
-      if (b.entry_id) {
-        target = db.prepare(
-          'SELECT id, cm_id, status, deleted_at FROM entries WHERE id=?').get(b.entry_id);
-        if (!target || target.deleted_at) {
-          return res.status(400).json({ error: 'Target entry not found — timer left untouched.' });
-        }
-        if (target.status === 'finalized') {
-          return res.status(409).json({ error: 'Target entry is finalized — unlock it or stop to a new entry. Timer left untouched.' });
-        }
-        if (target.cm_id !== timer.cm_id) {
-          return res.status(400).json({ error: 'Target entry belongs to a different CM — timer left untouched.' });
-        }
-      } else {
-        target = db.prepare(
-          "SELECT id FROM entries WHERE cm_id=? AND date=? AND status='draft' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1"
-        ).get(timer.cm_id, todayLocal(clock()));
-      }
+    const hours = secondsToHours(seconds, roundingCfg(db));
+    if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
+      return res.json({ entry: null, hours: 0, seconds, timer: withElapsed(getTimer.get(timer.id)) });
     }
-
-    // Zero the clock and file the time atomically.
-    let entryId = null;
-    let appended = false;
-    db.transaction(() => {
-      db.prepare('UPDATE timers SET running=0, accumulated_seconds=0, last_started_at=NULL WHERE id=?')
-        .run(timer.id);
-      if (!banking) return;
-      if (target) {
-        const maxOrder = db.prepare(
-          'SELECT COALESCE(MAX(sort_order), -1) m FROM entry_tasks WHERE entry_id=?').get(target.id).m;
-        db.prepare(
-          'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, ?)'
-        ).run(target.id, timer.task_code || '', hours, '', maxOrder + 1);
-        db.prepare('UPDATE entries SET updated_at=? WHERE id=?').run(now(), target.id);
-        syncNarrative(db, target.id);
-        entryId = target.id;
-        appended = true;
-      } else {
-        entryId = createTimerEntry(db, timer, todayLocal(clock()), hours, now());
-      }
-    })();
-
-    if (!banking) return res.json({ entry: null, hours: 0, seconds });
-    res.json({ entry: loadEntry(db, entryId), hours, seconds, appended });
+    const synced = syncToEntry(db, getTimer.get(timer.id), hours, todayLocal(clock()), now());
+    res.json({
+      entry: loadEntry(db, synced.entryId),
+      hours,
+      seconds,
+      relinked: synced.relinked || undefined,
+      previousTotal: synced.previousTotal ?? undefined,
+      timer: withElapsed(getTimer.get(timer.id)),
+    });
   });
 
-  function pauseTimer(timer) {
-    if (!timer.running) return;
-    const secs = elapsedSeconds(timer, clock().getTime());
-    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL WHERE id=?')
-      .run(secs, timer.id);
-  }
+  // Zero the clock and unlink — the next stop files a brand-new entry.
+  r.post('/:id/fresh', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    db.prepare(
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
+    ).run(timer.running ? now() : null, timer.id);
+    res.json({ timer: withElapsed(getTimer.get(timer.id)) });
+  });
+
+  // Edit the clock: {hours} sets it, {deltaHours} nudges it. Tenths only.
+  // While paused and linked, the entry follows immediately.
+  r.put('/:id/clock', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    const b = req.body || {};
+    const current = elapsedSeconds(timer, clock().getTime());
+    let target;
+    if (b.hours !== undefined) {
+      const h = Number(b.hours);
+      if (!Number.isFinite(h) || h < 0 || h > 24) {
+        return res.status(400).json({ error: 'hours must be 0–24.' });
+      }
+      target = h * 3600;
+    } else if (b.deltaHours !== undefined) {
+      const d = Number(b.deltaHours);
+      if (!Number.isFinite(d)) return res.status(400).json({ error: 'deltaHours must be a number.' });
+      target = current + d * 3600;
+    } else {
+      return res.status(400).json({ error: 'Provide hours or deltaHours.' });
+    }
+    const snapped = Math.max(0, Math.round(target / TENTH_SECONDS) * TENTH_SECONDS);
+
+    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?')
+      .run(snapped, timer.running ? now() : null, timer.id);
+
+    let entry = null;
+    const fresh = getTimer.get(timer.id);
+    const hours = secondsToHours(snapped, roundingCfg(db));
+    if (!fresh.running && fresh.linked_entry_id && hours >= minIncrement(db) - 1e-9) {
+      const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
+      entry = loadEntry(db, synced.entryId);
+    }
+    res.json({ timer: withElapsed(getTimer.get(timer.id)), entry });
+  });
+
+  return r;
+}
+
+export function timerGroupsRouter({ db }) {
+  const r = Router();
+  const get = db.prepare('SELECT id, name, sort_order, collapsed FROM timer_groups WHERE id=?');
+
+  r.get('/', (req, res) => {
+    res.json(db.prepare('SELECT id, name, sort_order, collapsed FROM timer_groups ORDER BY sort_order, id').all());
+  });
+
+  r.post('/', (req, res) => {
+    const name = String((req.body || {}).name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Group name required.' });
+    const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timer_groups').get().m;
+    const info = db.prepare('INSERT INTO timer_groups (name, sort_order) VALUES (?, ?)').run(name, max + 1);
+    res.status(201).json(get.get(info.lastInsertRowid));
+  });
+
+  r.put('/order', (req, res) => {
+    const ids = (req.body || {}).ids;
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids array required.' });
+    const upd = db.prepare('UPDATE timer_groups SET sort_order=? WHERE id=?');
+    db.transaction(() => ids.forEach((id, i) => upd.run(i, id)))();
+    res.json({ ok: true });
+  });
+
+  r.patch('/:id', (req, res) => {
+    const group = get.get(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found.' });
+    const b = req.body || {};
+    const name = b.name !== undefined ? String(b.name).trim() : group.name;
+    if (!name) return res.status(400).json({ error: 'Group name required.' });
+    const collapsed = b.collapsed !== undefined ? (b.collapsed ? 1 : 0) : group.collapsed;
+    db.prepare('UPDATE timer_groups SET name=?, collapsed=? WHERE id=?').run(name, collapsed, group.id);
+    res.json(get.get(group.id));
+  });
+
+  r.delete('/:id', (req, res) => {
+    const group = get.get(req.params.id);
+    if (!group) return res.status(404).json({ error: 'Group not found.' });
+    db.transaction(() => {
+      db.prepare('UPDATE timers SET group_id=NULL WHERE group_id=?').run(group.id);
+      db.prepare('DELETE FROM timer_groups WHERE id=?').run(group.id);
+    })();
+    res.json({ ok: true });
+  });
 
   return r;
 }

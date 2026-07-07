@@ -4,8 +4,8 @@ import { getSetting, setSetting } from '../db.js';
 // Keys the UI may read/write. auth is intentionally excluded — it has its own
 // endpoints with password-change rules.
 const KEYS = [
-  'validation', 'rounding', 'targets', 'timerStopAction', 'idleNudgeHours',
-  'backup', 'theme',
+  'validation', 'rounding', 'targets', 'idleNudgeHours',
+  'backup', 'theme', 'ai', 'tim',
 ];
 
 export function allSettings(db) {

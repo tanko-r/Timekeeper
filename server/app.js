@@ -5,7 +5,7 @@ import { cmsRouter } from './routes/cms.js';
 import { taskCodesRouter } from './routes/taskcodes.js';
 import { settingsRouter } from './routes/settings.js';
 import { entriesRouter, finalizeDayRouter } from './routes/entries.js';
-import { timersRouter } from './routes/timers.js';
+import { timersRouter, timerGroupsRouter } from './routes/timers.js';
 import { exportRouter } from './routes/export.js';
 import { statsRouter } from './routes/stats.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -28,6 +28,7 @@ export function createApp(deps) {
   app.use('/api/settings', settingsRouter(deps));
   app.use('/api/entries', entriesRouter(deps));
   app.use('/api', finalizeDayRouter(deps));
+  app.use('/api/timer-groups', timerGroupsRouter(deps));
   app.use('/api/timers', timersRouter(deps));
   app.use('/api', exportRouter(deps));
   app.use('/api', statsRouter(deps));

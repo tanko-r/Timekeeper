@@ -41,10 +41,12 @@ test('settings defaults seeded as JSON', () => {
   assert.equal(get('rounding').increment, 0.1);
   assert.equal(get('rounding').mode, 'nearest');
   assert.equal(get('targets').dailyHours, 8.0);
-  assert.equal(get('timerStopAction'), 'ask');
   assert.equal(get('idleNudgeHours'), 3);
   assert.equal(get('backup').keep, 14);
   assert.equal(get('auth').mode, 'remote-only');
+  assert.equal(get('ai').enabled, false);
+  assert.equal(get('ai').model, 'llama3.1:8b');
+  assert.equal(get('tim').timekeeperId, '1001');
   db.close();
 });
 

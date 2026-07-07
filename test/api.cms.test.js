@@ -112,5 +112,7 @@ test('settings: read and per-key deep merge', () => withServer(async (t) => {
   assert.equal(after.validation.minNarrativeChars, 30);
   assert.deepEqual(after.validation.bannedPhrases, ['work on', 'attention to', 'review file']); // untouched by merge
   assert.equal(after.targets.dailyHours, 7.5);
-  assert.equal(after.timerStopAction, 'ask');
+  assert.equal(after.idleNudgeHours, 3);
+  assert.equal(after.ai.enabled, false);
+  assert.equal(after.tim.u2, 'GEN01');
 }));
