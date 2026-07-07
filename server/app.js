@@ -6,6 +6,9 @@ import { taskCodesRouter } from './routes/taskcodes.js';
 import { settingsRouter } from './routes/settings.js';
 import { entriesRouter, finalizeDayRouter } from './routes/entries.js';
 import { timersRouter } from './routes/timers.js';
+import { exportRouter } from './routes/export.js';
+import { statsRouter } from './routes/stats.js';
+import { dashboardRouter } from './routes/dashboard.js';
 
 // App factory. deps = { db, config, clock } — clock injectable for tests.
 export function createApp(deps) {
@@ -21,6 +24,9 @@ export function createApp(deps) {
   app.use('/api/entries', entriesRouter(deps));
   app.use('/api', finalizeDayRouter(deps));
   app.use('/api/timers', timersRouter(deps));
+  app.use('/api', exportRouter(deps));
+  app.use('/api', statsRouter(deps));
+  app.use('/api', dashboardRouter(deps));
 
   // JSON 404 for unknown API routes (registered after real routes are mounted).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
