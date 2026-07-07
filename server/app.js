@@ -4,7 +4,7 @@ import { repoRoot } from './config.js';
 import { cmsRouter } from './routes/cms.js';
 import { taskCodesRouter } from './routes/taskcodes.js';
 import { settingsRouter } from './routes/settings.js';
-import { entriesRouter } from './routes/entries.js';
+import { entriesRouter, finalizeDayRouter } from './routes/entries.js';
 
 // App factory. deps = { db, config, clock } — clock injectable for tests.
 export function createApp(deps) {
@@ -18,6 +18,7 @@ export function createApp(deps) {
   app.use('/api/task-codes', taskCodesRouter(deps));
   app.use('/api/settings', settingsRouter(deps));
   app.use('/api/entries', entriesRouter(deps));
+  app.use('/api', finalizeDayRouter(deps));
 
   // JSON 404 for unknown API routes (registered after real routes are mounted).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));

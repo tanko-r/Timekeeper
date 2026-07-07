@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { isValidDate } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
-import { validateEntry } from '../lib/validation.js';
+import { validateEntry, canFinalize } from '../lib/validation.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
@@ -95,10 +95,87 @@ export function entriesRouter({ db, clock }) {
     res.json(db.prepare(sql).all(...params).map((row) => enrich(db, row)));
   });
 
+  r.post('/bulk', (req, res) => {
+    const { ids, action, cm_id, ack } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array required.' });
+    }
+    const done = [];
+    const failed = [];
+    for (const id of ids) {
+      const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(id);
+      if (!row) { failed.push({ id, error: 'not found' }); continue; }
+      try {
+        switch (action) {
+          case 'finalize': {
+            const result = finalizeOne(db, id, !!ack, now());
+            if (result.ok) done.push(id);
+            else failed.push({ id, blocks: result.blocks, warns: result.warns });
+            break;
+          }
+          case 'unlock':
+            unlockOne(db, row, now());
+            done.push(id);
+            break;
+          case 'delete':
+            db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE id=?').run(now(), now(), id);
+            done.push(id);
+            break;
+          case 'restore':
+            db.prepare('UPDATE entries SET deleted_at=NULL, updated_at=? WHERE id=?').run(now(), id);
+            done.push(id);
+            break;
+          case 'set_cm': {
+            if (row.status === 'finalized') { failed.push({ id, error: 'finalized' }); break; }
+            const cm = db.prepare('SELECT id FROM cms WHERE id=?').get(cm_id);
+            if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
+            db.transaction(() => {
+              db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm.id, now(), id);
+              touchCm(db, cm.id, now());
+              recordAudit(db, row, { cm_id: cm.id }, now());
+            })();
+            done.push(id);
+            break;
+          }
+          default:
+            return res.status(400).json({ error: `Unknown bulk action "${action}".` });
+        }
+      } catch (e) {
+        failed.push({ id, error: String(e.message) });
+      }
+    }
+    res.json({ done, failed });
+  });
+
   r.get('/:id', (req, res) => {
     const entry = loadEntry(db, req.params.id);
     if (!entry) return res.status(404).json({ error: 'Entry not found.' });
     res.json(entry);
+  });
+
+  r.post('/:id/finalize', (req, res) => {
+    const row = db.prepare('SELECT id, deleted_at FROM entries WHERE id=?').get(req.params.id);
+    if (!row || row.deleted_at) return res.status(404).json({ error: 'Entry not found.' });
+    const result = finalizeOne(db, row.id, !!(req.body || {}).ack, now());
+    if (!result.ok) {
+      return res.status(422).json({ error: 'Entry cannot be finalized yet.', blocks: result.blocks, warns: result.warns });
+    }
+    res.json(loadEntry(db, row.id));
+  });
+
+  r.post('/:id/unlock', (req, res) => {
+    const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'Entry not found.' });
+    if (row.status !== 'finalized') return res.status(409).json({ error: 'Entry is not finalized.' });
+    unlockOne(db, row, now());
+    res.json(loadEntry(db, row.id));
+  });
+
+  r.get('/:id/audit', (req, res) => {
+    const rows = db.prepare(
+      'SELECT id, action, detail, created_at FROM audit_log WHERE entry_id=? ORDER BY id DESC'
+    ).all(req.params.id);
+    res.json(rows.map((a) => ({ ...a, detail: JSON.parse(a.detail) })));
   });
 
   r.post('/', (req, res) => {
@@ -197,6 +274,55 @@ export function entriesRouter({ db, clock }) {
     res.status(201).json(loadEntry(db, info.lastInsertRowid));
   });
 
+  return r;
+}
+
+export function finalizeOne(db, id, ack, nowIso) {
+  const entry = loadEntry(db, id);
+  if (!entry) return { ok: false, blocks: [{ code: 'not_found', message: 'Entry not found.' }], warns: [] };
+  if (entry.status === 'finalized') return { ok: true };
+  if (ack && !entry.ack_validation) {
+    db.prepare('UPDATE entries SET ack_validation=1 WHERE id=?').run(id);
+    entry.ack_validation = 1;
+  }
+  const gate = canFinalize(entry, getSetting(db, 'validation'));
+  if (!gate.ok) return { ok: false, blocks: gate.blocks, warns: gate.warns };
+  db.prepare(
+    "UPDATE entries SET status='finalized', finalized_at=?, ever_finalized=1, updated_at=? WHERE id=?"
+  ).run(nowIso, nowIso, id);
+  return { ok: true };
+}
+
+function unlockOne(db, row, nowIso) {
+  db.transaction(() => {
+    db.prepare("UPDATE entries SET status='draft', updated_at=? WHERE id=?").run(nowIso, row.id);
+    db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
+      .run(row.id, 'unlock', JSON.stringify({ was_finalized_at: row.finalized_at }), nowIso);
+  })();
+}
+
+// POST /api/finalize-day {date | from,to, ack?}
+export function finalizeDayRouter({ db, clock }) {
+  const r = Router();
+  r.post('/finalize-day', (req, res) => {
+    const b = req.body || {};
+    const from = b.from || b.date;
+    const to = b.to || b.date;
+    if (!isValidDate(from) || !isValidDate(to)) {
+      return res.status(400).json({ error: 'Provide date or from/to as YYYY-MM-DD.' });
+    }
+    const drafts = db.prepare(
+      "SELECT id FROM entries WHERE status='draft' AND deleted_at IS NULL AND date >= ? AND date <= ?"
+    ).all(from, to);
+    const finalized = [];
+    const blocked = [];
+    for (const { id } of drafts) {
+      const result = finalizeOne(db, id, !!b.ack, clock().toISOString());
+      if (result.ok) finalized.push(id);
+      else blocked.push({ id, blocks: result.blocks, warns: result.warns });
+    }
+    res.json({ finalized, blocked });
+  });
   return r;
 }
 
