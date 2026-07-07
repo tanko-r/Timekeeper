@@ -216,6 +216,20 @@ export function authRouter({ db, clock }) {
     res.json({ ok: true });
   });
 
+  // Switch enforcement mode. Same protection as password changes: LAN or a
+  // valid session — a remote stranger must never be able to turn auth off.
+  r.post('/mode', (req, res) => {
+    if (isRemote(req) && !sessionFor(db, req, clock)) {
+      return res.status(401).json({ error: 'auth_required' });
+    }
+    const mode = (req.body || {}).mode;
+    if (!['remote-only', 'always', 'off'].includes(mode)) {
+      return res.status(400).json({ error: 'mode must be remote-only, always, or off.' });
+    }
+    setSetting(db, 'auth', { ...(getSetting(db, 'auth') || {}), mode });
+    res.json({ ok: true, mode });
+  });
+
   r.post('/sessions/revoke', (req, res) => {
     if (isRemote(req) && !sessionFor(db, req, clock)) {
       return res.status(401).json({ error: 'auth_required' });

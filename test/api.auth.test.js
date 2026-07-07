@@ -105,6 +105,21 @@ test('auth mode always guards LAN too; mode off guards nothing', () =>
     assert.equal(remote.status, 200);
   }));
 
+test('auth mode endpoint: validates value, guarded from unauthenticated remote', () =>
+  withServer(async (t) => {
+    const bad = await t.fetchJson('POST', '/api/auth/mode', { mode: 'bogus' });
+    assert.equal(bad.status, 400);
+
+    const ok = await t.fetchJson('POST', '/api/auth/mode', { mode: 'always' });
+    assert.equal(ok.status, 200);
+    assert.equal(getSetting(t.db, 'auth').mode, 'always');
+
+    // remote + no session cannot flip the mode (would be a lockout/bypass vector)
+    const remote = await t.fetchJson('POST', '/api/auth/mode', { mode: 'off' }, REMOTE);
+    assert.equal(remote.status, 401);
+    assert.equal(getSetting(t.db, 'auth').mode, 'always');
+  }));
+
 test('mutating requests with a foreign Origin are rejected', () =>
   withServer(async (t) => {
     const evil = await t.fetchJson('POST', '/api/cms',
