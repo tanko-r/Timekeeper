@@ -9,6 +9,7 @@ import { timersRouter } from './routes/timers.js';
 import { exportRouter } from './routes/export.js';
 import { statsRouter } from './routes/stats.js';
 import { dashboardRouter } from './routes/dashboard.js';
+import { authRouter, authGuard, originCheck } from './auth.js';
 
 // App factory. deps = { db, config, clock } — clock injectable for tests.
 export function createApp(deps) {
@@ -18,6 +19,9 @@ export function createApp(deps) {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
+  app.use('/api', originCheck(deps.config));
+  app.use('/api/auth', authRouter(deps));
+  app.use('/api', authGuard(deps));
   app.use('/api/cms', cmsRouter(deps));
   app.use('/api/task-codes', taskCodesRouter(deps));
   app.use('/api/settings', settingsRouter(deps));
