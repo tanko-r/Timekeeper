@@ -1,7 +1,5 @@
-import { api, downloadText } from '/js/api.js';
-import {
-  html, useState, useEffect, Field, emitToast, fmtHours,
-} from '/js/ui.js';
+import { api } from '/js/api.js';
+import { html, useState, useEffect, Field, emitToast } from '/js/ui.js';
 
 export function SettingsView({ settings, reloadSettings, authState, reloadAuth }) {
   return html`
@@ -242,10 +240,11 @@ function RemoteCard({ authState, reloadAuth }) {
           ${st.passwordSet ? 'Change' : 'Enable remote'}
         </button>
       </form>
-      <${Field} label="Require login">
+      <${Field} label="Require login"
+        hint=${st.passwordSet ? null : '"Always" unlocks once a password is set'}>
         <select value=${mode ?? st.mode} onChange=${(e) => saveMode(e.target.value)}>
           <option value="remote-only">Remote connections only (recommended)</option>
-          <option value="always">Always, including LAN</option>
+          <option value="always" disabled=${!st.passwordSet}>Always, including LAN</option>
           <option value="off">Never (LAN-only use!)</option>
         </select>
       <//>

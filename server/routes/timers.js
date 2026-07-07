@@ -21,6 +21,7 @@ export function createTimerEntry(db, timer, date, hours, nowIso) {
   db.prepare(
     'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
   ).run(info.lastInsertRowid, timer.task_code || '', hours, '');
+  db.prepare('UPDATE cms SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
   return info.lastInsertRowid;
 }
 
@@ -157,47 +158,54 @@ export function timersRouter({ db, clock }) {
     const seconds = elapsedSeconds(timer, clock().getTime());
     const rounding = getSetting(db, 'rounding') || {};
     const hours = secondsToHours(seconds, rounding);
+    const banking = hours >= minIncrement(db) - 1e-9 && hours > 0;
 
-    // Zero the clock regardless — stopping is always a reset.
-    db.prepare('UPDATE timers SET running=0, accumulated_seconds=0, last_started_at=NULL WHERE id=?')
-      .run(timer.id);
-
-    if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
-      return res.json({ entry: null, hours: 0, seconds });
-    }
-
-    let entryId;
-    let appended = false;
-    if (b.action === 'append') {
-      let target = null;
+    // Resolve and validate the append target BEFORE touching the clock —
+    // an error here must never destroy accrued time.
+    let target = null;
+    if (banking && b.action === 'append') {
       if (b.entry_id) {
         target = db.prepare(
-          "SELECT id, status, deleted_at FROM entries WHERE id=?").get(b.entry_id);
-        if (!target || target.deleted_at) return res.status(400).json({ error: 'Target entry not found.' });
-        if (target.status === 'finalized') return res.status(409).json({ error: 'Target entry is finalized.' });
+          'SELECT id, cm_id, status, deleted_at FROM entries WHERE id=?').get(b.entry_id);
+        if (!target || target.deleted_at) {
+          return res.status(400).json({ error: 'Target entry not found — timer left untouched.' });
+        }
+        if (target.status === 'finalized') {
+          return res.status(409).json({ error: 'Target entry is finalized — unlock it or stop to a new entry. Timer left untouched.' });
+        }
+        if (target.cm_id !== timer.cm_id) {
+          return res.status(400).json({ error: 'Target entry belongs to a different CM — timer left untouched.' });
+        }
       } else {
         target = db.prepare(
           "SELECT id FROM entries WHERE cm_id=? AND date=? AND status='draft' AND deleted_at IS NULL ORDER BY id DESC LIMIT 1"
         ).get(timer.cm_id, todayLocal(clock()));
       }
+    }
+
+    // Zero the clock and file the time atomically.
+    let entryId = null;
+    let appended = false;
+    db.transaction(() => {
+      db.prepare('UPDATE timers SET running=0, accumulated_seconds=0, last_started_at=NULL WHERE id=?')
+        .run(timer.id);
+      if (!banking) return;
       if (target) {
         const maxOrder = db.prepare(
           'SELECT COALESCE(MAX(sort_order), -1) m FROM entry_tasks WHERE entry_id=?').get(target.id).m;
-        db.transaction(() => {
-          db.prepare(
-            'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, ?)'
-          ).run(target.id, timer.task_code || '', hours, '', maxOrder + 1);
-          db.prepare('UPDATE entries SET updated_at=? WHERE id=?').run(now(), target.id);
-          syncNarrative(db, target.id);
-        })();
+        db.prepare(
+          'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, ?)'
+        ).run(target.id, timer.task_code || '', hours, '', maxOrder + 1);
+        db.prepare('UPDATE entries SET updated_at=? WHERE id=?').run(now(), target.id);
+        syncNarrative(db, target.id);
         entryId = target.id;
         appended = true;
+      } else {
+        entryId = createTimerEntry(db, timer, todayLocal(clock()), hours, now());
       }
-    }
-    if (!entryId) {
-      entryId = db.transaction(() =>
-        createTimerEntry(db, timer, todayLocal(clock()), hours, now()))();
-    }
+    })();
+
+    if (!banking) return res.json({ entry: null, hours: 0, seconds });
     res.json({ entry: loadEntry(db, entryId), hours, seconds, appended });
   });
 

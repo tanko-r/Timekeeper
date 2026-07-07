@@ -233,4 +233,14 @@ function App() {
   `;
 }
 
+// Backstop: any un-caught API failure still tells the user what happened
+// (401s are handled by the login flow, so skip those).
+window.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason || {};
+  if (reason.status === 401) return;
+  window.dispatchEvent(new CustomEvent('tk:toast', {
+    detail: { message: String(reason.message || reason), error: true },
+  }));
+});
+
 createRoot(document.getElementById('root')).render(html`<${App} />`);

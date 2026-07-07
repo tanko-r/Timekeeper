@@ -9,6 +9,9 @@ ExecStart=/usr/bin/node server/index.js
 Restart=on-failure
 RestartSec=3
 Environment=NODE_ENV=production
+# Midnight banking and date boundaries assume this zone — pinned so a future
+# box-TZ change can't silently shift the day boundary.
+Environment=TZ=America/Los_Angeles
 
 [Install]
 WantedBy=default.target

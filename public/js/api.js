@@ -1,5 +1,6 @@
-// Thin JSON API client. 401s flip the app into the login screen via an event;
-// other errors surface as toasts (listener lives in app.js).
+// Thin JSON API client. 401s flip the app into the login screen via an event.
+// Errors reject with ApiError; handlers that don't catch are backstopped by
+// the global unhandledrejection → toast bridge in app.js.
 
 export class ApiError extends Error {
   constructor(status, body) {

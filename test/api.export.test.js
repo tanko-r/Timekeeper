@@ -109,3 +109,29 @@ test('dashboard: today totals, alerts for invalid drafts and unexported finalize
     assert.equal(d.alerts.unexportedFinalized, 1);
     assert.ok(Array.isArray(d.timers));
   }));
+
+test('export stamps only finalized entries; finalize clears exported_at', () =>
+  withData(async (t, { fin, draft }) => {
+    await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06', includeDrafts: true });
+    const draftAfter = (await t.fetchJson('GET', `/api/entries/${draft.id}`)).body;
+    assert.equal(draftAfter.exported_at, null, 'drafts must not be stamped');
+
+    // exported finalized entry gets unlocked, edited, re-finalized → needs re-export
+    await t.fetchJson('POST', `/api/entries/${fin.id}/unlock`);
+    await t.fetchJson('PATCH', `/api/entries/${fin.id}`, { billable: 0 });
+    await t.fetchJson('POST', `/api/entries/${fin.id}/finalize`);
+    const refin = (await t.fetchJson('GET', `/api/entries/${fin.id}`)).body;
+    assert.equal(refin.exported_at, null, 'finalize must clear exported_at so it re-alerts');
+  }));
+
+test('CSV emits stored durations exactly (no display re-rounding)', () =>
+  withData(async (t, { acme }) => {
+    const e = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-05', cm_id: acme.id, narrative: 'Prepared deposition outline for witness.',
+      tasks: [{ task_code: 'Draft', duration: 1.25, fragment: '' }],
+    })).body;
+    await t.fetchJson('POST', `/api/entries/${e.id}/finalize`);
+    const r = await t.fetchJson('POST', '/api/export', { from: '2026-07-05', to: '2026-07-05' });
+    const line = r.body.csv.split('\r\n')[1];
+    assert.ok(line.includes(',Draft,1.25,'), `duration must stay 1.25, got: ${line}`);
+  }));

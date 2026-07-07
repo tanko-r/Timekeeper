@@ -160,3 +160,43 @@ test('timers reorder and delete; deleting timer keeps its entries', () =>
     assert.equal(list.length, 1);
     assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 1);
   }));
+
+test('stop→append to a finalized/foreign target preserves the running clock', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const entry = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Reviewed lease agreement for renewal terms.',
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    })).body;
+    await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`);
+
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id, task_code: 'Research' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+
+    const r = await t.fetchJson('POST', `/api/timers/${timer.id}/stop`, { action: 'append', entry_id: entry.id });
+    assert.equal(r.status, 409);
+
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].running, 1, 'timer must still be running after failed stop');
+    assert.equal(list[0].elapsed_seconds, 1800, 'elapsed time must be preserved');
+
+    // appending to an entry on a different CM is refused too
+    const other = (await t.fetchJson('POST', '/api/cms', { cm_number: '999999-000001', short_name: 'Other' })).body;
+    const foreign = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: other.id, narrative: 'Drafted memorandum regarding venue.',
+      tasks: [{ task_code: 'Draft', duration: 0.3, fragment: '' }],
+    })).body;
+    const r2 = await t.fetchJson('POST', `/api/timers/${timer.id}/stop`, { action: 'append', entry_id: foreign.id });
+    assert.equal(r2.status, 400);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].elapsed_seconds, 1800);
+  }));
+
+test('timer-created entries bump the CM picker recency', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`, { action: 'new' });
+    const row = t.db.prepare('SELECT last_used_at FROM cms WHERE id=?').get(cm.id);
+    assert.ok(row.last_used_at, 'last_used_at set by timer entry');
+  }));

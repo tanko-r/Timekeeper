@@ -89,12 +89,15 @@ const MIGRATIONS = [
     detail     TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
-  `,
-];
 
-const SEED_TASK_CODES = [
-  'Review', 'Draft', 'Revise', 'Research', 'Correspondence', 'Call/Conference',
-  'Negotiate', 'Travel', 'Court Appearance', 'Due Diligence', 'Closing',
+  -- Task codes seed once with the schema; deleting one must stick across
+  -- restarts, so this is a migration, not a reseed.
+  INSERT INTO task_codes (name, sort_order) VALUES
+    ('Review', 0), ('Draft', 1), ('Revise', 2), ('Research', 3),
+    ('Correspondence', 4), ('Call/Conference', 5), ('Negotiate', 6),
+    ('Travel', 7), ('Court Appearance', 8), ('Due Diligence', 9),
+    ('Closing', 10);
+  `,
 ];
 
 const SEED_SETTINGS = {
@@ -133,13 +136,12 @@ function migrate(db) {
   seed(db);
 }
 
+// Settings reseed on every open (INSERT OR IGNORE) so new settings keys added
+// in upgrades appear with defaults; task codes seed via migration only.
 function seed(db) {
-  const insCode = db.prepare(
-    'INSERT OR IGNORE INTO task_codes (name, sort_order) VALUES (?, ?)');
   const insSetting = db.prepare(
     'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   db.transaction(() => {
-    SEED_TASK_CODES.forEach((name, i) => insCode.run(name, i));
     for (const [key, value] of Object.entries(SEED_SETTINGS)) {
       insSetting.run(key, JSON.stringify(value));
     }

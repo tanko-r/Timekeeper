@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours,
-  emitToast, BillableBadge, StatusChip, Modal,
+  emitToast, BillableBadge, StatusChip, Modal, Confirm,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 
@@ -39,13 +39,39 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
   });
   const allSelected = entries.length > 0 && entries.every((e) => selected.has(e.id));
 
+  const [warnGate, setWarnGate] = useState(null);
+
   async function bulk(action, extra = {}) {
-    const ids = [...selected];
-    const r = await api.post('/api/entries/bulk', { ids, action, ...extra });
+    const { ids: givenIds, ...rest } = extra;
+    const ids = givenIds || [...selected];
+    const r = await api.post('/api/entries/bulk', { ids, action, ...rest });
+    if (action === 'delete' && r.done.length > 0) {
+      const restored = r.done.slice();
+      emitToast(`${r.done.length} deleted`, {
+        actionLabel: 'Undo',
+        action: async () => {
+          await api.post('/api/entries/bulk', { ids: restored, action: 'restore' });
+          bumpRefresh();
+        },
+      });
+    }
+    if (action === 'finalize' && !extra.ack) {
+      const warnOnly = r.failed.filter((f) => f.blocks && f.blocks.length === 0);
+      if (warnOnly.length > 0) {
+        const msgs = [...new Set(warnOnly.flatMap((f) => (f.warns || []).map((w) => w.message)))].slice(0, 4);
+        setWarnGate({
+          ids: warnOnly.map((f) => f.id),
+          message: `${warnOnly.length} ${warnOnly.length === 1 ? 'entry has' : 'entries have'} warnings: ${msgs.join(' · ')}`,
+        });
+        if (r.done.length) emitToast(`${r.done.length} clean finalized`);
+        bumpRefresh();
+        return;
+      }
+    }
     if (r.failed.length > 0) {
-      emitToast(`${r.done.length} done, ${r.failed.length} failed (check validation/finalized state)`, { error: true });
-    } else {
-      emitToast(`${r.done.length} ${action === 'set_cm' ? 'reassigned' : action + 'd'}`);
+      emitToast(`${r.done.length} done, ${r.failed.length} skipped (${r.failed[0].error || 'validation'})`, { error: true });
+    } else if (action !== 'delete') {
+      emitToast(`${r.done.length} ${action === 'set_cm' ? 'reassigned' : action === 'finalize' ? 'finalized' : action + 'ed'}`);
     }
     bumpRefresh();
   }
@@ -89,7 +115,7 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
     ${selected.size > 0 ? html`
       <div class="card row" style=${{ position: 'sticky', top: '8px', zIndex: 40 }}>
         <strong>${selected.size} selected</strong>
-        <button class="btn btn-sm" onClick=${() => bulk('finalize', { ack: true })}>🔒 Finalize</button>
+        <button class="btn btn-sm" onClick=${() => bulk('finalize')}>🔒 Finalize</button>
         <button class="btn btn-sm" onClick=${() => bulk('unlock')}>🔓 Unlock</button>
         <button class="btn btn-sm" onClick=${() => setReassigning(true)}>📁 Reassign CM</button>
         <button class="btn btn-sm btn-danger" onClick=${() => bulk('delete')}>🗑 Delete</button>
@@ -139,5 +165,11 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
           await bulk('set_cm', { cm_id: cm.id });
         }} />
       <//>` : null}
+
+    ${warnGate ? html`
+      <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"
+        message=${warnGate.message}
+        onConfirm=${() => bulk('finalize', { ack: true, ids: warnGate.ids })}
+        onClose=${() => setWarnGate(null)} />` : null}
   `;
 }

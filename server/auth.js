@@ -34,6 +34,9 @@ export function verifyPassword(password, stored) {
 const PRIVATE_V4 = [
   /^127\./, /^10\./, /^192\.168\./,
   /^172\.(1[6-9]|2\d|3[01])\./,
+  // Tailscale CGNAT range (100.64.0.0/10) — the tailnet is authenticated
+  // infrastructure on this box, LAN-equivalent for our threat model.
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./,
 ];
 
 function isPrivateIp(ip) {
@@ -148,6 +151,9 @@ export function authRouter({ db, clock }) {
   }
 
   function recordFail(ip, nowMs) {
+    if (fails.size > 500) {
+      for (const [k, v] of fails) if (nowMs > v.resetAt) fails.delete(k);
+    }
     const f = fails.get(ip);
     if (!f || nowMs > f.resetAt) {
       fails.set(ip, { count: 1, resetAt: nowMs + FAIL_WINDOW_MS });
@@ -160,14 +166,18 @@ export function authRouter({ db, clock }) {
     const mode = (getSetting(db, 'auth') || {}).mode || 'remote-only';
     const remote = isRemote(req);
     const loggedIn = !!sessionFor(db, req, clock);
-    res.json({
+    const out = {
       mode,
       remote,
       loggedIn,
       passwordSet: !!passwordHash(db),
       authRequired: mode === 'always' || (mode === 'remote-only' && remote),
-      sessionCount: db.prepare('SELECT COUNT(*) c FROM sessions').get().c,
-    });
+    };
+    // Don't enumerate sessions to strangers on the tunnel.
+    if (loggedIn || !remote) {
+      out.sessionCount = db.prepare('SELECT COUNT(*) c FROM sessions').get().c;
+    }
+    res.json(out);
   });
 
   r.post('/login', (req, res) => {

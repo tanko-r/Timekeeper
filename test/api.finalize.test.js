@@ -110,3 +110,45 @@ test('bulk: set_cm, finalize, delete', () => withServer(async (t, cm, mkEntry) =
   assert.equal(del.body.done.length, 1);
   assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 2);
 }));
+
+test('a blocked finalize with ack does not pre-acknowledge future warnings', () =>
+  withServer(async (t, cm, mkEntry) => {
+    const e = await mkEntry({ narrative: '' }); // hard block
+    await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, { ack: true }); // 422
+    await t.fetchJson('PATCH', `/api/entries/${e.id}`, { narrative: 'Short.' }); // now warn-only
+    const r = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`); // no ack
+    assert.equal(r.status, 422, 'warning must still gate — ack must not persist from the blocked attempt');
+  }));
+
+test('finalized entries cannot be deleted without unlock; delete of ever-finalized is audited', () =>
+  withServer(async (t, cm, mkEntry) => {
+    const e = await mkEntry();
+    await t.fetchJson('POST', `/api/entries/${e.id}/finalize`);
+    const del = await t.fetchJson('DELETE', `/api/entries/${e.id}`);
+    assert.equal(del.status, 409);
+
+    await t.fetchJson('POST', `/api/entries/${e.id}/unlock`);
+    const del2 = await t.fetchJson('DELETE', `/api/entries/${e.id}`);
+    assert.equal(del2.status, 200);
+    const audit = (await t.fetchJson('GET', `/api/entries/${e.id}/audit`)).body;
+    assert.ok(audit.some((a) => a.action === 'delete'), 'delete of ever-finalized entry must be audited');
+  }));
+
+test('bulk delete skips finalized entries; bulk unlock skips drafts; bulk finalize skips deleted', () =>
+  withServer(async (t, cm, mkEntry) => {
+    const fin = await mkEntry();
+    await t.fetchJson('POST', `/api/entries/${fin.id}/finalize`);
+    const draft = await mkEntry();
+    const gone = await mkEntry();
+    await t.fetchJson('DELETE', `/api/entries/${gone.id}`);
+
+    const del = (await t.fetchJson('POST', '/api/entries/bulk', { ids: [fin.id, draft.id], action: 'delete' })).body;
+    assert.deepEqual(del.done, [draft.id]);
+    assert.equal(del.failed.length, 1);
+
+    const unl = (await t.fetchJson('POST', '/api/entries/bulk', { ids: [fin.id, draft.id], action: 'unlock' })).body;
+    assert.deepEqual(unl.done, [fin.id]);
+
+    const fi = (await t.fetchJson('POST', '/api/entries/bulk', { ids: [gone.id], action: 'finalize', ack: true })).body;
+    assert.equal(fi.done.length, 0, 'soft-deleted entries must not be finalized');
+  }));

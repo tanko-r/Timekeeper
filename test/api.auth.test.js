@@ -132,3 +132,20 @@ test('mutating requests with a foreign Origin are rejected', () =>
       { origin: t.base });
     assert.equal(sameHost.status, 201);
   }));
+
+test('backup endpoints are guarded from unauthenticated remote requests', () =>
+  withServer(async (t) => {
+    const r = await t.fetchJson('GET', '/api/backup/db', undefined, REMOTE);
+    assert.equal(r.status, 403); // no password set → refused outright
+    await t.fetchJson('POST', '/api/auth/password', { next: 'correct horse battery' });
+    const r2 = await t.fetchJson('GET', '/api/backup/db', undefined, REMOTE);
+    assert.equal(r2.status, 401);
+  }));
+
+test('Tailscale CGNAT peers count as local (LAN-equivalent)', async () => {
+  const { isRemote } = await import('../server/auth.js');
+  const fake = (ip, headers = {}) => ({ headers, ip, socket: { remoteAddress: ip } });
+  assert.equal(isRemote(fake('100.100.100.100')), false); // tailnet peer
+  assert.equal(isRemote(fake('100.130.0.1')), true);    // outside 100.64/10
+  assert.equal(isRemote(fake('8.8.8.8')), true);
+});

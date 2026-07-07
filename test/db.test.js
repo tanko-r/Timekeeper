@@ -92,3 +92,15 @@ test('deleting an entry cascades to its task lines', () => {
   assert.equal(db.prepare('SELECT COUNT(*) c FROM entry_tasks').get().c, 0);
   db.close();
 });
+
+test('deleting a seeded task code survives reopen (no resurrection)', () => {
+  const { path, cleanup } = tempDbPath();
+  const db1 = openDb(path);
+  db1.prepare("DELETE FROM task_codes WHERE name='Travel'").run();
+  db1.close();
+  const db2 = openDb(path);
+  assert.equal(db2.prepare("SELECT COUNT(*) c FROM task_codes WHERE name='Travel'").get().c, 0);
+  assert.equal(db2.prepare('SELECT COUNT(*) c FROM task_codes').get().c, 10);
+  db2.close();
+  cleanup();
+});

@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
-  html, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  addDays, todayStr, emitToast,
+  html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
+  addDays, todayStr, emitToast, Confirm,
 } from '/js/ui.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { nav } from '/js/app.js';
@@ -22,17 +22,26 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     return () => document.removeEventListener('keydown', onKey);
   }, [day]);
 
+  const [warnGate, setWarnGate] = useState(null);
   if (error) return html`<${ErrorBox} error=${error} />`;
   const entries = data || [];
   const total = entries.reduce((a, e) => a + e.total, 0);
   const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
 
-  async function finalizeDay() {
-    const r = await api.post('/api/finalize-day', { date: day, ack: true });
-    if (r.blocked.length > 0) {
-      emitToast(`${r.finalized.length} finalized, ${r.blocked.length} blocked — open them to fix.`, { error: true });
+  async function finalizeDay(ack = false) {
+    const r = await api.post('/api/finalize-day', { date: day, ack });
+    const warnOnly = r.blocked.filter((b) => b.blocks.length === 0);
+    const hard = r.blocked.length - warnOnly.length;
+    if (!ack && warnOnly.length > 0) {
+      const msgs = [...new Set(warnOnly.flatMap((b) => b.warns.map((w) => w.message)))].slice(0, 4);
+      setWarnGate({ message: `${warnOnly.length} ${warnOnly.length === 1 ? 'entry has' : 'entries have'} warnings: ${msgs.join(' · ')}` });
+      bumpRefresh();
+      return;
+    }
+    if (hard > 0) {
+      emitToast(`${r.finalized.length} finalized, ${hard} blocked — open them to fix.`, { error: true });
     } else {
-      emitToast(r.finalized.length ? `Finalized ${r.finalized.length}` : 'Nothing to finalize.');
+      emitToast(r.finalized.length ? `Finalized ${r.finalized.length}` : ack ? 'Done.' : 'Nothing to finalize.');
     }
     bumpRefresh();
   }
@@ -50,5 +59,10 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     </div>
     ${loading && !data ? html`<${Spinner} />` : html`
       <${EntryList} entries=${entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />`}
+    ${warnGate ? html`
+      <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"
+        message=${warnGate.message}
+        onConfirm=${() => finalizeDay(true)}
+        onClose=${() => setWarnGate(null)} />` : null}
   `;
 }

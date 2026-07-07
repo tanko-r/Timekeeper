@@ -100,6 +100,12 @@ export function entriesRouter({ db, clock }) {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'ids array required.' });
     }
+    if (!['finalize', 'unlock', 'delete', 'restore', 'set_cm'].includes(action)) {
+      return res.status(400).json({ error: `Unknown bulk action "${action}".` });
+    }
+    if (action === 'set_cm' && !db.prepare('SELECT id FROM cms WHERE id=?').get(cm_id)) {
+      return res.status(400).json({ error: 'Unknown CM.' });
+    }
     const done = [];
     const failed = [];
     for (const id of ids) {
@@ -114,31 +120,29 @@ export function entriesRouter({ db, clock }) {
             break;
           }
           case 'unlock':
+            if (row.status !== 'finalized') { failed.push({ id, error: 'not finalized' }); break; }
             unlockOne(db, row, now());
             done.push(id);
             break;
           case 'delete':
-            db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE id=?').run(now(), now(), id);
+            if (row.status === 'finalized') { failed.push({ id, error: 'finalized — unlock first' }); break; }
+            softDeleteEntry(db, row, now());
             done.push(id);
             break;
           case 'restore':
-            db.prepare('UPDATE entries SET deleted_at=NULL, updated_at=? WHERE id=?').run(now(), id);
+            restoreEntry(db, row, now());
             done.push(id);
             break;
           case 'set_cm': {
             if (row.status === 'finalized') { failed.push({ id, error: 'finalized' }); break; }
-            const cm = db.prepare('SELECT id FROM cms WHERE id=?').get(cm_id);
-            if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
             db.transaction(() => {
-              db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm.id, now(), id);
-              touchCm(db, cm.id, now());
-              recordAudit(db, row, { cm_id: cm.id }, now());
+              db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm_id, now(), id);
+              touchCm(db, cm_id, now());
+              recordAudit(db, row, { cm_id }, now());
             })();
             done.push(id);
             break;
           }
-          default:
-            return res.status(400).json({ error: `Unknown bulk action "${action}".` });
         }
       } catch (e) {
         failed.push({ id, error: String(e.message) });
@@ -244,16 +248,19 @@ export function entriesRouter({ db, clock }) {
   });
 
   r.delete('/:id', (req, res) => {
-    const row = db.prepare('SELECT id, deleted_at FROM entries WHERE id=?').get(req.params.id);
+    const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Entry not found.' });
-    db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE id=?').run(now(), now(), row.id);
+    if (row.status === 'finalized') {
+      return res.status(409).json({ error: 'Entry is finalized — unlock it before deleting.' });
+    }
+    softDeleteEntry(db, row, now());
     res.json({ ok: true, id: row.id });
   });
 
   r.post('/:id/restore', (req, res) => {
-    const row = db.prepare('SELECT id FROM entries WHERE id=?').get(req.params.id);
+    const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(req.params.id);
     if (!row) return res.status(404).json({ error: 'Entry not found.' });
-    db.prepare('UPDATE entries SET deleted_at=NULL, updated_at=? WHERE id=?').run(now(), row.id);
+    restoreEntry(db, row, now());
     res.json(loadEntry(db, row.id));
   });
 
@@ -279,18 +286,47 @@ export function entriesRouter({ db, clock }) {
 
 export function finalizeOne(db, id, ack, nowIso) {
   const entry = loadEntry(db, id);
-  if (!entry) return { ok: false, blocks: [{ code: 'not_found', message: 'Entry not found.' }], warns: [] };
-  if (entry.status === 'finalized') return { ok: true };
-  if (ack && !entry.ack_validation) {
-    db.prepare('UPDATE entries SET ack_validation=1 WHERE id=?').run(id);
-    entry.ack_validation = 1;
+  if (!entry || entry.deleted_at) {
+    return { ok: false, blocks: [{ level: 'block', code: 'not_found', message: 'Entry not found.' }], warns: [] };
   }
-  const gate = canFinalize(entry, getSetting(db, 'validation'));
+  if (entry.status === 'finalized') return { ok: true };
+  // Evaluate the gate with the ack applied hypothetically; persist it only on
+  // success so a blocked attempt doesn't pre-acknowledge future warnings.
+  const gate = canFinalize(
+    { ...entry, ack_validation: ack ? 1 : entry.ack_validation },
+    getSetting(db, 'validation'));
   if (!gate.ok) return { ok: false, blocks: gate.blocks, warns: gate.warns };
-  db.prepare(
-    "UPDATE entries SET status='finalized', finalized_at=?, ever_finalized=1, updated_at=? WHERE id=?"
-  ).run(nowIso, nowIso, id);
+  db.transaction(() => {
+    if (ack && !entry.ack_validation) {
+      db.prepare('UPDATE entries SET ack_validation=1 WHERE id=?').run(id);
+    }
+    // A fresh finalization has not been exported yet — clearing the stamp makes
+    // corrected entries resurface in the unexported alert.
+    db.prepare(
+      "UPDATE entries SET status='finalized', finalized_at=?, ever_finalized=1, exported_at=NULL, updated_at=? WHERE id=?"
+    ).run(nowIso, nowIso, id);
+  })();
   return { ok: true };
+}
+
+function softDeleteEntry(db, row, nowIso) {
+  db.transaction(() => {
+    db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE id=?').run(nowIso, nowIso, row.id);
+    if (row.ever_finalized) {
+      db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
+        .run(row.id, 'delete', JSON.stringify({ date: row.date, narrative: row.narrative }), nowIso);
+    }
+  })();
+}
+
+function restoreEntry(db, row, nowIso) {
+  db.transaction(() => {
+    db.prepare('UPDATE entries SET deleted_at=NULL, updated_at=? WHERE id=?').run(nowIso, row.id);
+    if (row.ever_finalized) {
+      db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
+        .run(row.id, 'restore', '{}', nowIso);
+    }
+  })();
 }
 
 function unlockOne(db, row, nowIso) {

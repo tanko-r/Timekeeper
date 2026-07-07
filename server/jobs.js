@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { mkdirSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { getSetting, setSetting } from './db.js';
 import { todayLocal } from './lib/dates.js';
@@ -31,8 +31,15 @@ export function runJobs({ db, config, clock }) {
 function backup(db, config, today) {
   const dir = join(config.DATA_DIR, 'backups');
   mkdirSync(dir, { recursive: true });
+  // Write to a temp name and rename in — a crashed VACUUM must not leave a
+  // half-written file blocking every retry that day.
+  for (const stale of readdirSync(dir).filter((f) => f.startsWith('.tmp-'))) {
+    try { unlinkSync(join(dir, stale)); } catch { /* best effort */ }
+  }
   const file = join(dir, `timekeeper-${today}.db`);
-  db.prepare('VACUUM INTO ?').run(file);
+  const tmp = join(dir, `.tmp-${today}-${process.pid}.db`);
+  db.prepare('VACUUM INTO ?').run(tmp);
+  renameSync(tmp, file);
 
   const keep = (getSetting(db, 'backup') || {}).keep || 14;
   const files = readdirSync(dir).filter((f) => /^timekeeper-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort();

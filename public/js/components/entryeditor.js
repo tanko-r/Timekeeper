@@ -80,12 +80,18 @@ export function EntryEditor({ spec, settings, onClose }) {
   const finalized = local?.status === 'finalized';
 
   // ---------- persistence ----------
+  // Saves are chained through one promise so a debounced autosave and a
+  // Save/Finalize click can never issue two concurrent creates (duplicate
+  // entries) — and persist() resolves to the saved entry so callers don't
+  // depend on a not-yet-re-rendered entryRef.
 
-  const persist = useCallback(async () => {
+  const saveChain = useRef(Promise.resolve(null));
+
+  const doPersist = useCallback(async () => {
     const l = localRef.current;
     const e = entryRef.current;
-    if (!l || l.status === 'finalized') return;
-    if (!l.cm || !l.date) return; // not enough to save yet
+    if (!l || l.status === 'finalized') return e;
+    if (!l.cm || !l.date) return e; // not enough to save yet
     const body = {
       date: l.date,
       cm_id: l.cm.id,
@@ -101,6 +107,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         ? await api.patch(`/api/entries/${e.id}`, body)
         : await api.post('/api/entries', body);
       changedRef.current = true;
+      entryRef.current = saved; // immediately — callers use it before re-render
       setEntry(saved);
       setSaveState('saved');
       // adopt server-generated narrative + validation without clobbering typing
@@ -110,11 +117,18 @@ export function EntryEditor({ spec, settings, onClose }) {
         if (saved.narrative_auto) next.narrative = saved.narrative;
         return next;
       });
+      return saved;
     } catch (err) {
       setSaveState('error');
       emitToast(err.message, { error: true });
+      return entryRef.current;
     }
   }, []);
+
+  const persist = useCallback(() => {
+    saveChain.current = saveChain.current.then(doPersist, doPersist);
+    return saveChain.current;
+  }, [doPersist]);
 
   const [queueSave, cancelSave] = useDebounced(persist, 600);
 
@@ -155,8 +169,7 @@ export function EntryEditor({ spec, settings, onClose }) {
 
   async function finalize(ack) {
     cancelSave();
-    await persist();
-    const e = entryRef.current;
+    const e = await persist();
     if (!e) { emitToast('Pick a CM and add time first.', { error: true }); return; }
     try {
       await api.post(`/api/entries/${e.id}/finalize`, ack ? { ack: true } : {});
@@ -276,7 +289,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       <div class="narrative-preview">
         ${isAuto ? html`
           <span class="auto-badge">AUTO</span>
-          <textarea readonly value=${autoNarrative || ''}></textarea>` : html`
+          <textarea readOnly value=${autoNarrative || ''}></textarea>` : html`
           <textarea value=${local.narrative} disabled=${finalized}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onInput=${(e) => update({ narrative: e.target.value })}></textarea>`}
@@ -315,7 +328,7 @@ export function EntryEditor({ spec, settings, onClose }) {
           ${saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : saveState === 'error' ? '⚠ Save failed' : ''}
         </span>
         <div class="spacer" style=${{ flex: 1 }}></div>
-        ${entry ? html`<button class="btn btn-ghost" onClick=${del}>🗑 Delete</button>` : null}
+        ${entry && !finalized ? html`<button class="btn btn-ghost" onClick=${del}>🗑 Delete</button>` : null}
         ${finalized
           ? html`<button class="btn" onClick=${unlock}>🔓 Unlock to edit</button>`
           : html`

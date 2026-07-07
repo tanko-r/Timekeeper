@@ -47,7 +47,7 @@ export function createApp(deps) {
   app.use((err, req, res, next) => {
     const status = err.status || (err.type === 'entity.parse.failed' ? 400 : 500);
     if (status >= 500) console.error(err);
-    res.status(status).json({ error: err.expose || status < 500 ? String(err.message) : 'internal_error' });
+    res.status(status).json({ error: (err.expose || status < 500) ? String(err.message) : 'internal_error' });
   });
 
   return app;

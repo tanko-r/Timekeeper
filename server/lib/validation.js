@@ -35,9 +35,8 @@ export function validateEntry(entry, settings = {}) {
   }
 
   if (narrative) {
-    const lower = narrative.toLowerCase();
     for (const phrase of bannedPhrases) {
-      if (phrase && lower.includes(String(phrase).toLowerCase())) {
+      if (phrase && phraseRe(phrase).test(narrative)) {
         add('warn', 'banned_phrase',
           `Narrative uses vague phrase "${phrase}".`);
         break;
@@ -69,6 +68,12 @@ export function validateEntry(entry, settings = {}) {
   }
 
   return findings;
+}
+
+// Word-boundary match so "network online" doesn't trip "work on".
+function phraseRe(phrase) {
+  const escaped = String(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escaped}\\b`, 'i');
 }
 
 export function canFinalize(entry, settings = {}) {

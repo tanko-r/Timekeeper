@@ -27,10 +27,12 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
       ? e.tasks
       : [{ task_code: '', duration: e.total }];
     for (const t of lines) {
+      // Durations go out as stored numbers — display rounding must never
+      // change what the billing system receives.
       csvRows.push([
         e.date, e.cm.cm_number, e.cm.short_name, billable,
-        t.task_code, durationLabel(t.duration, increment),
-        e.narrative, durationLabel(e.total, increment), e.id,
+        t.task_code, Number(t.duration) || 0,
+        e.narrative, Number(e.total) || 0, e.id,
       ]);
     }
   }
@@ -60,7 +62,9 @@ export function exportRouter({ db, clock }) {
     const result = buildExport(db, { from: b.from, to: b.to, includeDrafts: !!b.includeDrafts });
     if (b.markExported !== false && result.entry_ids.length > 0) {
       const stamp = clock().toISOString();
-      const upd = db.prepare('UPDATE entries SET exported_at=? WHERE id=?');
+      // Only finalized entries are "sent to the assistant" — a draft included
+      // for preview must still alert as unexported once finalized.
+      const upd = db.prepare("UPDATE entries SET exported_at=? WHERE id=? AND status='finalized'");
       db.transaction(() => result.entry_ids.forEach((id) => upd.run(stamp, id)))();
     }
     const { entries, ...out } = result;

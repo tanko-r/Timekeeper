@@ -1,7 +1,6 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast,
-  BillableBadge, StatusChip, ValidationList,
+  html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
@@ -10,6 +9,7 @@ import { nav } from '/js/app.js';
 
 export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const { loading, data, error, reload } = useAsync(() => api.get('/api/dashboard'), [refreshKey]);
+  const [warnGate, setWarnGate] = useState(null);
 
   if (error) return html`<${ErrorBox} error=${error} />`;
   if (loading && !data) return html`<${Spinner} />`;
@@ -18,13 +18,26 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   const alerts = d.alerts;
   const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0 || alerts.unexportedFinalized > 0;
 
-  async function finalizeToday() {
-    const r = await api.post('/api/finalize-day', { date: d.date, ack: true });
-    if (r.blocked.length > 0) {
-      emitToast(`${r.finalized.length} finalized — ${r.blocked.length} blocked (missing narrative?)`, { error: true });
+  // Two-step finalize: warnings must be seen before they're acknowledged.
+  async function finalizeToday(ack = false) {
+    const r = await api.post('/api/finalize-day', { date: d.date, ack });
+    const warnOnly = r.blocked.filter((b) => b.blocks.length === 0);
+    const hard = r.blocked.length - warnOnly.length;
+    if (!ack && warnOnly.length > 0) {
+      const msgs = [...new Set(warnOnly.flatMap((b) => b.warns.map((w) => w.message)))].slice(0, 4);
+      setWarnGate({
+        count: warnOnly.length,
+        message: `${warnOnly.length} ${warnOnly.length === 1 ? 'entry has' : 'entries have'} validation warnings: ${msgs.join(' · ')}`,
+      });
+      if (r.finalized.length) emitToast(`${r.finalized.length} clean ${r.finalized.length === 1 ? 'entry' : 'entries'} finalized`);
+      bumpRefresh();
+      return;
+    }
+    if (hard > 0) {
+      emitToast(`${r.finalized.length} finalized — ${hard} blocked (missing narrative?). Open them from the banner.`, { error: true });
     } else if (r.finalized.length > 0) {
       emitToast(`Finalized ${r.finalized.length} ${r.finalized.length === 1 ? 'entry' : 'entries'}`);
-    } else {
+    } else if (!ack) {
       emitToast('Nothing to finalize today.');
     }
     bumpRefresh();
@@ -83,5 +96,11 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
     </div>
     <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />
+
+    ${warnGate ? html`
+      <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"
+        message=${warnGate.message}
+        onConfirm=${() => finalizeToday(true)}
+        onClose=${() => setWarnGate(null)} />` : null}
   `;
 }
