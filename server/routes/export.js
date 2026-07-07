@@ -3,6 +3,7 @@ import { getSetting } from '../db.js';
 import { isValidDate } from '../lib/dates.js';
 import { toCsv } from '../lib/csv.js';
 import { durationLabel } from '../lib/narrative.js';
+import { formatTimEntries } from '../lib/tim.js';
 import { enrich } from './entries.js';
 
 export const CSV_HEADER = [
@@ -68,6 +69,7 @@ export function exportRouter({ db, clock }) {
       db.transaction(() => result.entry_ids.forEach((id) => upd.run(stamp, id)))();
     }
     const { entries, ...out } = result;
+    out.tim = formatTimEntries(entries, getSetting(db, 'tim') || {}, { now: clock().toISOString() });
     res.json(out);
   });
 

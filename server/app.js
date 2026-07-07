@@ -11,6 +11,7 @@ import { statsRouter } from './routes/stats.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { authRouter, authGuard, originCheck } from './auth.js';
 import { backupRouter } from './routes/backup.js';
+import { aiRouter } from './routes/ai.js';
 
 // App factory. deps = { db, config, clock } — clock injectable for tests.
 export function createApp(deps) {
@@ -34,6 +35,7 @@ export function createApp(deps) {
   app.use('/api', statsRouter(deps));
   app.use('/api', dashboardRouter(deps));
   app.use('/api', backupRouter(deps));
+  app.use('/api', aiRouter(deps));
 
   // JSON 404 for unknown API routes (registered after real routes are mounted).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
