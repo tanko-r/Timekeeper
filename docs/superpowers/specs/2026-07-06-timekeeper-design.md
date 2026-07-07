@@ -115,3 +115,18 @@ audit_log(id PK, entry_id, action TEXT, detail TEXT/*json diff*/, created_at)
 ## Out of scope
 
 Multi-user, direct Intapp/billing-system API integration, mobile app (responsive web only), Cloudflare Access wiring, HTTPS-on-LAN.
+
+---
+
+## Round 2 — 2026-07-06 evening (edits.txt)
+
+David's punch list, interpreted (⚠️ = judgment call to ratify):
+
+1. **Timer model change** (items 2,3,7): a timer's clock is now a **day accumulator** — it keeps its running total across start/stops all day. Each **stop** files/updates ONE linked draft entry for today (`total = clock`, rounded to tenths) and pops a **narrative prompt** (with AI assist). "New entry" action (context menu) zeroes the clock and unlinks — the old entry is kept, subsequent time files to a fresh entry. Clock is editable in place: click to type, ± buttons step 0.1h; all times tenths. ⚠️ Pause as a separate concept is gone — Start/Stop only (stopping is non-destructive now, so pause is redundant). Old ask/append/new stop setting removed.
+2. **Entry allocation** (item 9): the entry **Total** is primary (from the timer or typed); task lines **divide** it. Editor shows an unallocated remainder; new lines default to the remainder; "split evenly" helper; sum≠total stays a warning. The zip example carried no task UI — this follows the edits.txt sentence.
+3. **Groups** (items 1,12): named collapsible timer groups, drag-and-drop within/between groups, A-Z sort (by CM short name) within groups.
+4. **Density** (item 4): compact cards (~150px), actions consolidated into a **right-click context menu** (item 5): start N min ago (1/5/10/30/60), start at last stop, ±10 min, ±0.1h, new entry (zero clock), duplicate, edit, move to group, open today's entry, delete. Also reachable via a ⋯ button.
+5. **.TIM export** (from the zip — its real payload): generate DTE Axiom/TimeSaver import lines per finalized entry, using the prototype's exact field set; firm constants (email, timekeeper ID, U2 code) live in Settings, seeded from the zip's values. Offered alongside CSV.
+6. **AI narrative expand** (item 10): local Ollama (`gemma4:12b` / `llama3.1:8b` — both already pulled; selectable, plus any local model). Brief description → professional narrative; optional checkbox also splits it into task lines dividing the Total. Off by default; localhost only; degrades gracefully when Ollama is down.
+7. **SVG icons** (item 11): Lucide (ISC-licensed) vendored as inline SVG components, ~19px (≈20% larger than the emoji they replace).
+8. **Bug** (item 8): CM creation inside the New Timer dialog — nested `<form>` (NewCmModal's form inside TimerModal's form; browsers drop the inner tag, so the inner submit posted the outer form). Fix: modals render through a portal + de-nest forms.
