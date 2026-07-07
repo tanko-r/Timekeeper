@@ -1,9 +1,12 @@
 // Shared UI toolkit: htm binding, hooks, formatting, and small widgets.
 import htm from '/vendor/htm.module.js';
+import { Icon } from '/js/icons.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
 export const { useState, useEffect, useRef, useMemo, useCallback } = React;
+export const { createPortal } = window.ReactDOM;
+export { Icon };
 
 // ---------- events (toasts, undo) ----------
 
@@ -115,27 +118,84 @@ export function BillableBadge({ billable }) {
 
 export function StatusChip({ entry }) {
   if (entry.status === 'finalized') {
-    return html`<span class="chip chip-finalized" title=${'Finalized ' + fmtStamp(entry.finalized_at)}>🔒 finalized</span>`;
+    return html`<span class="chip chip-finalized" title=${'Finalized ' + fmtStamp(entry.finalized_at)}>
+      <${Icon} name="lock" size=${12} /> finalized</span>`;
   }
   return html`<span class="chip chip-draft">draft</span>`;
 }
 
+// Decimal-hours label for a live clock, e.g. 5040s → "1.4"
+export function fmtTenths(seconds) {
+  return (Math.round((seconds / 3600) * 10) / 10).toFixed(1);
+}
+
+// Rendered through a portal: modals never nest inside another component's DOM
+// (a nested <form> inside a parent form gets dropped by the browser — the bug
+// that broke CM creation inside the New Timer dialog).
 export function Modal({ title, onClose, children, wide }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
   }, [onClose]);
-  return html`
-    <div class="modal-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
+  return createPortal(html`
+    <div class="modal-backdrop" onMouseDown=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div class=${'modal' + (wide ? ' modal-wide' : '')} role="dialog" aria-label=${title}>
         <div class="modal-head">
           <h3>${title}</h3>
-          <button class="btn btn-ghost" onClick=${onClose} aria-label="Close">✕</button>
+          <button class="btn btn-ghost" onClick=${onClose} aria-label="Close"><${Icon} name="x" /></button>
         </div>
         <div class="modal-body">${children}</div>
       </div>
-    </div>`;
+    </div>`, document.body);
+}
+
+// Right-click menu at a fixed position. items: {label, icon?, onClick,
+// disabled?, danger?, hr?, custom? (render fn — row supplies its own content)}
+export function ContextMenu({ x, y, items, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const away = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    const key = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('contextmenu', away);
+    document.addEventListener('keydown', key);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('contextmenu', away);
+      document.removeEventListener('keydown', key);
+    };
+  }, [onClose]);
+
+  // keep the menu on-screen
+  const style = {
+    left: Math.min(x, window.innerWidth - 280) + 'px',
+    top: Math.min(y, window.innerHeight - Math.min(items.length * 34 + 16, 480)) + 'px',
+  };
+
+  return createPortal(html`
+    <div class="ctx-menu" ref=${ref} style=${style} role="menu">
+      ${items.map((item, i) => {
+        if (item.hr) return html`<div key=${i} class="ctx-hr"></div>`;
+        if (item.custom) return html`<div key=${i} class="ctx-custom">${item.custom()}</div>`;
+        return html`
+          <button key=${i} class=${'ctx-item' + (item.danger ? ' danger' : '')}
+            disabled=${item.disabled}
+            onClick=${() => { onClose(); item.onClick(); }}>
+            ${item.icon ? html`<${Icon} name=${item.icon} size=${16} />` : html`<span class="ctx-spacer"></span>`}
+            <span>${item.label}</span>
+          </button>`;
+      })}
+    </div>`, document.body);
+}
+
+// Even split helper mirroring the server's tenth allocation.
+export function splitTenthsEvenly(total, n) {
+  if (n <= 0) return [];
+  const units = Math.max(0, Math.round(total * 10));
+  const base = Math.floor(units / n);
+  const extra = units - base * n;
+  return Array.from({ length: n }, (_, i) => (base + (i < extra ? 1 : 0)) / 10);
 }
 
 export function Confirm({ title, message, confirmLabel = 'Confirm', danger, onConfirm, onClose }) {
