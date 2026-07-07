@@ -17,9 +17,19 @@ export function SettingsView({ settings, reloadSettings, authState, reloadAuth }
 
 function AiCard({ settings, reloadSettings }) {
   const [status, setStatus] = useState(null);
+  const [prompt, setPrompt] = useState(null); // null = not touched yet
   const cfg = settings.ai || {};
   const reload = () => api.get('/api/ai/status').then(setStatus).catch(() => {});
   useEffect(() => { reload(); }, []);
+
+  const effectivePrompt = prompt ?? (cfg.systemPrompt || status?.defaultPrompt || '');
+  const isCustom = status && effectivePrompt.trim() !== (status.defaultPrompt || '').trim();
+
+  async function savePrompt(value) {
+    // storing '' keeps the built-in default (and future improvements to it)
+    const store = status && value.trim() === status.defaultPrompt.trim() ? '' : value;
+    await save({ ai: { systemPrompt: store } }, reloadSettings);
+  }
 
   // David's picks float to the top of the model list.
   const preferred = ['gemma4:12b', 'llama3.1:8b'];
@@ -54,6 +64,19 @@ function AiCard({ settings, reloadSettings }) {
           <input type="text" defaultValue=${cfg.url} style=${{ minWidth: '220px' }}
             onBlur=${(e) => save({ ai: { url: e.target.value.trim() } }, reloadSettings).then(reload)} />
         <//>
+      </div>
+      <${Field} label=${`System prompt${isCustom ? ' (custom)' : ' (default)'}`}
+        hint="How the model is instructed. Your task-code list and the JSON output format are always appended automatically, so editing this can't break the feature.">
+        <textarea rows="7" value=${effectivePrompt} spellcheck="false"
+          onInput=${(e) => setPrompt(e.target.value)}
+          onBlur=${(e) => savePrompt(e.target.value)}></textarea>
+      <//>
+      <div class="row">
+        ${isCustom ? html`
+          <button class="btn btn-sm" onClick=${async () => {
+            setPrompt(status.defaultPrompt);
+            await savePrompt(status.defaultPrompt);
+          }}>Reset to default</button>` : null}
       </div>
     </div>`;
 }

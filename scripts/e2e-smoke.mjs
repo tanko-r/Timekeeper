@@ -136,7 +136,7 @@ await step('dashboard shows the entry and meter', async () => {
   await waitFor('.meter-bar');
 });
 
-await step('create timer; sub-increment stop keeps the clock', async () => {
+await step('create timer; a sub-2s stop reverts as if nothing happened', async () => {
   await page.click('.timer-new');
   await type('.modal input[placeholder="e.g. Acme — research"]', 'Acme research');
   await page.click('.modal .cmpicker input');
@@ -145,13 +145,13 @@ await step('create timer; sub-increment stop keeps the clock', async () => {
   await clickText('.modal button', 'Create');
   await waitFor('.timer-card');
   await page.click('.timer-card button[title="Start"]');
-  await sleep(1400);
+  await sleep(1200);
   await page.click('.timer-card button[title="Stop & file time"]');
   await sleep(500);
   const clock = await page.$eval('.timer-clock', (el) => el.textContent.trim());
-  if (clock !== '0.0') throw new Error(`expected 0.0 tenths, got ${clock}`);
+  if (clock !== '0.0') throw new Error(`expected 0.0 tenths after misclick, got ${clock}`);
   const sub = await page.$eval('.timer-sub .mono', (el) => el.textContent.trim());
-  if (!/00:0[12]/.test(sub)) throw new Error(`sub-clock lost the seconds: ${sub}`);
+  if (sub !== '00:00') throw new Error(`misclick must fully revert, got ${sub}`);
 });
 
 await step('context menu: backdated start (10m ago) → stop → narrative popup', async () => {

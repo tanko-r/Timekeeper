@@ -39,7 +39,7 @@ test('settings defaults seeded as JSON', () => {
   assert.equal(get('validation').blockBillingHours, 3.0);
   assert.equal(get('validation').minIncrement, 0.1);
   assert.equal(get('rounding').increment, 0.1);
-  assert.equal(get('rounding').mode, 'nearest');
+  assert.equal(get('rounding').mode, 'up');
   assert.equal(get('targets').dailyHours, 8.0);
   assert.equal(get('idleNudgeHours'), 3);
   assert.equal(get('backup').keep, 14);
@@ -93,6 +93,19 @@ test('deleting an entry cascades to its task lines', () => {
   db.prepare('DELETE FROM entries WHERE id=?').run(e.lastInsertRowid);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM entry_tasks').get().c, 0);
   db.close();
+});
+
+test('migration v3 flips a pre-existing rounding mode to up', () => {
+  const { path, cleanup } = tempDbPath();
+  const db1 = openDb(path);
+  // simulate a pre-v3 database that still has nearest-rounding
+  db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
+  db1.pragma('user_version = 2');
+  db1.close();
+  const db2 = openDb(path);
+  assert.equal(JSON.parse(db2.prepare("SELECT value FROM settings WHERE key='rounding'").get().value).mode, 'up');
+  db2.close();
+  cleanup();
 });
 
 test('deleting a seeded task code survives reopen (no resurrection)', () => {

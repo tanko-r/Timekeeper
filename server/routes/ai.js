@@ -14,16 +14,18 @@ function parseJsonLoose(s) {
   return null;
 }
 
-function systemPrompt(codes) {
-  return `You are a legal billing assistant for an attorney. The user gives a brief, informal description of legal work performed. You expand it into (1) a professional billing narrative and (2) its component tasks.
+// The editable part of the prompt (Settings → AI). The format contract below
+// is ALWAYS appended so custom instructions can't break response parsing.
+export const DEFAULT_AI_INSTRUCTIONS = `You are a legal billing assistant for an attorney. The user gives a brief, informal description of legal work performed. You expand it into (1) a professional billing narrative and (2) its component tasks.
 
 Rules for the narrative:
 - Specific, professional billing language with concrete action verbs (reviewed, drafted, revised, analyzed, telephone conference with, correspondence with).
 - Never use vague phrases like "work on", "attention to", or "review file".
 - No client-confidential embellishment: only expand on what the user said; do not invent facts, names, or documents.
-- 1–3 sentences.
+- 1–3 sentences.`;
 
-Rules for tasks:
+function formatContract(codes) {
+  return `Rules for tasks:
 - Break the work into 1–5 component tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
 - fragment: a short lowercase action phrase for that task suitable for parenthetical task-billing, e.g. "review lease agreement".
@@ -31,6 +33,11 @@ Rules for tasks:
 
 Respond with ONLY this JSON, no other text:
 {"narrative": "...", "tasks": [{"task_code": "...", "fragment": "...", "share": 0.5}]}`;
+}
+
+function systemPrompt(codes, custom) {
+  const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
+  return `${instructions}\n\n${formatContract(codes)}`;
 }
 
 export function aiRouter({ db }) {
@@ -48,7 +55,11 @@ export function aiRouter({ db }) {
         reachable = true;
       }
     } catch { /* ollama down — reported below */ }
-    res.json({ enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models });
+    res.json({
+      enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
+      systemPrompt: cfg.systemPrompt || '',
+      defaultPrompt: DEFAULT_AI_INSTRUCTIONS,
+    });
   });
 
   r.post('/ai/expand', async (req, res) => {
@@ -73,7 +84,7 @@ export function aiRouter({ db }) {
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
-            { role: 'system', content: systemPrompt(codes) },
+            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) },
             {
               role: 'user',
               content: totalHours

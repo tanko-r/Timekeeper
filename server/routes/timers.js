@@ -222,6 +222,18 @@ export function timersRouter({ db, clock }) {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
 
+    // Misclick grace: a running stretch of ≤2 seconds vanishes entirely —
+    // nothing accumulates, nothing files, the last-stop anchor doesn't move.
+    if (timer.running && timer.last_started_at
+      && clock().getTime() - Date.parse(timer.last_started_at) <= 2000) {
+      db.prepare('UPDATE timers SET running=0, last_started_at=NULL WHERE id=?').run(timer.id);
+      return res.json({
+        entry: null, hours: 0, discarded: true,
+        seconds: timer.accumulated_seconds,
+        timer: withElapsed(getTimer.get(timer.id)),
+      });
+    }
+
     const seconds = elapsedSeconds(timer, clock().getTime());
     db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
       .run(seconds, now(), timer.id);

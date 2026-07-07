@@ -34,11 +34,11 @@ test('day accumulator: repeated start/stop grows ONE linked entry, clock never z
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(1200); // 20 min
     const stop1 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(stop1.hours, 0.3); // 1200s → 0.3
+    assert.equal(stop1.hours, 0.4); // 1200s → rounds UP to 0.4
     assert.ok(stop1.entry);
-    assert.equal(stop1.entry.total, 0.3);
+    assert.equal(stop1.entry.total, 0.4);
     assert.equal(stop1.entry.tasks.length, 1);
-    assert.equal(stop1.entry.tasks[0].duration, 0.3);
+    assert.equal(stop1.entry.tasks[0].duration, 0.4);
 
     let list = (await t.fetchJson('GET', '/api/timers')).body;
     assert.equal(list[0].running, 0);
@@ -158,18 +158,44 @@ test('backdated start: minutesAgo and atLastStop', () =>
     assert.equal(r.status, 409);
   }));
 
-test('stop under half a tenth: nothing filed, clock preserved', () =>
+test('misclick grace: stop within 2s of starting reverts as if nothing happened', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Tiny', cm_id: cm.id })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
-    clock.advance(60);
+    clock.advance(1);
     const stopped = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
     assert.equal(stopped.hours, 0);
     assert.equal(stopped.entry, null);
-    const list = (await t.fetchJson('GET', '/api/timers')).body;
-    assert.equal(list[0].elapsed_seconds, 60, 'sub-increment time is kept, not discarded');
+    assert.equal(stopped.discarded, true);
+    let list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].elapsed_seconds, 0, 'back to zero as if nothing happened');
     assert.equal(list[0].running, 0);
+    assert.equal(list[0].last_stopped_at, null, 'a misclick must not move the last-stop anchor');
     assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 0);
+
+    // with prior time on the clock, only the sub-2s segment is discarded
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`); // files 0.5
+    const anchor = (await t.fetchJson('GET', '/api/timers')).body[0].last_stopped_at;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2);
+    const mis = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(mis.discarded, true);
+    list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].elapsed_seconds, 1800, 'day total untouched by the misclick');
+    assert.equal(list[0].last_stopped_at, anchor, 'anchor unchanged');
+    assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 1);
+  }));
+
+test('a 3-second stop files 0.1 (everything rounds up)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3);
+    const stopped = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stopped.hours, 0.1);
+    assert.equal(stopped.entry.total, 0.1);
   }));
 
 test('linked entry finalized meanwhile → stop rolls into a new entry automatically', () =>

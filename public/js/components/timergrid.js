@@ -60,8 +60,10 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     if (result.entry) {
       setStopPopup({ timer, result });
       onEntryChanged();
+    } else if (result.discarded) {
+      emitToast('Misclick (under 2s) — nothing recorded.');
     } else {
-      emitToast(`Under 0.1h so far — clock keeps counting (${fmtClock(result.seconds)}).`);
+      emitToast(`Nothing to file yet — clock keeps counting (${fmtClock(result.seconds)}).`);
     }
   }, [reload, onEntryChanged]);
 
@@ -254,6 +256,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
             <div class="timer-grid">
               ${list.map((t) => html`
                 <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                  roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
                   onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
                   onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
                   onMenu=${(x, y) => setMenu({ x, y, timer: t })}
@@ -296,7 +299,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const idle = timer.running && secs > idleAfter;
@@ -333,8 +336,8 @@ function TimerCard({ timer, secs, idleAfter, onStart, onStop, onDelta, onSet, on
             onBlur=${commitClock}
             onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
           <button class="timer-clock mono" title="Click to edit (decimal hours)"
-            onClick=${() => { setClockText(fmtTenths(secs)); setEditingClock(true); }}>
-            ${fmtTenths(secs)}
+            onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
+            ${fmtTenths(secs, roundMode)}
           </button>`}
         <button class="btn btn-ghost btn-sm nudge" title="+0.1h" onClick=${() => onDelta(0.1)}>
           <${Icon} name="plus" size=${13} /></button>

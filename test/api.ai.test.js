@@ -4,15 +4,21 @@ import { createServer } from 'node:http';
 import { startTestServer } from './helpers.js';
 import { setSetting, getSetting } from '../server/db.js';
 
-// Stub Ollama server.
+// Stub Ollama server; records the last /api/chat request body.
 function startStubOllama(chatBody) {
   return new Promise((resolve) => {
+    const state = { lastChat: null };
     const srv = createServer((req, res) => {
       res.setHeader('content-type', 'application/json');
       if (req.url === '/api/tags') {
         res.end(JSON.stringify({ models: [{ name: 'llama3.1:8b' }, { name: 'gemma4:12b' }] }));
       } else if (req.url === '/api/chat') {
-        res.end(JSON.stringify({ message: { role: 'assistant', content: chatBody } }));
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          state.lastChat = JSON.parse(body);
+          res.end(JSON.stringify({ message: { role: 'assistant', content: chatBody } }));
+        });
       } else {
         res.statusCode = 404;
         res.end('{}');
@@ -20,6 +26,7 @@ function startStubOllama(chatBody) {
     });
     srv.listen(0, '127.0.0.1', () => resolve({
       url: `http://127.0.0.1:${srv.address().port}`,
+      state,
       close: () => new Promise((r) => srv.close(r)),
     }));
   });
@@ -77,6 +84,24 @@ test('ai expand is refused when disabled; unreachable ollama is a clean 502', as
     const dead = await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work', totalHours: 1 });
     assert.equal(dead.status, 502);
   } finally { await t.close(); }
+});
+
+test('custom system prompt is used, with the format contract always appended', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    const custom = 'Always write in the third person about Attorney Cole.';
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url, systemPrompt: custom });
+    await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work' });
+    const system = stub.state.lastChat.messages[0].content;
+    assert.ok(system.startsWith(custom), 'custom instructions lead the prompt');
+    assert.ok(system.includes('task_code MUST be one of'), 'format contract still appended');
+    assert.ok(system.includes('Respond with ONLY this JSON'), 'JSON contract still appended');
+
+    const status = (await t.fetchJson('GET', '/api/ai/status')).body;
+    assert.equal(status.systemPrompt, custom);
+    assert.ok(status.defaultPrompt.length > 50, 'default instructions exposed for the UI');
+  } finally { await t.close(); await stub.close(); }
 });
 
 test('ai expand survives fenced/dirty model output', async () => {

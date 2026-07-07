@@ -124,9 +124,12 @@ export function StatusChip({ entry }) {
   return html`<span class="chip chip-draft">draft</span>`;
 }
 
-// Decimal-hours label for a live clock, e.g. 5040s → "1.4"
-export function fmtTenths(seconds) {
-  return (Math.round((seconds / 3600) * 10) / 10).toFixed(1);
+// Decimal-hours label for a live clock. Default mirrors the house rule: round
+// UP to the next tenth, so the card shows exactly what a stop would file.
+export function fmtTenths(seconds, mode = 'up') {
+  const h = seconds / 3600;
+  const t = mode === 'up' ? Math.ceil(h * 10 - 1e-9) / 10 : Math.round(h * 10) / 10;
+  return Math.max(0, t).toFixed(1);
 }
 
 // Rendered through a portal: modals never nest inside another component's DOM

@@ -110,6 +110,10 @@ const MIGRATIONS = [
   ALTER TABLE timers ADD COLUMN linked_entry_id INTEGER;
   ALTER TABLE timers ADD COLUMN last_stopped_at TEXT;
   `,
+  // v3 — house rule: all time rounds UP to the next tenth
+  `
+  UPDATE settings SET value = json_set(value, '$.mode', 'up') WHERE key = 'rounding';
+  `,
 ];
 
 const SEED_SETTINGS = {
@@ -119,7 +123,7 @@ const SEED_SETTINGS = {
     blockBillingHours: 3.0,
     minIncrement: 0.1,
   },
-  rounding: { enabled: true, increment: 0.1, mode: 'nearest' },
+  rounding: { enabled: true, increment: 0.1, mode: 'up' },
   targets: { dailyHours: 8.0 },
   idleNudgeHours: 3,
   backup: { keep: 14 },
