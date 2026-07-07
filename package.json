@@ -1,0 +1,24 @@
+{
+  "name": "timekeeper",
+  "version": "1.0.0",
+  "description": "Self-hosted single-user attorney timekeeping (Intapp Time replacement)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.4.1",
+    "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "htm": "3.1.1",
+    "puppeteer-core": "^25.3.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}
