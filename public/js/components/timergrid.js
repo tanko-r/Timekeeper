@@ -1,32 +1,35 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtHours, emitToast, Modal, Confirm, Field,
+  fmtClock, fmtHours, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 
-// Live timer grid. Server state is authoritative; we tick locally between polls.
+// Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
+// drag-and-drop, day-accumulator clocks that are directly editable.
+
 export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [timers, setTimers] = useState(null);
+  const [groups, setGroups] = useState([]);
   const [fetchedAt, setFetchedAt] = useState(Date.now());
   const [, forceTick] = useState(0);
-  const [editing, setEditing] = useState(null);   // timer | 'new'
-  const [stopping, setStopping] = useState(null); // {timer, ctx}
+  const [editing, setEditing] = useState(null);       // timer | 'new'
+  const [groupModal, setGroupModal] = useState(null); // 'new' | group
+  const [menu, setMenu] = useState(null);             // {x, y, timer}
+  const [stopPopup, setStopPopup] = useState(null);   // {timer, result}
   const [deleting, setDeleting] = useState(null);
   const [taskCodes, setTaskCodes] = useState([]);
+  const dragId = useRef(null);
 
   const reload = useCallback(async () => {
-    const rows = await api.get('/api/timers');
-    setTimers(rows);
+    const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
+    setTimers(t);
+    setGroups(g);
     setFetchedAt(Date.now());
   }, []);
 
   useEffect(() => { reload().catch(() => {}); }, [reload]);
-  useEffect(() => {
-    api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
-  }, []);
-
-  // poll every 5s; tick every 1s for running timers
+  useEffect(() => { api.get('/api/task-codes').then(setTaskCodes).catch(() => {}); }, []);
   useEffect(() => {
     const poll = setInterval(() => reload().catch(() => {}), 5000);
     const tick = setInterval(() => forceTick((x) => x + 1), 1000);
@@ -39,50 +42,51 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     return Math.floor(s);
   }, [fetchedAt]);
 
-  const start = useCallback(async (timer) => {
-    const r = await api.post(`/api/timers/${timer.id}/start`);
+  // ---------- actions ----------
+
+  const guard = (p) => p.catch((e) => emitToast(e.message, { error: true }));
+
+  const start = useCallback(async (timer, opts = {}) => {
+    const r = await api.post(`/api/timers/${timer.id}/start`, opts);
     localStorage.setItem('tk:lastTimer', String(timer.id));
-    if (r.warning) emitToast(`⚠️ ${r.warning}`);
+    if (r.warning) emitToast(`⏱ ${r.warning}`);
     await reload();
   }, [reload]);
 
-  const pause = useCallback(async (timer) => {
-    await api.post(`/api/timers/${timer.id}/pause`);
+  const stop = useCallback(async (timer) => {
     localStorage.setItem('tk:lastTimer', String(timer.id));
+    const result = await api.post(`/api/timers/${timer.id}/stop`);
     await reload();
-  }, [reload]);
-
-  const beginStop = useCallback(async (timer) => {
-    localStorage.setItem('tk:lastTimer', String(timer.id));
-    const ctx = await api.get(`/api/timers/${timer.id}/stop-context`);
-    if (ctx.hours_preview <= 0) {
-      await api.post(`/api/timers/${timer.id}/stop`, { action: 'new' });
-      emitToast('Under the minimum increment — time discarded, clock reset.');
-      await reload();
-      return;
-    }
-    const pref = settings.timerStopAction || 'ask';
-    if (pref === 'new' || (pref === 'append' && ctx.todayDrafts.length === 0)) {
-      await doStop(timer, 'new', null);
-    } else if (pref === 'append' && ctx.todayDrafts.length > 0) {
-      await doStop(timer, 'append', ctx.todayDrafts[0].id);
-    } else {
-      setStopping({ timer, ctx });
-    }
-  }, [settings, reload]); // eslint-disable-line
-
-  async function doStop(timer, action, entryId, remember) {
-    const r = await api.post(`/api/timers/${timer.id}/stop`, { action, entry_id: entryId || undefined });
-    setStopping(null);
-    if (remember) await api.patch('/api/settings', { timerStopAction: action });
-    await reload();
-    if (r.entry) {
-      emitToast(`${fmtHours(r.hours)}h ${r.appended ? 'added to' : 'entered for'} ${r.entry.cm.short_name}`, {
-        actionLabel: 'Edit', action: () => openEditor({ id: r.entry.id }),
-      });
+    if (result.entry) {
+      setStopPopup({ timer, result });
       onEntryChanged();
+    } else {
+      emitToast(`Under 0.1h so far — clock keeps counting (${fmtClock(result.seconds)}).`);
     }
-  }
+  }, [reload, onEntryChanged]);
+
+  const clockDelta = useCallback(async (timer, deltaHours) => {
+    const r = await api.put(`/api/timers/${timer.id}/clock`, { deltaHours });
+    if (r.entry) onEntryChanged();
+    await reload();
+  }, [reload, onEntryChanged]);
+
+  const clockSet = useCallback(async (timer, hours) => {
+    const r = await api.put(`/api/timers/${timer.id}/clock`, { hours });
+    if (r.entry) onEntryChanged();
+    await reload();
+  }, [reload, onEntryChanged]);
+
+  const fresh = useCallback(async (timer) => {
+    await api.post(`/api/timers/${timer.id}/fresh`);
+    emitToast('Clock zeroed — next stop files a new entry. Today’s entry kept.');
+    await reload();
+  }, [reload]);
+
+  const duplicate = useCallback(async (timer) => {
+    await api.post(`/api/timers/${timer.id}/duplicate`);
+    await reload();
+  }, [reload]);
 
   // 't' shortcut: toggle last-used timer
   useEffect(() => {
@@ -90,62 +94,192 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       if (!timers || timers.length === 0) return;
       const lastId = Number(localStorage.getItem('tk:lastTimer'));
       const timer = timers.find((t) => t.id === lastId) || timers[0];
-      if (timer.running) beginStop(timer).catch((e) => emitToast(e.message, { error: true }));
-      else start(timer).catch((e) => emitToast(e.message, { error: true }));
+      guard(timer.running ? stop(timer) : start(timer));
     };
     window.addEventListener('tk:toggle-last-timer', onToggle);
     return () => window.removeEventListener('tk:toggle-last-timer', onToggle);
-  }, [timers, start, beginStop]);
+  }, [timers, start, stop]);
 
-  async function move(timer, dir) {
-    const ids = timers.map((t) => t.id);
-    const i = ids.indexOf(timer.id);
-    const j = i + dir;
-    if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    await api.put('/api/timers/order', { ids });
+  // ---------- ordering ----------
+
+  function visualOrder(list, groupsList) {
+    const sections = [...groupsList.map((g) => g.id), null];
+    return sections.flatMap((gid) => list.filter((t) => (t.group_id ?? null) === gid));
+  }
+
+  async function persistOrder(list) {
+    await api.put('/api/timers/order', { ids: visualOrder(list, groups).map((t) => t.id) });
     await reload();
   }
 
+  async function sortAZ() {
+    const sorted = [...timers].sort((a, b) =>
+      (a.cm_short_name || '').localeCompare(b.cm_short_name || '') || a.name.localeCompare(b.name));
+    await persistOrder(sorted);
+    emitToast('Sorted A–Z within groups');
+  }
+
+  async function dropOn(target) {
+    const id = dragId.current;
+    dragId.current = null;
+    if (!id) return;
+    const dragged = timers.find((t) => t.id === id);
+    if (!dragged) return;
+    const targetGroup = target.kind === 'group' ? target.groupId : (target.timer.group_id ?? null);
+    if ((dragged.group_id ?? null) !== targetGroup) {
+      await api.patch(`/api/timers/${id}`, { group_id: targetGroup });
+      dragged.group_id = targetGroup;
+    }
+    let list = timers.filter((t) => t.id !== id);
+    if (target.kind === 'group') {
+      list.push(dragged); // visualOrder puts it at its group's end
+    } else {
+      const idx = list.findIndex((t) => t.id === target.timer.id);
+      list.splice(idx, 0, dragged);
+    }
+    await persistOrder(list);
+  }
+
+  // ---------- context menu ----------
+
+  function menuItems(timer) {
+    const running = !!timer.running;
+    return [
+      running
+        ? { label: 'Stop & file time', icon: 'stop', onClick: () => guard(stop(timer)) }
+        : { label: 'Start', icon: 'play', onClick: () => guard(start(timer)) },
+      {
+        custom: () => html`
+          <div class="ctx-inline">
+            <span class="muted small">Start</span>
+            ${[1, 5, 10, 30, 60].map((m) => html`
+              <button key=${m} class="btn btn-sm" disabled=${running}
+                onClick=${() => { setMenu(null); guard(start(timer, { minutesAgo: m })); }}>${m}m</button>`)}
+            <span class="muted small">ago</span>
+          </div>`,
+      },
+      {
+        label: 'Start at last stop',
+        icon: 'history',
+        disabled: running || !timer.last_stopped_at,
+        onClick: () => guard(start(timer, { atLastStop: true })),
+      },
+      { hr: true },
+      { label: '+0.1 h (6 min)', icon: 'plus', onClick: () => guard(clockDelta(timer, 0.1)) },
+      { label: '−0.1 h (6 min)', icon: 'minus', onClick: () => guard(clockDelta(timer, -0.1)) },
+      { label: '+0.2 h (12 min)', icon: 'plus', onClick: () => guard(clockDelta(timer, 0.2)) },
+      { label: '−0.2 h (12 min)', icon: 'minus', onClick: () => guard(clockDelta(timer, -0.2)) },
+      { hr: true },
+      { label: 'New entry (zero clock)', icon: 'refresh', onClick: () => guard(fresh(timer)) },
+      {
+        label: 'Open today’s entry',
+        icon: 'eye',
+        disabled: !timer.linked_entry_id,
+        onClick: () => openEditor({ id: timer.linked_entry_id }),
+      },
+      { label: 'Duplicate timer', icon: 'copy', onClick: () => guard(duplicate(timer)) },
+      {
+        custom: () => html`
+          <div class="ctx-inline">
+            <span class="muted small">Group</span>
+            <select value=${timer.group_id ?? ''} onChange=${async (e) => {
+              setMenu(null);
+              await guard(api.patch(`/api/timers/${timer.id}`, {
+                group_id: e.target.value ? Number(e.target.value) : null,
+              }).then(reload));
+            }}>
+              <option value="">Ungrouped</option>
+              ${groups.map((g) => html`<option key=${g.id} value=${g.id}>${g.name}</option>`)}
+            </select>
+          </div>`,
+      },
+      { hr: true },
+      { label: 'Edit timer…', icon: 'edit', onClick: () => setEditing(timer) },
+      { label: 'Delete timer', icon: 'trash', danger: true, onClick: () => setDeleting(timer) },
+    ];
+  }
+
+  // ---------- render ----------
+
   if (!timers) return null;
   const idleAfter = (settings.idleNudgeHours ?? 3) * 3600;
+  const hasGroups = groups.length > 0;
+  const sections = [
+    ...groups.map((g) => ({ group: g, list: timers.filter((t) => t.group_id === g.id) })),
+    { group: null, list: timers.filter((t) => t.group_id == null) },
+  ];
 
   return html`
-    <div class="timer-grid">
-      ${timers.map((t) => {
-        const secs = liveElapsed(t);
-        const idle = t.running && secs > idleAfter;
-        return html`
-          <div key=${t.id} class=${'timer-card' + (t.running ? ' running' : '')}>
-            <div class="timer-tools">
-              <button class="btn btn-ghost btn-sm" title="Move left" onClick=${() => move(t, -1)}>‹</button>
-              <button class="btn btn-ghost btn-sm" title="Move right" onClick=${() => move(t, 1)}>›</button>
-              <button class="btn btn-ghost btn-sm" title="Edit timer" onClick=${() => setEditing(t)}>✎</button>
-              <button class="btn btn-ghost btn-sm" title="Delete timer" onClick=${() => setDeleting(t)}>🗑</button>
-            </div>
-            <div class="timer-name">${t.name}</div>
-            <div class="timer-cm">${t.cm_short_name} · ${t.cm_number}${t.task_code ? ` · ${t.task_code}` : ''}</div>
-            <div class="timer-clock">${fmtClock(secs)}</div>
-            ${idle ? html`<div class="idle-nudge">⏰ running ${Math.floor(secs / 3600)}h — still working?</div>` : null}
-            <div class="timer-actions">
-              ${t.running
-                ? html`
-                  <button class="btn" onClick=${() => pause(t).catch((e) => emitToast(e.message, { error: true }))}>⏸ Pause</button>
-                  <button class="btn btn-primary" onClick=${() => beginStop(t).catch((e) => emitToast(e.message, { error: true }))}>⏹ Stop</button>`
-                : html`
-                  <button class="btn btn-primary" onClick=${() => start(t).catch((e) => emitToast(e.message, { error: true }))}>▶ Start</button>
-                  ${secs > 0 ? html`
-                    <button class="btn" onClick=${() => beginStop(t).catch((e) => emitToast(e.message, { error: true }))}>⏹ Stop</button>` : null}`}
-            </div>
-          </div>`;
-      })}
-      <button class="timer-new" onClick=${() => setEditing('new')}>＋ New timer</button>
+    <div class="section-title">
+      <h2>Timers</h2>
+      <div class="spacer" style=${{ flex: 1 }}></div>
+      <button class="btn btn-sm" title="Sort by CM name within groups" onClick=${() => guard(sortAZ())}>
+        <${Icon} name="sortAZ" size=${16} /> A–Z
+      </button>
+      <button class="btn btn-sm" onClick=${() => setGroupModal('new')}>
+        <${Icon} name="folder" size=${16} /> New group
+      </button>
+      <button class="btn btn-sm btn-primary" onClick=${() => setEditing('new')}>
+        <${Icon} name="plus" size=${16} /> New timer
+      </button>
     </div>
 
+    ${sections.map(({ group, list }) => {
+      if (!group && list.length === 0 && hasGroups) return null;
+      const collapsed = group && group.collapsed;
+      return html`
+        <div key=${group ? group.id : 'ungrouped'} class="timer-section"
+          onDragOver=${(e) => e.preventDefault()}
+          onDrop=${(e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); }}>
+          ${group || hasGroups ? html`
+            <div class="group-head">
+              ${group ? html`
+                <button class="btn btn-ghost btn-sm" title=${collapsed ? 'Expand' : 'Collapse'}
+                  onClick=${() => guard(api.patch(`/api/timer-groups/${group.id}`, { collapsed: collapsed ? 0 : 1 }).then(reload))}>
+                  <${Icon} name=${collapsed ? 'chevronRight' : 'chevronDown'} size=${16} />
+                </button>
+                <span class="group-name">${group.name}</span>
+                <span class="muted small">${list.length}</span>
+                <span class="group-tools">
+                  <button class="btn btn-ghost btn-sm" title="Rename group" onClick=${() => setGroupModal(group)}>
+                    <${Icon} name="edit" size=${14} /></button>
+                  <button class="btn btn-ghost btn-sm" title="Delete group (timers kept)"
+                    onClick=${() => guard(api.del(`/api/timer-groups/${group.id}`).then(reload))}>
+                    <${Icon} name="trash" size=${14} /></button>
+                </span>` : html`
+                <span class="group-name muted">Ungrouped</span>
+                <span class="muted small">${list.length}</span>`}
+            </div>` : null}
+          ${collapsed ? null : html`
+            <div class="timer-grid">
+              ${list.map((t) => html`
+                <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                  onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
+                  onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
+                  onMenu=${(x, y) => setMenu({ x, y, timer: t })}
+                  onDragStart=${() => { dragId.current = t.id; }}
+                  onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
+              ${list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
+            </div>`}
+        </div>`;
+    })}
+    ${timers.length === 0 ? html`
+      <button class="timer-new" onClick=${() => setEditing('new')}>
+        <${Icon} name="plus" /> Create your first timer
+      </button>` : null}
+
+    ${menu ? html`
+      <${ContextMenu} x=${menu.x} y=${menu.y} items=${menuItems(menu.timer)} onClose=${() => setMenu(null)} />` : null}
+
     ${editing ? html`
-      <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes}
+      <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes} groups=${groups}
         onDone=${async () => { setEditing(null); await reload(); }}
         onClose=${() => setEditing(null)} />` : null}
+
+    ${groupModal ? html`
+      <${GroupModal} group=${groupModal === 'new' ? null : groupModal}
+        onDone=${async () => { setGroupModal(null); await reload(); }}
+        onClose=${() => setGroupModal(null)} />` : null}
 
     ${deleting ? html`
       <${Confirm} title="Delete timer" danger confirmLabel="Delete"
@@ -153,21 +287,172 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         onConfirm=${async () => { await api.del(`/api/timers/${deleting.id}`); await reload(); }}
         onClose=${() => setDeleting(null)} />` : null}
 
-    ${stopping ? html`
-      <${StopModal} stopping=${stopping} onStop=${doStop} onClose=${() => setStopping(null)} />` : null}
+    ${stopPopup ? html`
+      <${StopPopup} popup=${stopPopup} openEditor=${openEditor}
+        onClockDeduct=${(h) => guard(clockDelta(stopPopup.timer, -h))}
+        onClose=${(changed) => { setStopPopup(null); if (changed) onEntryChanged(); reload(); }} />` : null}
   `;
 }
 
-function TimerModal({ timer, taskCodes, onDone, onClose }) {
+// ---------- compact card ----------
+
+function TimerCard({ timer, secs, idleAfter, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
+  const [editingClock, setEditingClock] = useState(false);
+  const [clockText, setClockText] = useState('');
+  const idle = timer.running && secs > idleAfter;
+
+  function commitClock() {
+    setEditingClock(false);
+    const h = Number(clockText);
+    if (Number.isFinite(h) && h >= 0) onSet(Math.round(h * 10) / 10);
+  }
+
+  return html`
+    <div class=${'timer-card' + (timer.running ? ' running' : '')}
+      draggable="true"
+      onDragStart=${(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver=${(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onDrop=${(e) => { e.preventDefault(); e.stopPropagation(); onDropOn(); }}
+      onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
+      <div class="timer-top">
+        <span class="timer-name" title=${timer.name}>${timer.name}</span>
+        <button class="btn btn-ghost btn-sm timer-more" title="Timer menu"
+          onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(r.left, r.bottom + 2); }}>
+          <${Icon} name="more" size=${15} />
+        </button>
+      </div>
+      <div class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
+        ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
+      </div>
+      <div class="timer-clock-row">
+        <button class="btn btn-ghost btn-sm nudge" title="−0.1h" onClick=${() => onDelta(-0.1)}>
+          <${Icon} name="minus" size=${13} /></button>
+        ${editingClock ? html`
+          <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
+            onInput=${(e) => setClockText(e.target.value)}
+            onBlur=${commitClock}
+            onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
+          <button class="timer-clock mono" title="Click to edit (decimal hours)"
+            onClick=${() => { setClockText(fmtTenths(secs)); setEditingClock(true); }}>
+            ${fmtTenths(secs)}
+          </button>`}
+        <button class="btn btn-ghost btn-sm nudge" title="+0.1h" onClick=${() => onDelta(0.1)}>
+          <${Icon} name="plus" size=${13} /></button>
+        <div class="spacer" style=${{ flex: 1 }}></div>
+        ${timer.running
+          ? html`<button class="btn btn-primary btn-sm" title="Stop & file time" onClick=${onStop}>
+              <${Icon} name="stop" size=${15} /></button>`
+          : html`<button class="btn btn-sm" title="Start" onClick=${onStart}>
+              <${Icon} name="play" size=${15} /></button>`}
+      </div>
+      <div class="timer-sub">
+        <span class="mono">${fmtClock(secs)}</span>
+        ${timer.linked_entry_id ? html`<span title="Linked to today’s entry"><${Icon} name="check" size=${12} /> filed</span>` : null}
+        ${idle ? html`<span class="idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
+      </div>
+    </div>`;
+}
+
+// ---------- stop popup: narrative prompt (+ AI) ----------
+
+function StopPopup({ popup, onClose, openEditor, onClockDeduct }) {
+  const { result } = popup;
+  const entry = result.entry;
+  const [narrative, setNarrative] = useState(entry.narrative || '');
+  const [ai, setAi] = useState(null); // /api/ai/status
+  const [brief, setBrief] = useState('');
+  const [split, setSplit] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tasks, setTasks] = useState(entry.tasks);
+  const changed = useRef(false);
+  const auto = tasks.filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || t.duration > 0).length >= 2;
+
+  useEffect(() => { api.get('/api/ai/status').then(setAi).catch(() => {}); }, []);
+
+  async function saveNarrative() {
+    if (!auto && narrative !== entry.narrative) {
+      await api.patch(`/api/entries/${entry.id}`, { narrative });
+      changed.current = true;
+    }
+  }
+
+  async function expand() {
+    setBusy(true);
+    try {
+      const r = await api.post('/api/ai/expand', { brief, totalHours: result.hours });
+      changed.current = true;
+      if (split && r.tasks.length > 0) {
+        const updated = await api.patch(`/api/entries/${entry.id}`, {
+          tasks: r.tasks.map((t) => ({ task_code: t.task_code, duration: t.hours ?? 0, fragment: t.fragment })),
+        });
+        setTasks(updated.tasks);
+        setNarrative(updated.narrative);
+      } else {
+        setNarrative(r.narrative);
+      }
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return html`
+    <${Modal} title=${`${fmtHours(result.hours)}h filed — ${entry.cm.short_name}`} onClose=${async () => { await saveNarrative(); onClose(changed.current); }}>
+      ${result.relinked ? html`
+        <div class="error-box" style=${{ marginBottom: '10px' }}>
+          The entry this timer was filling got finalized, so the full day clock
+          (${fmtHours(result.hours)}h) went to a <strong>new</strong> entry.
+          ${result.previousTotal ? html`
+            Already finalized earlier: ${fmtHours(result.previousTotal)}h.
+            <button class="btn btn-sm" style=${{ marginLeft: '8px' }}
+              onClick=${() => { onClockDeduct(result.previousTotal); onClose(true); }}>
+              Deduct ${fmtHours(result.previousTotal)}h from the clock
+            </button>` : null}
+        </div>` : null}
+
+      <${Field} label=${auto ? 'Narrative (auto-generated from task lines)' : 'What did you do?'}>
+        <textarea rows="3" value=${auto ? entry.narrative : narrative} readOnly=${auto}
+          placeholder="Reviewed …; drafted …; telephone conference with …"
+          onInput=${(e) => setNarrative(e.target.value)}></textarea>
+      <//>
+
+      ${ai && ai.enabled && ai.reachable ? html`
+        <div class="ai-row">
+          <input type="text" placeholder="Brief description — let ${ai.model} write it…" value=${brief}
+            onInput=${(e) => setBrief(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !busy) expand(); }} />
+          <label class="checkbox-row small"><input type="checkbox" checked=${split}
+            onChange=${(e) => setSplit(e.target.checked)} /> split into tasks</label>
+          <button class="btn" disabled=${!brief || busy} onClick=${expand}>
+            <${Icon} name="sparkles" size=${16} /> ${busy ? 'Thinking…' : 'Expand'}
+          </button>
+        </div>` : null}
+
+      <div class="row-end">
+        <button class="btn" onClick=${async () => { await saveNarrative(); onClose(changed.current); openEditor({ id: entry.id }); }}>
+          <${Icon} name="edit" size=${16} /> Open full editor
+        </button>
+        <button class="btn btn-primary" onClick=${async () => { await saveNarrative(); onClose(changed.current); }}>Done</button>
+      </div>
+    <//>`;
+}
+
+// ---------- modals ----------
+
+function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
   const [name, setName] = useState(timer ? timer.name : '');
   const [cm, setCm] = useState(timer ? { id: timer.cm_id, cm_number: timer.cm_number, short_name: timer.cm_short_name } : null);
   const [taskCode, setTaskCode] = useState(timer ? (timer.task_code || '') : '');
+  const [groupId, setGroupId] = useState(timer ? (timer.group_id ?? '') : '');
   const [error, setError] = useState(null);
 
-  async function save(e) {
-    e.preventDefault();
+  async function save() {
     try {
-      const body = { name, cm_id: cm.id, task_code: taskCode || null };
+      const body = {
+        name, cm_id: cm.id, task_code: taskCode || null,
+        group_id: groupId === '' ? null : Number(groupId),
+      };
       if (timer) await api.patch(`/api/timers/${timer.id}`, body);
       else await api.post('/api/timers', body);
       onDone();
@@ -176,55 +461,56 @@ function TimerModal({ timer, taskCodes, onDone, onClose }) {
 
   return html`
     <${Modal} title=${timer ? 'Edit timer' : 'New timer'} onClose=${onClose}>
-      <form class="grid" onSubmit=${save}>
+      <div class="grid">
         <${Field} label="Button name">
           <input type="text" value=${name} autoFocus placeholder="e.g. Acme — research"
-            onInput=${(e) => setName(e.target.value)} />
+            onInput=${(e) => setName(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim() && cm) save(); }} />
         <//>
         <${Field} label="Client/Matter">
-          <${CmPicker} value=${cm} onChange=${setCm} />
+          <${CmPicker} value=${cm} onChange=${(v) => { setCm(v); if (!name) setName(v.short_name); }} />
         <//>
-        <${Field} label="Default task code" hint="Applied to entries this timer creates">
-          <select value=${taskCode} onChange=${(e) => setTaskCode(e.target.value)}>
-            <option value="">(none)</option>
-            ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
-          </select>
-        <//>
+        <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <${Field} label="Default task code">
+            <select value=${taskCode} onChange=${(e) => setTaskCode(e.target.value)}>
+              <option value="">(none)</option>
+              ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
+            </select>
+          <//>
+          <${Field} label="Group">
+            <select value=${groupId} onChange=${(e) => setGroupId(e.target.value)}>
+              <option value="">Ungrouped</option>
+              ${groups.map((g) => html`<option key=${g.id} value=${g.id}>${g.name}</option>`)}
+            </select>
+          <//>
+        </div>
         ${error ? html`<div class="error-box">${error}</div>` : null}
         <div class="row-end">
           <button type="button" class="btn" onClick=${onClose}>Cancel</button>
-          <button class="btn btn-primary" disabled=${!name.trim() || !cm}>${timer ? 'Save' : 'Create'}</button>
+          <button class="btn btn-primary" disabled=${!name.trim() || !cm} onClick=${save}>
+            ${timer ? 'Save' : 'Create'}</button>
         </div>
-      </form>
+      </div>
     <//>`;
 }
 
-function StopModal({ stopping, onStop, onClose }) {
-  const { timer, ctx } = stopping;
-  const [remember, setRemember] = useState(false);
-  const drafts = ctx.todayDrafts;
-
+function GroupModal({ group, onDone, onClose }) {
+  const [name, setName] = useState(group ? group.name : '');
+  async function save() {
+    if (group) await api.patch(`/api/timer-groups/${group.id}`, { name });
+    else await api.post('/api/timer-groups', { name });
+    onDone();
+  }
   return html`
-    <${Modal} title=${`Stop "${timer.name}" — ${fmtHours(ctx.hours_preview)}h`} onClose=${onClose}>
-      <p class="muted small">Where should this time go?</p>
-      <div class="grid">
-        <button class="btn btn-lg" onClick=${() => onStop(timer, 'new', null, remember)}>
-          ➕ New entry for today
-        </button>
-        ${drafts.map((d) => html`
-          <button key=${d.id} class="btn btn-lg" style=${{ justifyContent: 'flex-start', textAlign: 'left' }}
-            onClick=${() => onStop(timer, 'append', d.id, remember)}>
-            <div>
-              <div>↳ Add as a task line to today’s draft (${fmtHours(d.total)}h so far)</div>
-              <div class="muted small" style=${{ fontWeight: 400 }}>
-                ${(d.narrative || '(no narrative yet)').slice(0, 90)}
-              </div>
-            </div>
-          </button>`)}
+    <${Modal} title=${group ? 'Rename group' : 'New timer group'} onClose=${onClose}>
+      <${Field} label="Group name">
+        <input type="text" value=${name} autoFocus placeholder="e.g. Litigation"
+          onInput=${(e) => setName(e.target.value)}
+          onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim()) save(); }} />
+      <//>
+      <div class="row-end">
+        <button class="btn" onClick=${onClose}>Cancel</button>
+        <button class="btn btn-primary" disabled=${!name.trim()} onClick=${save}>${group ? 'Save' : 'Create'}</button>
       </div>
-      <label class="checkbox-row" style=${{ marginTop: '12px' }}>
-        <input type="checkbox" checked=${remember} onChange=${(e) => setRemember(e.target.checked)} />
-        Always do this without asking
-      </label>
     <//>`;
 }

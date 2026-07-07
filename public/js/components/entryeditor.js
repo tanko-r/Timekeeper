@@ -2,20 +2,26 @@ import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useDebounced,
   Modal, Field, fmtHours, todayStr, emitToast, previewNarrative,
-  BillableBadge, ValidationList, fmtStamp, Spinner,
+  ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 
-const blankLine = () => ({ task_code: '', duration: 0, fragment: '' });
+const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
+const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
 
-// Entry editor drawer. spec: {id} | {template:{date?,cm?}} | {copyFrom:id}
+// Entry editor. The entry TOTAL is primary (typed or from a timer); task lines
+// divide it. spec: {id} | {template:{date?,cm?}} | {copyFrom:id}
 export function EntryEditor({ spec, settings, onClose }) {
-  const [entry, setEntry] = useState(null);       // server copy (has id) or null for unsaved
-  const [local, setLocal] = useState(null);       // editable state
+  const [entry, setEntry] = useState(null);
+  const [local, setLocal] = useState(null);
   const [saveState, setSaveState] = useState('idle');
-  const [gate, setGate] = useState(null);         // finalize 422 result
+  const [gate, setGate] = useState(null);
   const [audit, setAudit] = useState(null);
   const [taskCodes, setTaskCodes] = useState([]);
+  const [ai, setAi] = useState(null);
+  const [brief, setBrief] = useState('');
+  const [aiSplit, setAiSplit] = useState(true);
+  const [aiBusy, setAiBusy] = useState(false);
   const changedRef = useRef(false);
   const localRef = useRef(null);
   localRef.current = local;
@@ -26,6 +32,7 @@ export function EntryEditor({ spec, settings, onClose }) {
 
   useEffect(() => {
     api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
+    api.get('/api/ai/status').then(setAi).catch(() => {});
   }, []);
 
   // load / create
@@ -48,6 +55,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             cm: spec.template.cm || null,
             billable: spec.template.cm ? !!spec.template.cm.billable : true,
             narrative: '',
+            total: 0,
             tasks: [blankLine()],
             status: 'draft',
             ack_validation: 0,
@@ -66,6 +74,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       cm: e.cm,
       billable: !!e.billable,
       narrative: e.narrative,
+      total: e.total_override != null ? e.total_override : e.total,
       tasks: e.tasks.length ? e.tasks.map((t) => ({ ...t })) : [blankLine()],
       status: e.status,
       ack_validation: e.ack_validation,
@@ -76,14 +85,12 @@ export function EntryEditor({ spec, settings, onClose }) {
     (t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0);
   const isAuto = substantive.length >= 2;
   const autoNarrative = isAuto ? previewNarrative(local.tasks, increment) : null;
-  const sum = (local?.tasks || []).reduce((a, t) => a + (Number(t.duration) || 0), 0);
+  const sum = tenth((local?.tasks || []).reduce((a, t) => a + (Number(t.duration) || 0), 0));
+  const total = tenth(local?.total || 0);
+  const remaining = tenth(total - sum);
   const finalized = local?.status === 'finalized';
 
-  // ---------- persistence ----------
-  // Saves are chained through one promise so a debounced autosave and a
-  // Save/Finalize click can never issue two concurrent creates (duplicate
-  // entries) — and persist() resolves to the saved entry so callers don't
-  // depend on a not-yet-re-rendered entryRef.
+  // ---------- persistence (single-flight chain) ----------
 
   const saveChain = useRef(Promise.resolve(null));
 
@@ -91,12 +98,13 @@ export function EntryEditor({ spec, settings, onClose }) {
     const l = localRef.current;
     const e = entryRef.current;
     if (!l || l.status === 'finalized') return e;
-    if (!l.cm || !l.date) return e; // not enough to save yet
+    if (!l.cm || !l.date) return e;
     const body = {
       date: l.date,
       cm_id: l.cm.id,
       billable: l.billable ? 1 : 0,
       narrative: l.narrative,
+      total_override: l.total > 0 ? tenth(l.total) : null,
       tasks: l.tasks
         .filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0)
         .map((t) => ({ task_code: t.task_code, duration: Number(t.duration) || 0, fragment: t.fragment })),
@@ -107,10 +115,9 @@ export function EntryEditor({ spec, settings, onClose }) {
         ? await api.patch(`/api/entries/${e.id}`, body)
         : await api.post('/api/entries', body);
       changedRef.current = true;
-      entryRef.current = saved; // immediately — callers use it before re-render
+      entryRef.current = saved;
       setEntry(saved);
       setSaveState('saved');
-      // adopt server-generated narrative + validation without clobbering typing
       setLocal((cur) => {
         if (!cur) return cur;
         const next = { ...cur };
@@ -138,12 +145,47 @@ export function EntryEditor({ spec, settings, onClose }) {
     queueSave();
   }, [queueSave]);
 
+  // Total is primary. With a single line, the line mirrors it.
+  const updateTotal = useCallback((value) => {
+    setLocal((cur) => {
+      const t = Math.max(0, Number(value) || 0);
+      const next = { ...cur, total: t };
+      if (cur.tasks.length === 1) {
+        next.tasks = [{ ...cur.tasks[0], duration: tenth(t) }];
+      }
+      return next;
+    });
+    setGate(null);
+    queueSave();
+  }, [queueSave]);
+
   const updateLine = useCallback((i, patch) => {
     setLocal((cur) => {
       const tasks = cur.tasks.map((t, j) => (j === i ? { ...t, ...patch } : t));
-      return { ...cur, tasks };
+      const next = { ...cur, tasks };
+      if (tasks.length === 1 && patch.duration !== undefined) {
+        next.total = tenth(tasks[0].duration); // single line writes through
+      }
+      return next;
     });
     setGate(null);
+    queueSave();
+  }, [queueSave]);
+
+  const addLine = useCallback(() => {
+    setLocal((cur) => {
+      const s = cur.tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
+      const rem = Math.max(0, tenth((cur.total || 0) - s));
+      return { ...cur, tasks: [...cur.tasks, blankLine(rem)] };
+    });
+    queueSave();
+  }, [queueSave]);
+
+  const splitEvenly = useCallback(() => {
+    setLocal((cur) => {
+      const parts = splitTenthsEvenly(cur.total || 0, cur.tasks.length);
+      return { ...cur, tasks: cur.tasks.map((t, i) => ({ ...t, duration: parts[i] })) };
+    });
     queueSave();
   }, [queueSave]);
 
@@ -153,7 +195,6 @@ export function EntryEditor({ spec, settings, onClose }) {
     onClose(changedRef.current);
   }
 
-  // Ctrl+Enter saves & closes; Esc closes (autosaved anyway)
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -214,6 +255,31 @@ export function EntryEditor({ spec, settings, onClose }) {
     setAudit(await api.get(`/api/entries/${e.id}/audit`));
   }
 
+  async function aiExpand() {
+    setAiBusy(true);
+    try {
+      const r = await api.post('/api/ai/expand', {
+        brief, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
+      });
+      if (aiSplit && r.tasks.length > 0) {
+        const even = splitTenthsEvenly(total || sum, r.tasks.length);
+        update({
+          tasks: r.tasks.map((t, i) => ({
+            task_code: t.task_code, fragment: t.fragment,
+            duration: t.hours != null ? t.hours : even[i] || 0,
+          })),
+        });
+      } else {
+        update({ narrative: r.narrative });
+      }
+      setBrief('');
+    } catch (e) {
+      emitToast(e.body?.message || e.message, { error: true });
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   // ---------- render ----------
 
   if (!local) {
@@ -225,7 +291,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   return html`
     <${Modal} wide=${true} onClose=${flushAndClose}
       title=${finalized ? 'Time entry (finalized)' : entry ? 'Edit time entry' : 'New time entry'}>
-      <div class="grid" style=${{ gridTemplateColumns: '150px 1fr auto', alignItems: 'end' }}>
+      <div class="grid" style=${{ gridTemplateColumns: '140px 1fr 110px auto', alignItems: 'end', gap: '10px' }}>
         <${Field} label="Date">
           <input type="date" value=${local.date} disabled=${finalized}
             onChange=${(e) => update({ date: e.target.value })} />
@@ -234,6 +300,11 @@ export function EntryEditor({ spec, settings, onClose }) {
           <${CmPicker} value=${local.cm} autoFocus=${!local.cm}
             onChange=${(cm) => update({ cm, billable: !!cm.billable })} />
         <//>
+        <${Field} label="Total hours">
+          <input type="number" min="0" step=${increment} class="mono total-input"
+            value=${local.total || ''} placeholder="0.0" disabled=${finalized}
+            onInput=${(e) => updateTotal(e.target.value)} />
+        <//>
         <label class="checkbox-row" style=${{ paddingBottom: '8px' }}>
           <input type="checkbox" checked=${local.billable} disabled=${finalized}
             onChange=${(e) => update({ billable: e.target.checked })} />
@@ -241,8 +312,19 @@ export function EntryEditor({ spec, settings, onClose }) {
         </label>
       </div>
 
-      <div class="section-title"><h3 style=${{ margin: 0 }}>Task lines</h3>
-        <span class="muted small">code · hours · what you did</span></div>
+      <div class="section-title">
+        <h3 style=${{ margin: 0 }}>Task lines</h3>
+        <span class="muted small">divide the total among tasks</span>
+        <div class="spacer" style=${{ flex: 1 }}></div>
+        ${!finalized && local.tasks.length > 1 && total > 0 ? html`
+          <button class="btn btn-sm" onClick=${splitEvenly}>Split evenly</button>` : null}
+        ${remaining !== 0 && total > 0 && local.tasks.length > 0 ? html`
+          <span class=${'alloc-chip' + (remaining < 0 ? ' over' : '')}>
+            ${remaining > 0
+              ? `${fmtHours(remaining, increment)}h unallocated`
+              : `${fmtHours(-remaining, increment)}h over-allocated`}
+          </span>` : null}
+      </div>
       <div class="task-lines">
         ${local.tasks.map((t, i) => html`
           <div key=${i} class="task-line">
@@ -262,24 +344,21 @@ export function EntryEditor({ spec, settings, onClose }) {
             <div class="row" style=${{ flexWrap: 'nowrap', gap: '2px' }}>
               <div class="reorder">
                 <button type="button" title="Move up" disabled=${finalized || i === 0}
-                  onClick=${() => update({ tasks: swap(local.tasks, i, i - 1) })}>▲</button>
+                  onClick=${() => update({ tasks: swap(local.tasks, i, i - 1) })}><${Icon} name="chevronUp" size=${11} /></button>
                 <button type="button" title="Move down" disabled=${finalized || i === local.tasks.length - 1}
-                  onClick=${() => update({ tasks: swap(local.tasks, i, i + 1) })}>▼</button>
+                  onClick=${() => update({ tasks: swap(local.tasks, i, i + 1) })}><${Icon} name="chevronDown" size=${11} /></button>
               </div>
               <button type="button" class="btn btn-ghost btn-sm" title="Remove line" disabled=${finalized}
-                onClick=${() => update({ tasks: local.tasks.filter((_, j) => j !== i) })}>✕</button>
+                onClick=${() => update({ tasks: local.tasks.filter((_, j) => j !== i) })}><${Icon} name="x" size=${14} /></button>
             </div>
           </div>`)}
         <div class="row">
-          <button class="btn btn-sm" disabled=${finalized}
-            onClick=${() => update({ tasks: [...local.tasks, blankLine()] })}>＋ Add task line</button>
+          <button class="btn btn-sm" disabled=${finalized} onClick=${addLine}>
+            <${Icon} name="plus" size=${14} /> Add task line
+          </button>
           <div class="spacer" style=${{ flex: 1 }}></div>
-          <span class="muted small">Total</span>
-          ${local.tasks.length === 1 && !finalized ? html`
-            <input type="number" min="0" step=${increment} class="input-narrow mono"
-              value=${local.tasks[0].duration || ''}
-              onInput=${(e) => updateLine(0, { duration: e.target.value })} />` : html`
-            <strong class="mono">${fmtHours(sum, increment)}h</strong>`}
+          <span class="muted small">Allocated <strong class="mono">${fmtHours(sum, increment)}h</strong>
+            of <strong class="mono">${fmtHours(total, increment)}h</strong></span>
         </div>
       </div>
 
@@ -294,6 +373,21 @@ export function EntryEditor({ spec, settings, onClose }) {
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onInput=${(e) => update({ narrative: e.target.value })}></textarea>`}
       </div>
+
+      ${ai && ai.enabled && ai.reachable && !finalized ? html`
+        <div class="ai-row">
+          <input type="text" value=${brief}
+            placeholder=${`Brief description — ${ai.model} expands it…`}
+            onInput=${(e) => setBrief(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !aiBusy) aiExpand(); }} />
+          <label class="checkbox-row small">
+            <input type="checkbox" checked=${aiSplit} onChange=${(e) => setAiSplit(e.target.checked)} />
+            split into tasks
+          </label>
+          <button class="btn" disabled=${!brief || aiBusy} onClick=${aiExpand}>
+            <${Icon} name="sparkles" size=${16} /> ${aiBusy ? 'Thinking…' : 'Expand'}
+          </button>
+        </div>` : null}
 
       <${ValidationList} findings=${validation} />
 
@@ -328,12 +422,14 @@ export function EntryEditor({ spec, settings, onClose }) {
           ${saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : saveState === 'error' ? '⚠ Save failed' : ''}
         </span>
         <div class="spacer" style=${{ flex: 1 }}></div>
-        ${entry && !finalized ? html`<button class="btn btn-ghost" onClick=${del}>🗑 Delete</button>` : null}
+        ${entry && !finalized ? html`
+          <button class="btn btn-ghost" onClick=${del}><${Icon} name="trash" size=${16} /> Delete</button>` : null}
         ${finalized
-          ? html`<button class="btn" onClick=${unlock}>🔓 Unlock to edit</button>`
+          ? html`<button class="btn" onClick=${unlock}><${Icon} name="unlock" size=${16} /> Unlock to edit</button>`
           : html`
             <button class="btn" onClick=${flushAndClose}>Save & close</button>
-            <button class="btn btn-primary" onClick=${() => finalize(false)}>🔒 Finalize</button>`}
+            <button class="btn btn-primary" onClick=${() => finalize(false)}>
+              <${Icon} name="lock" size=${16} /> Finalize</button>`}
       </div>
     <//>`;
 }
