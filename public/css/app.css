@@ -440,3 +440,21 @@ kbd {
   .main { padding: 14px; }
   .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
 }
+
+/* ---------- CSV timer import ---------- */
+.import-map {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.import-summary { margin: 10px 0; color: var(--text-muted); }
+.import-summary strong { color: var(--text); }
+tr.import-skip td { opacity: 0.55; }
+.import-new {
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+@media (max-width: 640px) {
+  .import-map { grid-template-columns: 1fr; }
+}

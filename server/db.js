@@ -133,6 +133,9 @@ const SEED_SETTINGS = {
   ai: { enabled: false, model: 'llama3.1:8b', url: 'http://127.0.0.1:11434' },
   // DTE Axiom / Intapp TimeSaver .TIM export constants (from David's prototype).
   tim: { email: 'TIMEKEEPER@EXAMPLE.COM', timekeeperId: '1001', u2: 'GEN01' },
+  // CSV timer import: matters whose Group matches one of these (case-insensitive)
+  // are created non-billable (firm/internal time).
+  import: { nonBillableGroups: ['firm', 'internal'] },
 };
 
 export function openDb(dbPath) {

@@ -4,6 +4,7 @@ import {
   fmtClock, fmtHours, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
+import { TimerImport } from '/js/components/timerimport.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -18,6 +19,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [menu, setMenu] = useState(null);             // {x, y, timer}
   const [stopPopup, setStopPopup] = useState(null);   // {timer, result}
   const [deleting, setDeleting] = useState(null);
+  const [importing, setImporting] = useState(false);
   const [taskCodes, setTaskCodes] = useState([]);
   const dragId = useRef(null);
 
@@ -221,6 +223,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       <button class="btn btn-sm" onClick=${() => setGroupModal('new')}>
         <${Icon} name="folder" size=${16} /> New group
       </button>
+      <button class="btn btn-sm" title="Batch-create timers from a CSV" onClick=${() => setImporting(true)}>
+        <${Icon} name="download" size=${16} /> Import
+      </button>
       <button class="btn btn-sm btn-primary" onClick=${() => setEditing('new')}>
         <${Icon} name="plus" size=${16} /> New timer
       </button>
@@ -283,6 +288,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       <${GroupModal} group=${groupModal === 'new' ? null : groupModal}
         onDone=${async () => { setGroupModal(null); await reload(); }}
         onClose=${() => setGroupModal(null)} />` : null}
+
+    ${importing ? html`
+      <${TimerImport}
+        onDone=${async () => { setImporting(false); await reload(); }}
+        onClose=${() => setImporting(false)} />` : null}
 
     ${deleting ? html`
       <${Confirm} title="Delete timer" danger confirmLabel="Delete"

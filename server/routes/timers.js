@@ -3,6 +3,8 @@ import { getSetting } from '../db.js';
 import { todayLocal, localMidnightMs } from '../lib/dates.js';
 import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
+import { parseCsv } from '../lib/csv.js';
+import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
 import { loadEntry, syncNarrative } from './entries.js';
 
 // Round-2 timer model: the clock accumulates for the whole day across
@@ -127,6 +129,67 @@ export function timersRouter({ db, clock }) {
     ).run(name, cm.id, b.task_code ? String(b.task_code) : null,
       b.group_id ?? null, max + 1, todayLocal(clock()), now());
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
+  });
+
+  // --- CSV batch import: map columns → create new matters + timers ---
+
+  // Parse the CSV and build a plan against current DB state. Shared by the
+  // preview (dry-run) and commit endpoints so both see identical decisions.
+  function buildPlan(body) {
+    const rows = parseCsv(String(body.csv || ''));
+    if (rows.length === 0) return { error: 'CSV appears to be empty.' };
+    const headers = rows[0].map((h) => String(h ?? ''));
+    const mapping = body.mapping
+      ? normalizeMapping(body.mapping, headers.length)
+      : detectMapping(headers);
+    const existingCmNumbers = db.prepare('SELECT cm_number FROM cms').all().map((x) => x.cm_number);
+    const nonBillableGroups = (getSetting(db, 'import') || {}).nonBillableGroups || [];
+    const { plan, counts } = planImport(rows, mapping, { existingCmNumbers, nonBillableGroups });
+    return { headers, mapping, plan, counts };
+  }
+
+  r.post('/import/preview', (req, res) => {
+    const out = buildPlan(req.body || {});
+    if (out.error) return res.status(400).json({ error: out.error });
+    res.json(out);
+  });
+
+  r.post('/import', (req, res) => {
+    const out = buildPlan(req.body || {});
+    if (out.error) return res.status(400).json({ error: out.error });
+    const toCreate = out.plan.filter((p) => p.action === 'create');
+    const nowIso = now();
+    const today = todayLocal(clock());
+    const timerIds = [];
+
+    db.transaction(() => {
+      const groupByName = new Map(
+        db.prepare('SELECT id, name FROM timer_groups').all()
+          .map((g) => [g.name.toLowerCase(), g.id]));
+      let groupOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timer_groups').get().m;
+      let timerOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
+      const insCm = db.prepare(
+        'INSERT INTO cms (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)');
+      const insGroup = db.prepare('INSERT INTO timer_groups (name, sort_order) VALUES (?, ?)');
+      const insTimer = db.prepare(
+        'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)');
+
+      for (const p of toCreate) {
+        const cmId = insCm.run(p.cm_number, p.matter_name, p.billable, nowIso, nowIso).lastInsertRowid;
+        let groupId = null;
+        if (p.group) {
+          const key = p.group.toLowerCase();
+          groupId = groupByName.get(key);
+          if (groupId === undefined) {
+            groupId = insGroup.run(p.group, ++groupOrder).lastInsertRowid;
+            groupByName.set(key, groupId);
+          }
+        }
+        timerIds.push(insTimer.run(p.matter_name, cmId, groupId, ++timerOrder, today, nowIso).lastInsertRowid);
+      }
+    })();
+
+    res.status(201).json({ created: timerIds.length, skipped: out.counts.skip, timerIds });
   });
 
   r.put('/order', (req, res) => {
