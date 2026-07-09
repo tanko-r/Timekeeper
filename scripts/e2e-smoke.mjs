@@ -260,6 +260,25 @@ await step('grouping selector: by client / flat / persists across reload', async
     .some((el) => el.textContent.includes('Litigation')), { timeout: 4000 });
 });
 
+await step('client rename: inline on CMs view, reflected in by-client grouping', async () => {
+  await page.goto(`${base}/#/cms`, { waitUntil: 'networkidle0' });
+  await waitFor('.client-row');
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.client-row')].find((r) => r.textContent.includes('100001'));
+    row.querySelector('button[title="Name client"]').click();
+  });
+  await type('.client-row input', 'Acme Holdings');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.client-row')]
+    .some((r) => r.textContent.includes('Acme Holdings')), { timeout: 4000 });
+  // the by-client grouping now shows the name instead of the number
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await clickText('.seg button', 'By client');
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === 'Acme Holdings'), { timeout: 4000 });
+  await clickText('.seg button', 'By group'); // restore for later steps
+});
+
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');

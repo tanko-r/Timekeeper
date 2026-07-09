@@ -171,6 +171,10 @@ table.tk th {
 table.tk td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 table.tk tr:hover td { background: var(--surface-2); }
 table.tk tr.clickable { cursor: pointer; }
+table.tk tr.client-row td {
+  background: var(--surface-2); font-size: 12.5px; padding: 5px 10px;
+}
+.client-name-cell { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ---------- timers (compact, grouped) ---------- */
 .icon { vertical-align: -3px; flex: none; }
