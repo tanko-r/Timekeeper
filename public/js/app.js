@@ -87,7 +87,7 @@ function KeyboardHelp({ onClose }) {
     ['Tab / click', 'Focus the timer grid'],
     ['← → ↑ ↓', 'Move between timer cards'],
     ['Enter or Space', 'Start–stop the focused timer'],
-    ['a–z, 0–9', 'Filter the grid in place (Esc clears)'],
+    ['type letters/digits', 'Filter the grid in place — any printable key (Esc clears)'],
     ['Alt+↑ / Alt+↓', 'Nudge the focused timer ±0.1h (+Shift: ±0.2h)'],
     ['Shift+Enter', 'Edit the focused timer'],
     ['Ctrl+Enter (grid)', 'Open the focused timer’s entry'],

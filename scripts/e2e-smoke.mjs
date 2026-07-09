@@ -406,6 +406,20 @@ await step('type-to-filter narrows the grid in place; Esc restores', async () =>
     const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
     return names.length === 1 && names[0] === 'Harbor drafting'; // matched via CLIENT name
   }, { timeout: 4000 });
+
+  // zero matches must not trap the keyboard: over-type past any match, then
+  // Backspace back down to a matching query — all without touching the mouse
+  await page.keyboard.type('zzz', { delay: 20 });
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length === 0
+    && document.querySelector('.grid-filter'), { timeout: 4000 });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
+  await page.waitForFunction(() => {
+    const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
+    return names.length === 1 && names[0] === 'Harbor drafting';
+  }, { timeout: 4000 });
+
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.grid-filter')
     && document.querySelectorAll('.timer-card').length >= 2, { timeout: 4000 });

@@ -284,12 +284,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     const tag = (e.target.tagName || '').toLowerCase();
     // in-card clock editing etc.; buttons keep native Enter/Space activation
     if (['input', 'textarea', 'select', 'button'].includes(tag)) return;
-    const list = visible;
-    if (list.length === 0) return;
-    const idx = Math.max(0, list.findIndex((t) => t.id === focusId));
-    const cur = list[idx];
     const done = () => { e.preventDefault(); e.stopPropagation(); };
 
+    // Filter keys run BEFORE the empty-list guard: when the query matches
+    // zero cards the filter must stay keyboard-editable (Backspace/Esc),
+    // otherwise the only way out would be clicking the pill's ✕.
     if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       setGridFilter((f) => f + e.key); // printable keys build the filter (space = start/stop)
       return done();
@@ -297,6 +296,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     if (e.key === 'Backspace') { setGridFilter((f) => f.slice(0, -1)); return done(); }
     if (e.key === 'Escape' && gridFilter) { setGridFilter(''); return done(); }
     // Escape with no filter falls through (StopChips etc. listen on document)
+
+    const list = visible;
+    if (list.length === 0) return;
+    const idx = Math.max(0, list.findIndex((t) => t.id === focusId));
+    const cur = list[idx];
 
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       const step = (e.shiftKey ? 0.2 : 0.1) * (e.key === 'ArrowUp' ? 1 : -1);
