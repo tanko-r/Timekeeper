@@ -543,11 +543,18 @@ tr.import-skip td { opacity: 0.55; }
 }
 
 /* ---------- today footer ---------- */
-.dashboard-view { padding-bottom: 54px; }
+/* Desktop: .main's 80px bottom padding already clears the ~41px fixed footer,
+   so no extra wrapper padding (avoids stacking). Narrow (<=760px): the sidebar
+   goes static/full-width and .main padding drops to 14px — the footer spans
+   the full width and the dashboard wrapper supplies the clearance instead. */
 .today-footer {
   position: fixed; left: var(--sidebar-w, 200px); right: 0; bottom: 0; z-index: 90;
   display: flex; align-items: center; gap: 10px; padding: 8px 18px;
   background: var(--surface-1); border-top: 1px solid var(--border);
+}
+@media (max-width: 760px) {
+  .today-footer { left: 0; }
+  .dashboard-view { padding-bottom: 54px; }
 }
 .tf-total { font-size: 16px; font-weight: 600; }
 .tf-total.bump { animation: tf-bump 350ms ease-out 1; }

@@ -137,7 +137,7 @@ await step('dashboard shows the entry and meter', async () => {
   await waitFor('.meter-bar');
 });
 
-await step('persistent today footer: live total + close-the-day button', async () => {
+await step('persistent today footer: live total, ticking clock, close-the-day button', async () => {
   await waitFor('.today-footer');
   await page.waitForFunction(
     () => /\d+(\.\d+)?h/.test(document.querySelector('.today-footer .tf-total')?.textContent || ''),
@@ -145,6 +145,27 @@ await step('persistent today footer: live total + close-the-day button', async (
   const hasCloseBtn = await page.evaluate(() =>
     [...document.querySelectorAll('.today-footer button')].some((b) => b.textContent.includes('Close the day')));
   if (!hasCloseBtn) throw new Error('today footer missing the "Close the day" button');
+
+  // the running clock actually ticks: start a scratch timer via the API,
+  // reload so the dashboard payload sees it running, watch the clock move,
+  // then delete the timer so later steps see the same timer counts.
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const scratch = await (await fetch(`${base}/api/timers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: '__footer-tick__', cm_id: cms[0].id }),
+  })).json();
+  await fetch(`${base}/api/timers/${scratch.id}/start`, { method: 'POST' });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.today-footer .tf-running .mono');
+  const before = await page.$eval('.today-footer .tf-running .mono', (el) => el.textContent.trim());
+  await page.waitForFunction((prev) =>
+    document.querySelector('.today-footer .tf-running .mono')?.textContent.trim() !== prev,
+  { timeout: 4000 }, before);
+  const del = await fetch(`${base}/api/timers/${scratch.id}`, { method: 'DELETE' });
+  if (!del.ok) throw new Error(`scratch timer cleanup failed: ${del.status}`);
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.today-footer');
 });
 
 await step('create timer; a sub-2s stop reverts as if nothing happened', async () => {

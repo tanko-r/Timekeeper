@@ -1,6 +1,6 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
+  html, useState, useEffect, useMemo, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
@@ -14,6 +14,9 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   // Consumed by Task 6 (close-out flow); this task only opens it — nothing
   // renders for it yet.
   const [closeOut, setCloseOut] = useState(false);
+  // Timestamp of the dashboard payload — the footer adds wall-clock time since
+  // this moment to the (fetch-frozen) running-timer seconds.
+  const fetchedAt = useMemo(() => Date.now(), [data]);
   useEffect(() => {
     const onCloseDay = () => setCloseOut(true);
     window.addEventListener('tk:close-day', onCloseDay);
@@ -114,6 +117,6 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         onClose=${() => setWarnGate(null)} />` : null}
     </div>
 
-    <${TodayFooter} today=${d.today} timers=${d.timers} onCloseDay=${() => setCloseOut(true)} />
+    <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt} onCloseDay=${() => setCloseOut(true)} />
   `;
 }

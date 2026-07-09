@@ -2,7 +2,7 @@ import { html, useEffect, useRef, useState, fmtHours, fmtClock, Icon } from '/js
 
 // Persistent "today" footer (spec §4): ambient awareness — live running
 // clock, billable-vs-target meter, one key to close the day. Dashboard only.
-export function TodayFooter({ today, timers, onCloseDay }) {
+export function TodayFooter({ today, timers, fetchedAt, onCloseDay }) {
   const running = (timers || []).filter((t) => t.running);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -26,8 +26,11 @@ export function TodayFooter({ today, timers, onCloseDay }) {
 
   const target = today.target || 0;
   const pct = target ? Math.min(100, Math.round((today.billable / target) * 100)) : 0;
-  const liveSecs = running.reduce((s, t) => s + t.elapsed_seconds, 0)
-    + (running.length ? Math.floor((Date.now() % 1000) / 1000) : 0);
+  // elapsed_seconds is frozen at fetch time; add wall-clock seconds since the
+  // fetch (per running timer, mirroring TimerGrid's liveElapsed) so the 1s
+  // interval re-render shows real movement.
+  const sinceFetch = fetchedAt ? Math.max(0, Math.floor((Date.now() - fetchedAt) / 1000)) : 0;
+  const liveSecs = running.reduce((s, t) => s + t.elapsed_seconds + sinceFetch, 0);
 
   return html`
     <div class="today-footer">
