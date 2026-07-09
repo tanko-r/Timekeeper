@@ -206,6 +206,14 @@ export function aiRouter({ db }) {
       context: b.context ? String(b.context).slice(0, 2000) : null,
     });
 
+    // If the client goes away mid-stream (navigated off, or a regenerate
+    // superseded this request), stop pulling tokens — otherwise Ollama keeps
+    // generating for up to 180s with nobody reading. ServerResponse 'close'
+    // fires on premature disconnect AND on normal completion; the
+    // writableEnded guard limits the abort to the former.
+    const upstream = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) upstream.abort(); });
+
     let resp;
     try {
       resp = await fetch(`${cfg.url}/api/chat`, {
@@ -217,10 +225,11 @@ export function aiRouter({ db }) {
           options: { temperature: mode === 'regenerate' ? 0.8 : 0.3 },
           messages,
         }),
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.any([upstream.signal, AbortSignal.timeout(180_000)]),
       });
       if (!resp.ok || !resp.body) throw new Error(`ollama returned ${resp.status}`);
     } catch (e) {
+      if (res.writableEnded || res.destroyed) return; // client already gone
       return res.status(502).json({
         error: 'ollama_unreachable',
         message: `Could not reach the local model: ${e.message}`,
@@ -233,8 +242,12 @@ export function aiRouter({ db }) {
     let full = '';
     try {
       let buf = '';
+      // Stateful decoder: a multi-byte UTF-8 sequence (em dash, curly quote)
+      // can straddle two network chunks; per-chunk toString() would corrupt
+      // it to U+FFFD.
+      const decoder = new TextDecoder('utf-8');
       for await (const chunk of resp.body) {
-        buf += Buffer.from(chunk).toString('utf8');
+        buf += decoder.decode(chunk, { stream: true });
         let nl;
         while ((nl = buf.indexOf('\n')) !== -1) {
           const line = buf.slice(0, nl).trim();
@@ -246,11 +259,15 @@ export function aiRouter({ db }) {
           if (token) { full += token; send({ token }); }
         }
       }
+      decoder.decode(); // flush (NDJSON ends with \n, so nothing pending)
       send({ done: true, narrative: full.trim() });
     } catch (e) {
-      send({ error: 'ai_stream_failed', message: e.message });
+      // Client-gone aborts land here too — never write to a dead socket.
+      if (!res.writableEnded && !res.destroyed) {
+        send({ error: 'ai_stream_failed', message: e.message });
+      }
     }
-    res.end();
+    if (!res.writableEnded) res.end();
   });
 
   return r;

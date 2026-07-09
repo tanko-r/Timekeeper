@@ -192,3 +192,59 @@ test('ai narrate: validation, shorter/longer rewrite modes, clean failures', asy
     assert.equal((await t.fetchJson('POST', '/api/ai/narrate', { brief: 'x' })).status, 502);
   } finally { await t.close(); await stub.close(); }
 });
+
+test('ai narrate: multi-byte UTF-8 split across network chunks arrives intact', async () => {
+  // Stub that cuts its stream one byte into the em dash's 3-byte UTF-8
+  // sequence, so per-chunk Buffer.toString('utf8') would emit U+FFFD.
+  const line = (content, done) =>
+    JSON.stringify({ message: { role: 'assistant', content }, done }) + '\n';
+  const payload = Buffer.from(
+    line('Reviewed lease — ', false) + line('revised “Exhibit A”.', false) + line('', true), 'utf8');
+  const cut = payload.indexOf(Buffer.from('—', 'utf8')) + 1;
+  const srv = createServer((req, res) => {
+    res.setHeader('content-type', 'application/x-ndjson');
+    res.write(payload.subarray(0, cut));
+    setTimeout(() => res.end(payload.subarray(cut)), 30); // force a separate TCP chunk
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: `http://127.0.0.1:${srv.address().port}` });
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief: 'lease work' }),
+    });
+    assert.equal(res.status, 200);
+    const last = JSON.parse((await res.text()).trim().split('\n').at(-1));
+    assert.equal(last.done, true);
+    assert.ok(!last.narrative.includes('�'), 'no replacement characters from split multi-byte sequences');
+    assert.equal(last.narrative, 'Reviewed lease — revised “Exhibit A”.');
+  } finally { await t.close(); await new Promise((r) => srv.close(r)); }
+});
+
+test('ai narrate aborts the upstream Ollama request when the client disconnects', async () => {
+  const upstream = { closed: false };
+  const srv = createServer((req, res) => {
+    res.setHeader('content-type', 'application/x-ndjson');
+    res.write(JSON.stringify({ message: { role: 'assistant', content: 'Reviewed ' }, done: false }) + '\n');
+    res.on('close', () => { upstream.closed = true; });
+    // …then hold the stream open, like a model still generating.
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: `http://127.0.0.1:${srv.address().port}` });
+    const controller = new AbortController();
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief: 'x' }), signal: controller.signal,
+    });
+    const reader = res.body.getReader();
+    await reader.read();          // first token arrived — the stream is live
+    controller.abort();           // client walks away mid-stream
+    for (let i = 0; i < 40 && !upstream.closed; i++) await new Promise((r) => setTimeout(r, 50));
+    assert.equal(upstream.closed, true, 'server tore down its Ollama connection');
+    const alive = await t.fetchJson('GET', '/api/timers');
+    assert.equal(alive.status, 200, 'server still healthy after the aborted stream');
+  } finally { await t.close(); await new Promise((r) => srv.close(r)); }
+});
