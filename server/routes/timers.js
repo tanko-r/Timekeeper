@@ -58,7 +58,7 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       syncNarrative(db, entry.id);
       entryId = entry.id;
     } else {
-      const cm = db.prepare('SELECT id, billable FROM cms WHERE id=?').get(timer.cm_id);
+      const cm = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(timer.cm_id);
       const info = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
         VALUES (?, ?, '', ?, 'draft', ?, 'timer', ?, ?)`)
@@ -69,7 +69,7 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       entryId = info.lastInsertRowid;
       db.prepare('UPDATE timers SET linked_entry_id=? WHERE id=?').run(entryId, timer.id);
     }
-    db.prepare('UPDATE cms SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
+    db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
   })();
 
   return { entryId, relinked, previousTotal };
@@ -105,8 +105,8 @@ export function timersRouter({ db, clock }) {
   const withElapsed = (t) => ({ ...t, elapsed_seconds: elapsedSeconds(t, clock().getTime()) });
 
   const listStmt = () => db.prepare(`SELECT ${TIMER_COLS},
-      (SELECT cm_number FROM cms WHERE cms.id = timers.cm_id) AS cm_number,
-      (SELECT short_name FROM cms WHERE cms.id = timers.cm_id) AS cm_short_name
+      (SELECT cm_number FROM matters WHERE matters.id = timers.cm_id) AS cm_number,
+      (SELECT short_name FROM matters WHERE matters.id = timers.cm_id) AS cm_short_name
     FROM timers ORDER BY sort_order, id`);
 
   r.get('/', (req, res) => {
@@ -118,7 +118,7 @@ export function timersRouter({ db, clock }) {
     const b = req.body || {};
     const name = String(b.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
-    const cm = db.prepare('SELECT id FROM cms WHERE id=?').get(b.cm_id);
+    const cm = db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id);
     if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
       return res.status(400).json({ error: 'Unknown group.' });
@@ -142,7 +142,7 @@ export function timersRouter({ db, clock }) {
     const mapping = body.mapping
       ? normalizeMapping(body.mapping, headers.length)
       : detectMapping(headers);
-    const existingCmNumbers = db.prepare('SELECT cm_number FROM cms').all().map((x) => x.cm_number);
+    const existingCmNumbers = db.prepare('SELECT cm_number FROM matters').all().map((x) => x.cm_number);
     const nonBillableGroups = (getSetting(db, 'import') || {}).nonBillableGroups || [];
     const { plan, counts } = planImport(rows, mapping, { existingCmNumbers, nonBillableGroups });
     return { headers, mapping, plan, counts };
@@ -169,7 +169,7 @@ export function timersRouter({ db, clock }) {
       let groupOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timer_groups').get().m;
       let timerOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
       const insCm = db.prepare(
-        'INSERT INTO cms (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)');
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)');
       const insGroup = db.prepare('INSERT INTO timer_groups (name, sort_order) VALUES (?, ?)');
       const insTimer = db.prepare(
         'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)');
@@ -204,7 +204,7 @@ export function timersRouter({ db, clock }) {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
     const b = req.body || {};
-    if (b.cm_id !== undefined && !db.prepare('SELECT id FROM cms WHERE id=?').get(b.cm_id)) {
+    if (b.cm_id !== undefined && !db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id)) {
       return res.status(400).json({ error: 'Unknown CM.' });
     }
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {

@@ -31,8 +31,8 @@ export function dashboardRouter({ db, clock }) {
     ).all(today).map((row) => enrich(db, row));
     const invalid = draftRows.filter((e) => e.validation.length > 0);
 
-    const timers = db.prepare(`SELECT timers.*, cms.cm_number, cms.short_name AS cm_short_name
-      FROM timers JOIN cms ON cms.id = timers.cm_id ORDER BY timers.sort_order, timers.id`).all()
+    const timers = db.prepare(`SELECT timers.*, matters.cm_number, matters.short_name AS cm_short_name
+      FROM timers JOIN matters ON matters.id = timers.cm_id ORDER BY timers.sort_order, timers.id`).all()
       .map((t) => ({ ...t, elapsed_seconds: elapsedSeconds(t, clock().getTime()) }));
 
     res.json({

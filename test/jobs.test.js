@@ -11,7 +11,7 @@ function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'tk-jobs-'));
   const db = openDb(join(dir, 't.db'));
   const config = { DATA_DIR: dir };
-  db.prepare("INSERT INTO cms (cm_number, short_name, billable) VALUES ('100001-000012', 'Acme', 1)").run();
+  db.prepare("INSERT INTO matters (cm_number, short_name, billable) VALUES ('100001-000012', 'Acme', 1)").run();
   return { dir, db, config, cleanup: () => { db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 

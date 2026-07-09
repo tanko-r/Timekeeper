@@ -52,7 +52,7 @@ test('picker: favorites first, then recent, then alpha; searches number and name
   const apple = await mk('300000-000002', 'Aspen Partners');
   const fav = await mk('300000-000003', 'Favorite Client', 1);
   // make zebra "recent" via last_used_at
-  t.db.prepare("UPDATE cms SET last_used_at='2026-07-06T10:00:00Z' WHERE id=?").run(zebra.id);
+  t.db.prepare("UPDATE matters SET last_used_at='2026-07-06T10:00:00Z' WHERE id=?").run(zebra.id);
 
   const picker = (await t.fetchJson('GET', '/api/cms/picker?q=')).body;
   assert.deepEqual(picker.map((c) => c.id), [fav.id, zebra.id, apple.id]);

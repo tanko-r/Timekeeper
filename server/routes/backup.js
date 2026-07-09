@@ -21,7 +21,7 @@ export function backupRouter({ db, config, clock }) {
   r.get('/backup/json', (req, res) => {
     const dump = {
       exported_at: clock().toISOString(),
-      cms: db.prepare('SELECT * FROM cms ORDER BY id').all(),
+      matters: db.prepare('SELECT * FROM matters ORDER BY id').all(),
       task_codes: db.prepare('SELECT * FROM task_codes ORDER BY sort_order, id').all(),
       entries: db.prepare('SELECT * FROM entries ORDER BY id').all().map((e) => ({
         ...e,

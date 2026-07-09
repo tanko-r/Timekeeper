@@ -19,7 +19,7 @@ export function enrich(db, row) {
     'SELECT id, task_code, duration, fragment, sort_order FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id'
   ).all(row.id);
   const cm = db.prepare(
-    'SELECT id, cm_number, short_name, billable, status, favorite FROM cms WHERE id=?'
+    'SELECT id, cm_number, short_name, billable, status, favorite FROM matters WHERE id=?'
   ).get(row.cm_id);
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
@@ -66,7 +66,7 @@ export function syncNarrative(db, entryId) {
 }
 
 export function touchCm(db, cmId, nowIso) {
-  db.prepare('UPDATE cms SET last_used_at=? WHERE id=?').run(nowIso, cmId);
+  db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, cmId);
 }
 
 export function entriesRouter({ db, clock }) {
@@ -103,7 +103,7 @@ export function entriesRouter({ db, clock }) {
     if (!['finalize', 'unlock', 'delete', 'restore', 'set_cm'].includes(action)) {
       return res.status(400).json({ error: `Unknown bulk action "${action}".` });
     }
-    if (action === 'set_cm' && !db.prepare('SELECT id FROM cms WHERE id=?').get(cm_id)) {
+    if (action === 'set_cm' && !db.prepare('SELECT id FROM matters WHERE id=?').get(cm_id)) {
       return res.status(400).json({ error: 'Unknown CM.' });
     }
     const done = [];
@@ -185,7 +185,7 @@ export function entriesRouter({ db, clock }) {
   r.post('/', (req, res) => {
     const b = req.body || {};
     if (!isValidDate(b.date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
-    const cm = db.prepare('SELECT * FROM cms WHERE id=?').get(b.cm_id);
+    const cm = db.prepare('SELECT * FROM matters WHERE id=?').get(b.cm_id);
     if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
     const norm = normalizeTasks(b.tasks || []);
     if (norm.error) return res.status(400).json({ error: norm.error });
@@ -218,7 +218,7 @@ export function entriesRouter({ db, clock }) {
     }
     let cmId = row.cm_id;
     if (b.cm_id !== undefined) {
-      const cm = db.prepare('SELECT id FROM cms WHERE id=?').get(b.cm_id);
+      const cm = db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id);
       if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
       cmId = cm.id;
     }

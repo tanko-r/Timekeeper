@@ -16,7 +16,7 @@ test('backup: sqlite download, json dump without secrets, list', async () => {
 
     const json = await t.fetchJson('GET', '/api/backup/json');
     assert.equal(json.status, 200);
-    assert.equal(json.body.cms.length, 1);
+    assert.equal(json.body.matters.length, 1);
     assert.ok(Array.isArray(json.body.entries));
     assert.ok(Array.isArray(json.body.task_codes));
     assert.equal(JSON.stringify(json.body).includes('passwordHash'), false);

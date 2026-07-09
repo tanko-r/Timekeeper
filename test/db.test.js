@@ -15,7 +15,7 @@ test('schema v1: all tables exist', () => {
   const db = openDb(':memory:');
   const names = db.prepare(
     "SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
-  for (const t of ['settings', 'cms', 'task_codes', 'entries', 'entry_tasks', 'timers', 'sessions', 'audit_log']) {
+  for (const t of ['settings', 'matters', 'task_codes', 'entries', 'entry_tasks', 'timers', 'sessions', 'audit_log']) {
     assert.ok(names.includes(t), `missing table ${t}`);
   }
   db.close();
@@ -64,11 +64,11 @@ test('reopening an existing db is idempotent (no duplicate seeds)', () => {
 test('cm_number format enforced by CHECK constraint', () => {
   const db = openDb(':memory:');
   const ins = db.prepare(
-    "INSERT INTO cms (cm_number, short_name, billable) VALUES (?, ?, 1)");
+    "INSERT INTO matters (cm_number, short_name, billable) VALUES (?, ?, 1)");
   assert.throws(() => ins.run('12345-123456', 'bad'), /CHECK/);
   assert.throws(() => ins.run('abcdef-123456', 'bad'), /CHECK/);
   ins.run('123456-654321', 'good');
-  assert.equal(db.prepare('SELECT COUNT(*) c FROM cms').get().c, 1);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM matters').get().c, 1);
   db.close();
 });
 
@@ -83,7 +83,7 @@ test('foreign keys enforced', () => {
 
 test('deleting an entry cascades to its task lines', () => {
   const db = openDb(':memory:');
-  db.prepare("INSERT INTO cms (cm_number, short_name, billable) VALUES ('111111-222222', 'x', 1)").run();
+  db.prepare("INSERT INTO matters (cm_number, short_name, billable) VALUES ('111111-222222', 'x', 1)").run();
   const e = db.prepare(
     "INSERT INTO entries (date, cm_id, narrative, billable, status, source) VALUES ('2026-07-06', 1, 'n', 1, 'draft', 'manual')"
   ).run();
@@ -98,8 +98,17 @@ test('deleting an entry cascades to its task lines', () => {
 test('migration v3 flips a pre-existing rounding mode to up', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
-  // simulate a pre-v3 database that still has nearest-rounding
+  // simulate a pre-v3 database that still has nearest-rounding; also undo v4's
+  // schema changes (openDb ran all migrations fresh) so reopening replays v3
+  // and v4 cleanly instead of re-creating already-existing v4 objects.
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
+  db1.exec(`
+    DROP INDEX idx_matters_client_matter;
+    ALTER TABLE matters DROP COLUMN matter_number;
+    ALTER TABLE matters DROP COLUMN client_id;
+    ALTER TABLE matters RENAME TO cms;
+    DROP TABLE clients;
+  `);
   db1.pragma('user_version = 2');
   db1.close();
   const db2 = openDb(path);
@@ -118,4 +127,54 @@ test('deleting a seeded task code survives reopen (no resurrection)', () => {
   assert.equal(db2.prepare('SELECT COUNT(*) c FROM task_codes').get().c, 10);
   db2.close();
   cleanup();
+});
+
+test('schema v4: clients table exists and matters replaces cms', () => {
+  const db = openDb(':memory:');
+  const names = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name);
+  assert.ok(names.includes('clients'), 'missing clients table');
+  assert.ok(names.includes('matters'), 'missing matters table');
+  assert.ok(!names.includes('cms'), 'cms should have been renamed to matters');
+  db.close();
+});
+
+test('migration v4 backfills clients and links matters', () => {
+  const { path, cleanup } = tempDbPath();
+  const db1 = openDb(path);
+  // simulate a pre-v4 database with cms rows: fully undo v4's schema changes
+  // (index + added columns must go before the rename, or SQLite refuses to
+  // drop the indexed/referenced columns; then drop clients and roll back
+  // user_version so reopening replays v4 against a genuine pre-v4 shape).
+  db1.exec(`
+    DROP INDEX idx_matters_client_matter;
+    ALTER TABLE matters DROP COLUMN matter_number;
+    ALTER TABLE matters DROP COLUMN client_id;
+    ALTER TABLE matters RENAME TO cms;
+    DROP TABLE clients;
+  `);
+  db1.pragma('user_version = 3');
+  db1.prepare("INSERT INTO cms (cm_number, short_name, billable) VALUES ('100001-000012', 'Acme lease', 1)").run();
+  db1.prepare("INSERT INTO cms (cm_number, short_name, billable) VALUES ('100001-000099', 'Acme merger', 1)").run();
+  db1.close();
+
+  const db2 = openDb(path); // reopen → runs v4 again on the faked-old db
+  const clients = db2.prepare('SELECT client_number, name FROM clients ORDER BY client_number').all();
+  assert.deepEqual(clients, [{ client_number: '100001', name: '' }]); // one distinct client, blank name
+  const matters = db2.prepare('SELECT cm_number, matter_number, client_id FROM matters ORDER BY cm_number').all();
+  assert.equal(matters.length, 2);
+  assert.equal(matters[0].matter_number, '000012');
+  assert.ok(matters[0].client_id, 'matter must be linked to a client');
+  assert.equal(matters[0].client_id, matters[1].client_id, 'same client for both matters');
+  db2.close();
+  cleanup();
+});
+
+test('client_number format enforced by CHECK', () => {
+  const db = openDb(':memory:');
+  const ins = db.prepare("INSERT INTO clients (client_number) VALUES (?)");
+  assert.throws(() => ins.run('12345'), /CHECK/);
+  assert.throws(() => ins.run('abcdef'), /CHECK/);
+  ins.run('654321');
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM clients').get().c, 1);
+  db.close();
 });

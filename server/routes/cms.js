@@ -7,13 +7,13 @@ export function cmsRouter({ db, clock }) {
   const r = Router();
   const now = () => clock().toISOString();
 
-  const getCm = db.prepare(`SELECT ${CM_COLS} FROM cms WHERE id=?`);
+  const getCm = db.prepare(`SELECT ${CM_COLS} FROM matters WHERE id=?`);
 
   r.get('/picker', (req, res) => {
     const q = String(req.query.q || '').trim();
     const like = `%${q}%`;
     const rows = db.prepare(`
-      SELECT ${CM_COLS} FROM cms
+      SELECT ${CM_COLS} FROM matters
       WHERE status='active' AND (? = '' OR cm_number LIKE ? OR short_name LIKE ? COLLATE NOCASE)
       ORDER BY favorite DESC, last_used_at IS NULL, last_used_at DESC, short_name COLLATE NOCASE
       LIMIT 25
@@ -25,8 +25,8 @@ export function cmsRouter({ db, clock }) {
     const includeArchived = req.query.includeArchived === '1';
     const rows = db.prepare(`
       SELECT ${CM_COLS},
-        (SELECT COUNT(*) FROM entries e WHERE e.cm_id = cms.id AND e.deleted_at IS NULL) AS entry_count
-      FROM cms ${includeArchived ? '' : "WHERE status='active'"}
+        (SELECT COUNT(*) FROM entries e WHERE e.cm_id = matters.id AND e.deleted_at IS NULL) AS entry_count
+      FROM matters ${includeArchived ? '' : "WHERE status='active'"}
       ORDER BY favorite DESC, short_name COLLATE NOCASE
     `).all();
     res.json(rows);
@@ -39,7 +39,7 @@ export function cmsRouter({ db, clock }) {
     }
     try {
       const info = db.prepare(
-        'INSERT INTO cms (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, now(), now());
       res.status(201).json(getCm.get(info.lastInsertRowid));
     } catch (e) {
@@ -69,7 +69,7 @@ export function cmsRouter({ db, clock }) {
     };
     try {
       db.prepare(
-        'UPDATE cms SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, updated_at=? WHERE id=?'
+        'UPDATE matters SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, updated_at=? WHERE id=?'
       ).run(next.cm_number, next.short_name, next.billable, next.status, next.favorite, now(), cm.id);
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {
@@ -90,7 +90,7 @@ export function cmsRouter({ db, clock }) {
         error: 'CM has entries or timers — archive it instead of deleting.',
       });
     }
-    db.prepare('DELETE FROM cms WHERE id=?').run(cm.id);
+    db.prepare('DELETE FROM matters WHERE id=?').run(cm.id);
     res.json({ ok: true });
   });
 

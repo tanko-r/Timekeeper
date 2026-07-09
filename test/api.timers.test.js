@@ -313,6 +313,6 @@ test('timer-created entries bump the CM picker recency', () =>
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(3600);
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    const row = t.db.prepare('SELECT last_used_at FROM cms WHERE id=?').get(cm.id);
+    const row = t.db.prepare('SELECT last_used_at FROM matters WHERE id=?').get(cm.id);
     assert.ok(row.last_used_at, 'last_used_at set by timer entry');
   }));

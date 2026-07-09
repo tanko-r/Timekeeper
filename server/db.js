@@ -114,6 +114,29 @@ const MIGRATIONS = [
   `
   UPDATE settings SET value = json_set(value, '$.mode', 'up') WHERE key = 'rounding';
   `,
+  // v4 — client → matter split: add clients, rename cms→matters, link + backfill
+  `
+  CREATE TABLE clients (
+    id            INTEGER PRIMARY KEY,
+    client_number TEXT NOT NULL UNIQUE CHECK (client_number GLOB '${D6}' AND length(client_number) = 6),
+    name          TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+  ALTER TABLE cms RENAME TO matters;
+  ALTER TABLE matters ADD COLUMN client_id INTEGER REFERENCES clients(id);
+  ALTER TABLE matters ADD COLUMN matter_number TEXT;
+
+  INSERT OR IGNORE INTO clients (client_number)
+    SELECT DISTINCT substr(cm_number, 1, 6) FROM matters;
+
+  UPDATE matters SET
+    matter_number = substr(cm_number, 8, 6),
+    client_id = (SELECT c.id FROM clients c WHERE c.client_number = substr(matters.cm_number, 1, 6));
+
+  CREATE UNIQUE INDEX idx_matters_client_matter ON matters(client_id, matter_number);
+  `,
 ];
 
 const SEED_SETTINGS = {
