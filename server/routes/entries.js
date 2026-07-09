@@ -7,7 +7,7 @@ import { extractPeople } from '../lib/people.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
-  created_at, updated_at`;
+  narrative_manual, created_at, updated_at`;
 
 export function loadEntry(db, id) {
   const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(id);
@@ -28,7 +28,10 @@ export function enrich(db, row) {
   `).get(row.cm_id);
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
-  const entry = { ...row, tasks, cm, total, narrative_auto: substantiveCount(tasks) >= 2 };
+  const entry = {
+    ...row, tasks, cm, total,
+    narrative_auto: substantiveCount(tasks) >= 2 && !row.narrative_manual,
+  };
   entry.validation = validateEntry(entry, getSetting(db, 'validation'));
   return entry;
 }
@@ -62,18 +65,22 @@ export function writeTasks(db, entryId, tasks) {
 // Regenerate the stored narrative when the entry is multi-line. Consolidation
 // format follows the entry's matter → client task_billing flag (LEFT JOIN;
 // a matter with no linked client defaults to task-billed, same as loadEntry's
-// cm payload).
+// cm payload). Skipped entirely when the entry's narrative has been detached
+// from its task lines (narrative_manual=1) — that's the durability contract:
+// once the user has typed over the AUTO box past the point it parses back,
+// task-touching saves must not silently revert the manual text.
 export function syncNarrative(db, entryId) {
   const tasks = db.prepare(
     'SELECT task_code, duration, fragment FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entryId);
   const rounding = getSetting(db, 'rounding') || {};
   const client = db.prepare(`
-    SELECT COALESCE(clients.task_billing, 1) AS task_billing
+    SELECT COALESCE(clients.task_billing, 1) AS task_billing, entries.narrative_manual AS narrative_manual
     FROM entries
     JOIN matters ON matters.id = entries.cm_id
     LEFT JOIN clients ON clients.id = matters.client_id
     WHERE entries.id = ?
   `).get(entryId);
+  if (client && client.narrative_manual) return;
   const taskBilling = !client || !!client.task_billing;
   const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling });
   if (generated != null) {
@@ -246,12 +253,13 @@ export function entriesRouter({ db, clock }) {
 
     const billable = b.billable !== undefined ? (b.billable ? 1 : 0) : cm.billable;
     const totalOverride = b.total_override != null ? Number(b.total_override) : null;
+    const narrativeManual = b.narrative_manual ? 1 : 0;
     const info = db.transaction(() => {
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)`)
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
         .run(b.date, cm.id, String(b.narrative || ''), billable, totalOverride,
-          b.source === 'timer' ? 'timer' : 'manual', now(), now());
+          b.source === 'timer' ? 'timer' : 'manual', narrativeManual, now(), now());
       writeTasks(db, i.lastInsertRowid, norm.tasks);
       syncNarrative(db, i.lastInsertRowid);
       touchCm(db, cm.id, now());
@@ -285,7 +293,7 @@ export function entriesRouter({ db, clock }) {
 
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
-          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, updated_at=?
+          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, updated_at=?
         WHERE id=?`).run(
         b.date ?? row.date,
         cmId,
@@ -293,6 +301,7 @@ export function entriesRouter({ db, clock }) {
         b.billable !== undefined ? (b.billable ? 1 : 0) : row.billable,
         b.total_override !== undefined ? (b.total_override == null ? null : Number(b.total_override)) : row.total_override,
         b.ack_validation !== undefined ? (b.ack_validation ? 1 : 0) : row.ack_validation,
+        b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
         now(), row.id);
       if (norm) writeTasks(db, row.id, norm.tasks);
       syncNarrative(db, row.id);
@@ -328,9 +337,10 @@ export function entriesRouter({ db, clock }) {
     if (!isValidDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
     const info = db.transaction(() => {
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?)`)
-        .run(date, src.cm_id, src.narrative, src.billable, src.total_override, now(), now());
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?, ?)`)
+        .run(date, src.cm_id, src.narrative, src.billable, src.total_override,
+          src.narrative_manual ? 1 : 0, now(), now());
       writeTasks(db, i.lastInsertRowid, src.tasks);
       touchCm(db, src.cm_id, now());
       rebuildMatterPeople(db, src.cm_id);

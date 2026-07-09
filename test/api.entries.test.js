@@ -122,6 +122,73 @@ test('block-billing client (task_billing=0): auto-narrative joins fragments with
     assert.equal(created.narrative_auto, true);
   }));
 
+test('POST without narrative_manual defaults to 0 (unchanged behavior)', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    })).body;
+    assert.equal(created.narrative_manual, 0);
+  }));
+
+test('manual narrative (narrative_manual=1) survives a task-touching PATCH and reload', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'ignored once multi-line',
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(created.narrative_auto, true); // narrative_manual defaults to 0
+
+    const manualText = 'Handled lease renewal end to end for the client.';
+    const detached = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      narrative: manualText, narrative_manual: 1,
+    })).body;
+    assert.equal(detached.narrative, manualText);
+    assert.equal(detached.narrative_auto, false);
+
+    // a task-touching save must NOT regenerate the narrative once detached
+    const touched = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      tasks: [
+        { task_code: 'Review', duration: 1.0, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.5, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(touched.narrative, manualText);
+    assert.equal(touched.narrative_auto, false);
+
+    // reload confirms it's durable in the DB, not just echoed back from the PATCH
+    const reloaded = (await t.fetchJson('GET', `/api/entries/${created.id}`)).body;
+    assert.equal(reloaded.narrative, manualText);
+    assert.equal(reloaded.narrative_auto, false);
+  }));
+
+test('flipping narrative_manual back to 0 regenerates the narrative (task- and block-billing)', () =>
+  withServer(async (t, cm) => {
+    const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    await t.fetchJson('PATCH', `/api/entries/${created.id}`, { narrative: 'manual text', narrative_manual: 1 });
+
+    const reAuto = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, { narrative_manual: 0 })).body;
+    assert.equal(reAuto.narrative, 'Review lease (1.2); draft email to landlord (0.3).');
+    assert.equal(reAuto.narrative_auto, true);
+
+    // same re-sync path on a block-billing client
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { task_billing: 0 });
+    await t.fetchJson('PATCH', `/api/entries/${created.id}`, { narrative: 'manual text again', narrative_manual: 1 });
+    const reAutoBlock = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, { narrative_manual: 0 })).body;
+    assert.equal(reAutoBlock.narrative, 'Review lease; draft email to landlord.');
+    assert.equal(reAutoBlock.narrative_auto, true);
+  }));
+
 test('finalized entries reject edits with 409', () =>
   withServer(async (t, cm) => {
     const e = (await t.fetchJson('POST', '/api/entries', {
@@ -167,6 +234,7 @@ test('copy entry to another date resets export/finalize state', () =>
     assert.equal(copy.narrative, e.narrative);
     assert.equal(copy.tasks.length, 1);
     assert.notEqual(copy.id, e.id);
+    assert.equal(copy.narrative_manual, 0); // source wasn't detached, copy isn't either
   }));
 
 test('filters: date range, cm, billable, status, narrative keyword', () =>

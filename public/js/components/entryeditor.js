@@ -187,15 +187,22 @@ export function EntryEditor({ spec, settings, onClose }) {
     const e = entryRef.current;
     if (!l || l.status === 'finalized') return e;
     if (!l.cm || !l.date) return e;
+    const substantiveTasks = l.tasks
+      .filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0)
+      .map((t) => ({ task_code: t.task_code, duration: Number(t.duration) || 0, fragment: t.fragment }));
     const body = {
       date: l.date,
       cm_id: l.cm.id,
       billable: l.billable ? 1 : 0,
       narrative: l.narrative,
       total_override: l.total > 0 ? tenth(l.total) : null,
-      tasks: l.tasks
-        .filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0)
-        .map((t) => ({ task_code: t.task_code, duration: Number(t.duration) || 0, fragment: t.fragment })),
+      tasks: substantiveTasks,
+      // AUTO on → live-generated, never detached (0). AUTO off on a ≥2-line
+      // entry → the user has typed over/away from the AUTO box, so the
+      // narrative is durably manual (1) and syncNarrative must stop
+      // regenerating it. A single-line entry has no AUTO box to detach from,
+      // so it always stays 0 (matches narrative_auto's own ≥2-line gate).
+      narrative_manual: l.auto ? 0 : (substantiveTasks.length >= 2 ? 1 : 0),
     };
     setSaveState('saving');
     try {

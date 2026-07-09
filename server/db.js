@@ -182,6 +182,14 @@ const MIGRATIONS = [
   `
   ALTER TABLE clients ADD COLUMN task_billing INTEGER NOT NULL DEFAULT 1;
   `,
+  // Entry editor rework Task 4 (2026-07-09): durable manual-narrative flag.
+  // 1 = the user detached the narrative from its task lines (typed over the
+  // AUTO box until it no longer parses back); syncNarrative must leave the
+  // stored text alone from then on instead of regenerating it on every
+  // task-touching save. 0 (default) = today's behavior — keep regenerating.
+  `
+  ALTER TABLE entries ADD COLUMN narrative_manual INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 const SEED_SETTINGS = {

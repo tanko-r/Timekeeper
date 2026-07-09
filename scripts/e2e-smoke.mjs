@@ -405,6 +405,27 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
 
   await shot('auto-narrative-sync');
   await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
+
+  // durability (Task 4): close the editor (flushes narrative_manual=1 on the
+  // task-touching save that already went out) and reopen the SAME entry from
+  // the dashboard list — the manual text must survive, and AUTO must stay off.
+  await clickText('.modal-wide button', 'Save & close');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.entry-card')].some((c) => c.textContent.includes('Review lease terms')),
+  { timeout: 5000 });
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.entry-card')]
+      .find((c) => c.textContent.includes('Review lease terms'));
+    card.querySelector('button[title="Edit"]').click();
+  });
+  await waitFor('.modal-wide .narrative-preview textarea');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide .auto-badge'), { timeout: 4000 });
+  const reopenedText = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (reopenedText !== detachedText) {
+    throw new Error(`manual text did not survive close/reopen: "${reopenedText}"`);
+  }
+
   await clickText('.modal-wide button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });

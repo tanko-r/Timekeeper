@@ -101,8 +101,13 @@ test('migration v3 flips a pre-existing rounding mode to up', () => {
   // simulate a pre-v3 database that still has nearest-rounding; also undo
   // every later migration's schema changes (openDb ran all migrations fresh)
   // so reopening replays them cleanly instead of re-creating existing objects.
+  // entries survives every later migration untouched (only ever gains ADD
+  // COLUMNs, never dropped/recreated), so its added columns must be dropped
+  // explicitly too, or replaying entry-editor-rework Task 4's ADD COLUMN
+  // against a column that's still there errors "duplicate column name".
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
   db1.exec(`
+    ALTER TABLE entries DROP COLUMN narrative_manual;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
@@ -148,8 +153,11 @@ test('migration v4 backfills clients and links matters', () => {
   // (index + added columns must go before the rename, or SQLite refuses to
   // drop the indexed/referenced columns; then drop the later migrations'
   // tables (openDb ran all migrations fresh) and roll back user_version so
-  // reopening replays v4 onward against a genuine pre-v4 shape).
+  // reopening replays v4 onward against a genuine pre-v4 shape). entries
+  // survives untouched across all of this, so its later ADD COLUMN
+  // (narrative_manual) must be dropped too or the replay errors on it.
   db1.exec(`
+    ALTER TABLE entries DROP COLUMN narrative_manual;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
@@ -204,18 +212,19 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
   // fake a db from just before this migration: undo everything added by the
-  // last four migrations (matter_people, phase-3's shortcuts, phase-3's
-  // timers column, entry-editor-rework's clients.task_billing column) and
-  // roll user_version back by four (positional — no hardcoded version
-  // numbers)
+  // last five migrations (matter_people, phase-3's shortcuts, phase-3's
+  // timers column, entry-editor-rework's clients.task_billing column, and
+  // Task 4's entries.narrative_manual column) and roll user_version back by
+  // five (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    ALTER TABLE entries DROP COLUMN narrative_manual;
     ALTER TABLE clients DROP COLUMN task_billing;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 4}`);
+  db1.pragma(`user_version = ${v - 5}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -226,6 +235,8 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     .some((c) => c.name === 'suggested_narrative'));
   assert.ok(db2.prepare('PRAGMA table_info(clients)').all()
     .some((c) => c.name === 'task_billing'));
+  assert.ok(db2.prepare('PRAGMA table_info(entries)').all()
+    .some((c) => c.name === 'narrative_manual'));
   db2.close();
   cleanup();
 });
@@ -261,5 +272,18 @@ test('task_billing column accepts 0 for block-billing clients', () => {
   db.prepare("INSERT INTO clients (client_number, task_billing) VALUES ('888888', 0)").run();
   assert.equal(
     db.prepare("SELECT task_billing FROM clients WHERE client_number='888888'").get().task_billing, 0);
+  db.close();
+});
+
+test('entry-editor-rework Task 4 migration: entries gain narrative_manual, defaults to 0', () => {
+  const db = openDb(':memory:');
+  const cols = db.prepare('PRAGMA table_info(entries)').all().map((c) => c.name);
+  assert.ok(cols.includes('narrative_manual'));
+  db.prepare("INSERT INTO matters (cm_number, short_name, billable) VALUES ('111111-333333', 'x', 1)").run();
+  const e = db.prepare(
+    "INSERT INTO entries (date, cm_id, narrative, billable, status, source) VALUES ('2026-07-06', 1, 'n', 1, 'draft', 'manual')"
+  ).run();
+  assert.equal(
+    db.prepare('SELECT narrative_manual FROM entries WHERE id=?').get(e.lastInsertRowid).narrative_manual, 0);
   db.close();
 });
