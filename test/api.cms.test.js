@@ -30,6 +30,24 @@ test('CM CRUD with format validation', () => withServer(async (t) => {
   assert.equal(list.body.length, 1);
 }));
 
+test('creating a CM links (and creates) its client and sets matter_number', () => withServer(async (t) => {
+  const created = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '777001-000042', short_name: 'Linked matter', billable: 1,
+  });
+  assert.equal(created.status, 201);
+  const row = t.db.prepare('SELECT client_id, matter_number FROM matters WHERE id=?').get(created.body.id);
+  assert.equal(row.matter_number, '000042');
+  const client = t.db.prepare('SELECT client_number, name FROM clients WHERE id=?').get(row.client_id);
+  assert.equal(client.client_number, '777001');
+  assert.equal(client.name, ''); // blank until named
+
+  // a second matter for the same client reuses the client row
+  const second = await t.fetchJson('POST', '/api/cms', { cm_number: '777001-000043', short_name: 'Second' });
+  const row2 = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(second.body.id);
+  assert.equal(row2.client_id, row.client_id);
+  assert.equal(t.db.prepare("SELECT COUNT(*) c FROM clients WHERE client_number='777001'").get().c, 1);
+}));
+
 test('archive hides from picker but keeps CM', () => withServer(async (t) => {
   const a = (await t.fetchJson('POST', '/api/cms', { cm_number: '111111-000001', short_name: 'Active co' })).body;
   const b = (await t.fetchJson('POST', '/api/cms', { cm_number: '111111-000002', short_name: 'Old co' })).body;

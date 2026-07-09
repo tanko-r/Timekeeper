@@ -6,6 +6,8 @@ import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
 import { loadEntry, syncNarrative } from './entries.js';
+import { ensureClient } from './cms.js';
+import { splitCmNumber } from '../lib/cmNumber.js';
 
 // Round-2 timer model: the clock accumulates for the whole day across
 // start/stops. Each stop syncs the day total into ONE linked draft entry.
@@ -169,13 +171,15 @@ export function timersRouter({ db, clock }) {
       let groupOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timer_groups').get().m;
       let timerOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
       const insCm = db.prepare(
-        'INSERT INTO matters (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)');
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?)');
       const insGroup = db.prepare('INSERT INTO timer_groups (name, sort_order) VALUES (?, ?)');
       const insTimer = db.prepare(
         'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)');
 
       for (const p of toCreate) {
-        const cmId = insCm.run(p.cm_number, p.matter_name, p.billable, nowIso, nowIso).lastInsertRowid;
+        const parts = splitCmNumber(p.cm_number);
+        const clientId = ensureClient(db, parts.clientNumber, nowIso);
+        const cmId = insCm.run(p.cm_number, p.matter_name, p.billable, clientId, parts.matterNumber, nowIso, nowIso).lastInsertRowid;
         let groupId = null;
         if (p.group) {
           const key = p.group.toLowerCase();

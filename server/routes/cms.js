@@ -1,7 +1,16 @@
 import { Router } from 'express';
 import { validateCmNumber } from '../lib/validation.js';
+import { splitCmNumber } from '../lib/cmNumber.js';
 
 const CM_COLS = 'id, cm_number, short_name, billable, status, favorite, last_used_at, created_at, updated_at';
+
+// Upsert the client for a 6-digit client number and return its id. Blank name;
+// the user fills it in later via /api/clients. Reused by the timer importer.
+export function ensureClient(db, clientNumber, nowIso) {
+  db.prepare('INSERT OR IGNORE INTO clients (client_number, created_at, updated_at) VALUES (?, ?, ?)')
+    .run(clientNumber, nowIso, nowIso);
+  return db.prepare('SELECT id FROM clients WHERE client_number=?').get(clientNumber).id;
+}
 
 export function cmsRouter({ db, clock }) {
   const r = Router();
@@ -38,9 +47,11 @@ export function cmsRouter({ db, clock }) {
       return res.status(400).json({ error: 'CM number must match format 123456-123456.' });
     }
     try {
+      const { clientNumber, matterNumber } = splitCmNumber(cm_number);
+      const clientId = ensureClient(db, clientNumber, now());
       const info = db.prepare(
-        'INSERT INTO matters (cm_number, short_name, billable, favorite, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, now(), now());
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, clientId, matterNumber, now(), now());
       res.status(201).json(getCm.get(info.lastInsertRowid));
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {
@@ -68,9 +79,18 @@ export function cmsRouter({ db, clock }) {
       favorite: b.favorite !== undefined ? (b.favorite ? 1 : 0) : cm.favorite,
     };
     try {
+      let clientId = null;
+      let matterNumber = null;
+      if (b.cm_number !== undefined && b.cm_number !== cm.cm_number) {
+        const parts = splitCmNumber(next.cm_number);
+        clientId = ensureClient(db, parts.clientNumber, now());
+        matterNumber = parts.matterNumber;
+      }
       db.prepare(
-        'UPDATE matters SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, updated_at=? WHERE id=?'
-      ).run(next.cm_number, next.short_name, next.billable, next.status, next.favorite, now(), cm.id);
+        `UPDATE matters SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, updated_at=?
+         ${clientId ? ', client_id=?, matter_number=?' : ''} WHERE id=?`
+      ).run(next.cm_number, next.short_name, next.billable, next.status, next.favorite, now(),
+        ...(clientId ? [clientId, matterNumber] : []), cm.id);
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {
         return res.status(409).json({ error: `CM ${b.cm_number} already exists.` });

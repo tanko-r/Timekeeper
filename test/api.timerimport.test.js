@@ -85,3 +85,13 @@ test('empty CSV is a 400', () =>
     const { status } = await t.fetchJson('POST', '/api/timers/import/preview', { csv: '' });
     assert.equal(status, 400);
   }));
+
+test('timer import links imported matters to clients', () => withServer(async (t) => {
+  const csv = 'CM Number,Matter Name,Group\r\n888001-000001,Imported A,Litigation\r\n888001-000002,Imported B,Litigation\r\n';
+  const { status } = await t.fetchJson('POST', '/api/timers/import', { csv });
+  assert.equal(status, 201);
+  const clients = t.db.prepare("SELECT COUNT(*) c FROM clients WHERE client_number='888001'").get().c;
+  assert.equal(clients, 1);
+  const linked = t.db.prepare("SELECT COUNT(*) c FROM matters WHERE matter_number IN ('000001','000002') AND client_id IS NOT NULL").get().c;
+  assert.equal(linked, 2);
+}));
