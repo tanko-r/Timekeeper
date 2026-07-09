@@ -339,7 +339,7 @@ export function CloseOut({ onClose, openEditor }) {
       </div>`;
   } else if (phase === 'closed') {
     body = html`
-      <div class="closeout-card">
+      <div class="closeout-card closeout-closed">
         <p class="closeout-hours mono">Day closed — ${fmtHours(closedInfo.total)}h · exported</p>
         ${closedInfo.stillBlocked ? html`
           <p class="muted small">${closedInfo.stillBlocked} draft${closedInfo.stillBlocked === 1 ? '' : 's'} still need attention.</p>` : null}

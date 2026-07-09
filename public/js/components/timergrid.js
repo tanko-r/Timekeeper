@@ -72,6 +72,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     localStorage.setItem('tk:lastTimer', String(timer.id));
     if (r.warning) emitToast(`⏱ ${r.warning}`);
     await reload();
+    // Deliberately imperative one-shot DOM class, not React state: a single
+    // confirmation pulse on the card that just started, self-removing after
+    // one animation cycle (spec §7 motion — fires once, never persists).
+    const el = document.querySelector(`.timer-card[data-timer-id="${timer.id}"]`);
+    if (el) {
+      el.classList.add('just-started');
+      setTimeout(() => el.classList.remove('just-started'), 350);
+    }
   }, [reload]);
 
   const stop = useCallback(async (timer) => {

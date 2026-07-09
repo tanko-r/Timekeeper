@@ -557,15 +557,12 @@ tr.import-skip td { opacity: 0.55; }
   .dashboard-view { padding-bottom: 54px; }
 }
 .tf-total { font-size: 16px; font-weight: 600; }
-.tf-total.bump { animation: tf-bump 350ms ease-out 1; }
-@keyframes tf-bump { 30% { transform: scale(1.06); color: var(--accent); } }
 .tf-meter {
   width: 120px; height: 6px; border-radius: 3px; background: var(--surface-2);
   overflow: hidden; border: 1px solid var(--border);
 }
 .tf-meter-fill { display: block; height: 100%; background: var(--accent); }
 .tf-running { display: inline-flex; align-items: center; gap: 6px; }
-@media (prefers-reduced-motion: reduce) { .tf-total.bump { animation: none; } }
 
 /* ---------- close-out (one-sweep card stack) ---------- */
 .closeout-backdrop {
@@ -592,3 +589,25 @@ tr.import-skip td { opacity: 0.55; }
 }
 .closeout-warnitem .validation-list { margin: 6px 0; }
 .closeout-warnitem .btn { margin-top: 4px; }
+
+/* ---------- motion (spec §7: VERY subtle; confirms, never decorates) ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  /* timer start: one soft pulse on the card */
+  .timer-card.just-started { animation: tk-start 300ms ease-out 1; }
+  @keyframes tk-start { 30% { box-shadow: 0 0 0 3px var(--accent-soft); } }
+
+  /* stop chips + quick capture + close-out cards: settle in */
+  .stop-chips, .qc-card, .closeout-card { animation: tk-settle 180ms ease-out 1; }
+  @keyframes tk-settle { from { opacity: 0; transform: translateY(4px); } }
+
+  /* finalize: soft lock on the status chip */
+  .chip-finalized { animation: tk-lock 250ms ease-out 1; }
+  @keyframes tk-lock { 40% { transform: scale(1.08); } }
+
+  /* export/close-out closed moment: gentle rise */
+  .closeout-closed { animation: tk-settle 300ms ease-out 1; }
+
+  /* today footer: running total confirms a just-filed entry */
+  .tf-total.bump { animation: tk-bump 250ms ease-out 1; }
+  @keyframes tk-bump { 30% { transform: scale(1.05); } }
+}
