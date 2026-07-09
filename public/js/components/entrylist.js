@@ -1,6 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
+  markJustFinalized,
 } from '/js/ui.js';
 
 // Card list of entries with inline actions. onChanged() after any mutation.
@@ -22,6 +23,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
   async function finalize(entry) {
     try {
       await api.post(`/api/entries/${entry.id}/finalize`);
+      markJustFinalized(entry.id); // one lock pulse on the refreshed chip
       onChanged();
       emitToast('Finalized', {
         actionLabel: 'Unlock',

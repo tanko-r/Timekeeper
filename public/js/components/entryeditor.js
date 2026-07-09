@@ -2,7 +2,7 @@ import { api, streamNdjson } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useDebounced,
   Modal, Field, fmtHours, todayStr, emitToast, previewNarrative,
-  ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly,
+  ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
@@ -231,6 +231,7 @@ export function EntryEditor({ spec, settings, onClose }) {
     if (!e) { emitToast('Pick a CM and add time first.', { error: true }); return; }
     try {
       await api.post(`/api/entries/${e.id}/finalize`, ack ? { ack: true } : {});
+      markJustFinalized(e.id); // one lock pulse on the list chip after close
       changedRef.current = true;
       emitToast('Finalized', {
         actionLabel: 'Unlock',

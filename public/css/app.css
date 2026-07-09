@@ -600,12 +600,14 @@ tr.import-skip td { opacity: 0.55; }
   .stop-chips, .qc-card, .closeout-card { animation: tk-settle 180ms ease-out 1; }
   @keyframes tk-settle { from { opacity: 0; transform: translateY(4px); } }
 
-  /* finalize: soft lock on the status chip */
-  .chip-finalized { animation: tk-lock 250ms ease-out 1; }
+  /* finalize: soft lock on the status chip — only on a FRESH finalize
+     (call sites mark the id via ui.js markJustFinalized); a chip that merely
+     mounts already-finalized stays still (confirms, never decorates) */
+  .chip-finalized.just-finalized { animation: tk-lock 250ms ease-out 1; }
   @keyframes tk-lock { 40% { transform: scale(1.08); } }
 
   /* export/close-out closed moment: gentle rise */
-  .closeout-closed { animation: tk-settle 300ms ease-out 1; }
+  .closeout-card.closeout-closed { animation: tk-settle 300ms ease-out 1; }
 
   /* today footer: running total confirms a just-filed entry */
   .tf-total.bump { animation: tk-bump 250ms ease-out 1; }

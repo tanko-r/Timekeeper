@@ -140,6 +140,9 @@ export function CloseOut({ onClose, openEditor }) {
           return;
         }
       }
+      // Deliberately no markJustFinalized() for the bulk path: the closed-
+      // moment card is the confirmation here; a row of chips pulsing behind
+      // the backdrop would be decoration (spec §7 restraint).
       const r = await api.post('/api/finalize-day', { date, ack });
       changedRef.current = true;
       const warnOnly = r.blocked.filter((b) => b.blocks.length === 0);

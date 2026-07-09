@@ -128,9 +128,22 @@ export function BillableBadge({ billable }) {
     : html`<span class="badge badge-nonbillable">non-billable</span>`;
 }
 
+// Fresh-finalize marker (spec §7 motion: the lock chip confirms a real
+// finalize transition, never decorates a mere mount). Deliberately imperative
+// module state, mirroring timergrid's just-started pattern: finalize call
+// sites mark the entry id, and for a moment StatusChip renders the chip with
+// .just-finalized so the lock animation fires once — then the mark expires
+// and plain re-mounts of an already-finalized chip stay still.
+const justFinalized = new Set();
+export function markJustFinalized(id) {
+  justFinalized.add(id);
+  setTimeout(() => justFinalized.delete(id), 600);
+}
+
 export function StatusChip({ entry }) {
   if (entry.status === 'finalized') {
-    return html`<span class="chip chip-finalized" title=${'Finalized ' + fmtStamp(entry.finalized_at)}>
+    const cls = 'chip chip-finalized' + (justFinalized.has(entry.id) ? ' just-finalized' : '');
+    return html`<span class=${cls} title=${'Finalized ' + fmtStamp(entry.finalized_at)}>
       <${Icon} name="lock" size=${12} /> finalized</span>`;
   }
   return html`<span class="chip chip-draft">draft</span>`;
