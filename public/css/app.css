@@ -450,6 +450,17 @@ kbd {
   .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
 }
 
+/* ---------- ghost-text autocomplete ---------- */
+.ghost-wrap { position: relative; min-width: 0; }
+.ghost-mirror {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden;
+  /* mirrors the shared field metrics (buttons/inputs block): 7px 10px padding + 1px border */
+  padding: 8px 11px; font: inherit; white-space: pre; border-radius: 6px;
+}
+.ghost-wrap.multiline .ghost-mirror { white-space: pre-wrap; overflow-wrap: break-word; }
+.ghost-typed { color: transparent; }
+.ghost-hint { color: var(--text-muted); opacity: .75; }
+
 /* ---------- CSV timer import ---------- */
 .import-map {
   display: grid;

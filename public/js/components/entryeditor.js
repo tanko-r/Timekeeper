@@ -5,6 +5,7 @@ import {
   ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
+import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 
 const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
 const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
@@ -29,6 +30,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   entryRef.current = entry;
 
   const increment = settings?.rounding?.increment || 0.1;
+
+  // Ghost-text autocomplete (spec §6): deterministic phrasebook completions
+  // for the picked matter; Tab accepts. No LLM anywhere in this path.
+  const phrases = useMatterSuggestions(local?.cm?.id);
 
   useEffect(() => {
     api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
@@ -338,9 +343,9 @@ export function EntryEditor({ spec, settings, onClose }) {
             <input type="number" min="0" step=${increment} value=${t.duration || ''}
               placeholder="0.0" disabled=${finalized} class="mono"
               onInput=${(e) => updateLine(i, { duration: e.target.value })} />
-            <input type="text" value=${t.fragment} placeholder=${isAuto ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
-              disabled=${finalized}
-              onInput=${(e) => updateLine(i, { fragment: e.target.value })} />
+            <${GhostInput} value=${t.fragment} suggestions=${phrases} disabled=${finalized}
+              placeholder=${isAuto ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
+              onChange=${(v) => updateLine(i, { fragment: v })} />
             <div class="row" style=${{ flexWrap: 'nowrap', gap: '2px' }}>
               <div class="reorder">
                 <button type="button" title="Move up" disabled=${finalized || i === 0}
@@ -369,9 +374,10 @@ export function EntryEditor({ spec, settings, onClose }) {
         ${isAuto ? html`
           <span class="auto-badge">AUTO</span>
           <textarea readOnly value=${autoNarrative || ''}></textarea>` : html`
-          <textarea value=${local.narrative} disabled=${finalized}
+          <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
+            suggestions=${phrases}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
-            onInput=${(e) => update({ narrative: e.target.value })}></textarea>`}
+            onChange=${(v) => update({ narrative: v })} />`}
       </div>
 
       ${ai && ai.enabled && ai.reachable && !finalized ? html`

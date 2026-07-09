@@ -187,6 +187,30 @@ await step('timer clock is editable in place', async () => {
     { timeout: 4000 });
 });
 
+await step('ghost-text: phrasebook completion in the entry editor, Tab accepts', async () => {
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'Acme');
+  await waitFor('.modal-wide .narrative-preview textarea');
+  await page.click('.modal-wide .narrative-preview textarea');
+  await page.type('.modal-wide .narrative-preview textarea', 'Rev', { delay: 30 });
+  await page.waitForFunction(() => {
+    const hint = document.querySelector('.modal-wide .ghost-hint');
+    return hint && hint.textContent.startsWith('iewed lease agreement');
+  }, { timeout: 4000 });
+  await page.keyboard.press('Tab');
+  const val = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (val !== 'Reviewed lease agreement and drafted renewal-terms summary for client') {
+    throw new Error(`Tab did not accept the ghost: "${val}"`);
+  }
+  await shot('ghost-text');
+  // the editor autosaved an entry while we typed — delete it to leave the day clean
+  await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
+  await clickText('.modal-wide button', 'Delete');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+});
+
 await step('picker: client→matter create + fuzzy client-name search', async () => {
   await clickText('button', 'New timer');
   await waitFor('.modal .cmpicker input');
