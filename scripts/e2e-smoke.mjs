@@ -380,6 +380,14 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
     const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
     return line2.querySelector('input[type="text"]').value === 'send renewal email to landlord';
   }, { timeout: 4000 });
+  // …and the edit-through must NOT rewrite line 1's fragment with the AUTO
+  // box's display-only capitalization ("Review …" is a render transform of
+  // segment 0, not a user edit) — the stored lowercase text stays untouched.
+  const line1Frag = await page.evaluate(() =>
+    document.querySelector('.modal-wide .task-line input[type="text"]').value);
+  if (line1Frag !== 'review lease terms') {
+    throw new Error(`display-only casing leaked into line 1's fragment: "${line1Frag}"`);
+  }
 
   // structural break: delete a parenthetical → AUTO turns off, typed text stands as manual
   const detachedText = 'Review lease terms 0.7; send renewal email to landlord (0.5).';

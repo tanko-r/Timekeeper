@@ -15,6 +15,19 @@ const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
 const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
 const isSubstantiveTask = (t) => !!((t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0);
 
+// Mirrors generateNarrative's per-segment DISPLAY transform (narrativesync.js):
+// cleaned fragment, falling back to the task code, then 'Time'; segment 0 gets
+// its first letter capitalized. applyAutoEdit diffs parsed AUTO-box segments
+// against THIS — not the raw stored fragment — so a display-only difference
+// (segment 0's capitalization, stripped trailing punctuation, a task-code
+// fallback) reads as a non-change and never gets folded back into the task
+// line as if the user had typed it.
+function segmentDisplayText(t, k) {
+  const clean = (s) => String(s || '').trim().replace(/[.;\s]+$/, '');
+  const text = clean(t.fragment) || clean(t.task_code) || 'Time';
+  return k === 0 ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+}
+
 // Same suggestion pipeline StopChips uses (spec: chips must match exactly —
 // fully-formed via formatSuggestion, deduped case-insensitively, max 3, never
 // carrying a baked-in time amount).
@@ -154,7 +167,11 @@ export function EntryEditor({ spec, settings, onClose }) {
       const seg = parsed.segments[k];
       const cur = tasks[origIdx];
       const patch = {};
-      if (seg.fragment !== cur.fragment) patch.fragment = seg.fragment;
+      // Compare against the segment's DISPLAY text, not the raw fragment:
+      // segment 0 renders capitalized (etc.), and writing that display
+      // variant back would silently rewrite the stored fragment's casing on
+      // any edit anywhere in the box.
+      if (seg.fragment !== segmentDisplayText(cur, k)) patch.fragment = seg.fragment;
       if (seg.duration != null && tenth(seg.duration) !== tenth(cur.duration)) patch.duration = tenth(seg.duration);
       if (Object.keys(patch).length) { tasks[origIdx] = { ...cur, ...patch }; changed = true; }
     });
@@ -509,7 +526,10 @@ export function EntryEditor({ spec, settings, onClose }) {
                   onClick=${() => update({ tasks: swap(local.tasks, i, i + 1) })}><${Icon} name="chevronDown" size=${11} /></button>
               </div>
               <button type="button" class="btn btn-ghost btn-sm" title="Remove line" disabled=${finalized}
-                onClick=${() => update({ tasks: local.tasks.filter((_, j) => j !== i) })}><${Icon} name="x" size=${14} /></button>
+                onClick=${() => {
+                  setCodeOpenIdx(null); // indexes shift on delete — never leave a stale open select
+                  update({ tasks: local.tasks.filter((_, j) => j !== i) });
+                }}><${Icon} name="x" size=${14} /></button>
             </div>
           </div>`)}
         <div class="row">
