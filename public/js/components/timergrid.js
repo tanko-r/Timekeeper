@@ -32,6 +32,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   });
   const setGrouping = (v) => { localStorage.setItem('tk:timerGrouping', v); setGroupingState(v); };
 
+  // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
+  const [focusId, setFocusId] = useState(null);
+
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
     setTimers(t);
@@ -240,6 +243,51 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ];
   }
 
+  // ordered list of cards actually on screen (collapse-aware); the roving
+  // tabindex + arrow keys walk this list. Task 9 filters it further.
+  const visible = sections.flatMap((sec) =>
+    (byGroupMode && sec.group && sec.group.collapsed) ? [] : sec.list);
+  const tabbableId = visible.some((t) => t.id === focusId) ? focusId : (visible[0] && visible[0].id);
+
+  const focusCard = (id) => {
+    setFocusId(id);
+    requestAnimationFrame(() => {
+      document.querySelector(`.timer-card[data-timer-id="${id}"]`)?.focus();
+    });
+  };
+
+  // Keys for the focused card. Every command is a NON-PRINTABLE chord —
+  // printable characters are reserved for type-to-filter (spec §4).
+  // stopPropagation keeps these away from the app-level shortcuts (n/t/g/…).
+  function onBoardKey(e) {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (['input', 'textarea', 'select'].includes(tag)) return; // in-card clock editing etc.
+    const list = visible;
+    if (list.length === 0) return;
+    const idx = Math.max(0, list.findIndex((t) => t.id === focusId));
+    const cur = list[idx];
+    const done = () => { e.preventDefault(); e.stopPropagation(); };
+
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      const step = (e.shiftKey ? 0.2 : 0.1) * (e.key === 'ArrowUp' ? 1 : -1);
+      guard(clockDelta(cur, step));
+      return done();
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { focusCard(list[Math.min(idx + 1, list.length - 1)].id); return done(); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { focusCard(list[Math.max(idx - 1, 0)].id); return done(); }
+    if (e.key === 'Enter' && e.shiftKey) { setEditing(cur); return done(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      // quick-note: today's entry if linked, else a fresh entry on this matter
+      if (cur.linked_entry_id) openEditor({ id: cur.linked_entry_id });
+      else openEditor({ template: { cm: { id: cur.cm_id, cm_number: cur.cm_number, short_name: cur.cm_short_name, billable: cur.cm_billable ?? 1 } } });
+      return done();
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      guard(cur.running ? stop(cur) : start(cur));
+      return done();
+    }
+  }
+
   return html`
     <div class="section-title">
       <h2>Timers</h2>
@@ -262,6 +310,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         <${Icon} name="plus" size=${16} /> New timer
       </button>
     </div>
+    <div class="timer-board" tabIndex=${-1} onKeyDown=${onBoardKey}>
 
     ${sections.map((sec) => {
       const { group, list } = sec;
@@ -298,6 +347,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
               ${list.map((t) => html`
                 <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
                   canDrag=${byGroupMode}
+                  tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
                   roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
                   onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
                   onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
@@ -312,6 +362,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       <button class="timer-new" onClick=${() => setEditing('new')}>
         <${Icon} name="plus" /> Create your first timer
       </button>` : null}
+    </div>
 
     ${menu ? html`
       <${ContextMenu} x=${menu.x} y=${menu.y} items=${menuItems(menu.timer)} onClose=${() => setMenu(null)} />` : null}
@@ -347,10 +398,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const idle = timer.running && secs > idleAfter;
+
+  // Worked-today highlight (spec §4): accumulated time today (elapsed > 0 or
+  // a linked entry) vs. still-at-zero — independent of .running / .idle-nudge.
+  const worked = !!timer.linked_entry_id || secs > 0;
 
   function commitClock() {
     setEditingClock(false);
@@ -359,7 +414,10 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, onStart,
   }
 
   return html`
-    <div class=${'timer-card' + (timer.running ? ' running' : '')}
+    <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '')}
+      tabIndex=${tabbable ? 0 : -1}
+      data-timer-id=${timer.id}
+      onFocus=${() => onFocusCard && onFocusCard()}
       draggable=${canDrag ? 'true' : 'false'}
       title=${`${timer.name} — ${fmtClock(secs)} elapsed`}
       onDragStart=${(e) => { if (!canDrag) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}

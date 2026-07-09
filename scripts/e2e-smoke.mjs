@@ -340,6 +340,61 @@ await step('client rename: inline on CMs view, reflected in by-client grouping',
   await clickText('.seg button', 'By group'); // restore for later steps
 });
 
+await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today highlight', async () => {
+  // Acme research was left inside the collapsed "Litigation" group by the
+  // earlier groups step; expand it so its card renders again.
+  await page.evaluate(() => {
+    const head = [...document.querySelectorAll('.group-head')].find((h) => h.textContent.includes('Litigation'));
+    head?.querySelector('button')?.click();
+  });
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-section')]
+    .some((s) => s.textContent.includes('Litigation') && s.querySelector('.timer-card')), { timeout: 4000 });
+
+  // a second, untouched timer proves the worked/zero distinction
+  await clickText('button', 'New timer');
+  await type('.modal input[placeholder="e.g. Acme — research"]', 'Harbor drafting');
+  await page.click('.modal .cmpicker input');
+  await sleep(250);
+  await clickText('.cmpicker-item .name', 'Harbor Lease');
+  await clickText('.modal button', 'Create');
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length >= 2, { timeout: 4000 });
+
+  const workedNames = await page.$$eval('.timer-card.worked .timer-name', (els) => els.map((e) => e.textContent));
+  if (!workedNames.includes('Acme research')) throw new Error(`Acme not highlighted: ${workedNames}`);
+  if (workedNames.includes('Harbor drafting')) throw new Error('zero timer must not be highlighted');
+
+  const focusAcme = () => page.evaluate(() => {
+    [...document.querySelectorAll('.timer-card')]
+      .find((c) => c.textContent.includes('Acme research')).focus();
+  });
+  const acmeClockIs = (want) => page.waitForFunction((w) => {
+    const card = [...document.querySelectorAll('.timer-card')]
+      .find((c) => c.textContent.includes('Acme research'));
+    return card && card.querySelector('.timer-clock')?.textContent.trim() === w;
+  }, { timeout: 4000 }, want);
+
+  await focusAcme();
+  await page.keyboard.down('Alt');
+  await page.keyboard.press('ArrowUp');           // +0.1 → 1.5
+  await page.keyboard.up('Alt');
+  await acmeClockIs('1.5');
+  await page.keyboard.down('Alt');
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('ArrowDown');          // −0.2 → 1.3
+  await page.keyboard.up('Shift');
+  await page.keyboard.up('Alt');
+  await acmeClockIs('1.3');
+
+  await page.keyboard.press('Enter');              // start
+  await page.waitForFunction(() => document.querySelector('.timer-card.running'), { timeout: 4000 });
+  await sleep(2500);                               // outlive the 2s misclick grace
+  await focusAcme();
+  await page.keyboard.press('Enter');              // stop → chips
+  await waitFor('.stop-chips');
+  await page.keyboard.press('Escape');             // dismiss — the draft is already filed
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+});
+
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');

@@ -324,6 +324,7 @@ test('timer list carries client fields for by-client grouping', () =>
     assert.equal(list[0].client_number, '100001');
     assert.equal(list[0].client_name, ''); // blank until named
     assert.ok(list[0].client_id);
+    assert.equal(list[0].cm_billable, 1);
 
     const client = (await t.fetchJson('GET', '/api/clients')).body[0];
     await t.fetchJson('PATCH', `/api/clients/${client.id}`, { name: 'Acme Holdings' });

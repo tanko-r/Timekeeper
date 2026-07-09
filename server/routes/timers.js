@@ -112,6 +112,7 @@ export function timersRouter({ db, clock }) {
   const listStmt = () => db.prepare(`SELECT ${TIMER_COLS},
       (SELECT cm_number FROM matters WHERE matters.id = timers.cm_id) AS cm_number,
       (SELECT short_name FROM matters WHERE matters.id = timers.cm_id) AS cm_short_name,
+      (SELECT billable FROM matters WHERE matters.id = timers.cm_id) AS cm_billable,
       (SELECT client_id FROM matters WHERE matters.id = timers.cm_id) AS client_id,
       (SELECT c.client_number FROM matters m JOIN clients c ON c.id = m.client_id WHERE m.id = timers.cm_id) AS client_number,
       (SELECT c.name FROM matters m JOIN clients c ON c.id = m.client_id WHERE m.id = timers.cm_id) AS client_name
