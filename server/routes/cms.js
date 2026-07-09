@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { validateCmNumber } from '../lib/validation.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 
-const CM_COLS = 'id, cm_number, short_name, billable, status, favorite, last_used_at, created_at, updated_at';
+const CM_COLS = `matters.id, matters.cm_number, matters.short_name, matters.billable,
+  matters.status, matters.favorite, matters.last_used_at, matters.created_at, matters.updated_at,
+  matters.client_id, matters.matter_number,
+  clients.client_number, clients.name AS client_name`;
+const CM_FROM = 'FROM matters LEFT JOIN clients ON clients.id = matters.client_id';
 
 // Upsert the client for a 6-digit client number and return its id. Blank name;
 // the user fills it in later via /api/clients. Reused by the timer importer.
@@ -16,15 +20,15 @@ export function cmsRouter({ db, clock }) {
   const r = Router();
   const now = () => clock().toISOString();
 
-  const getCm = db.prepare(`SELECT ${CM_COLS} FROM matters WHERE id=?`);
+  const getCm = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.id=?`);
 
   r.get('/picker', (req, res) => {
     const q = String(req.query.q || '').trim();
     const like = `%${q}%`;
     const rows = db.prepare(`
-      SELECT ${CM_COLS} FROM matters
-      WHERE status='active' AND (? = '' OR cm_number LIKE ? OR short_name LIKE ? COLLATE NOCASE)
-      ORDER BY favorite DESC, last_used_at IS NULL, last_used_at DESC, short_name COLLATE NOCASE
+      SELECT ${CM_COLS} ${CM_FROM}
+      WHERE matters.status='active' AND (? = '' OR matters.cm_number LIKE ? OR matters.short_name LIKE ? COLLATE NOCASE)
+      ORDER BY matters.favorite DESC, matters.last_used_at IS NULL, matters.last_used_at DESC, matters.short_name COLLATE NOCASE
       LIMIT 25
     `).all(q, like, like);
     res.json(rows);
@@ -35,8 +39,8 @@ export function cmsRouter({ db, clock }) {
     const rows = db.prepare(`
       SELECT ${CM_COLS},
         (SELECT COUNT(*) FROM entries e WHERE e.cm_id = matters.id AND e.deleted_at IS NULL) AS entry_count
-      FROM matters ${includeArchived ? '' : "WHERE status='active'"}
-      ORDER BY favorite DESC, short_name COLLATE NOCASE
+      ${CM_FROM} ${includeArchived ? '' : "WHERE matters.status='active'"}
+      ORDER BY matters.favorite DESC, matters.short_name COLLATE NOCASE
     `).all();
     res.json(rows);
   });

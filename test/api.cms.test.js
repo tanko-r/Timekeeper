@@ -95,6 +95,20 @@ test('cannot hard-delete a CM with entries; unreferenced CM deletes', () => with
   assert.equal(ok.status, 200);
 }));
 
+test('matter payloads include client fields', () => withServer(async (t) => {
+  const created = (await t.fetchJson('POST', '/api/cms', { cm_number: '909001-000007', short_name: 'Enriched' })).body;
+  assert.equal(created.client_number, '909001');
+  assert.equal(created.matter_number, '000007');
+  assert.equal(created.client_name, '');
+  assert.ok(created.client_id);
+
+  const picker = (await t.fetchJson('GET', '/api/cms/picker?q=909001')).body;
+  assert.equal(picker[0].client_number, '909001');
+
+  const list = (await t.fetchJson('GET', '/api/cms')).body;
+  assert.ok(list.every((m) => 'client_number' in m));
+}));
+
 test('task codes: CRUD and reorder', () => withServer(async (t) => {
   const list = (await t.fetchJson('GET', '/api/task-codes')).body;
   assert.equal(list.length, 11);
