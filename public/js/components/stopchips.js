@@ -1,5 +1,6 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, createPortal, fmtHours, emitToast, Icon } from '/js/ui.js';
+import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 
 // Non-blocking stop affordance (spec §6): replaces the per-stop StopPopup
 // modal. The stop has ALREADY filed the draft entry when this appears — it
@@ -23,8 +24,8 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
     if (!offerChips) { setChips([]); return undefined; }
     let alive = true;
     api.get(`/api/matters/${timer.cm_id}/suggestions`)
-      .then((r) => { if (alive) setChips(dedupe([timer.suggested_narrative, ...r.phrases.map((p) => p.text)])); })
-      .catch(() => { if (alive) setChips(dedupe([timer.suggested_narrative])); });
+      .then((r) => { if (alive) setChips(dedupe(clean([timer.suggested_narrative, ...r.phrases.map((p) => p.text)]))); })
+      .catch(() => { if (alive) setChips(dedupe(clean([timer.suggested_narrative]))); });
     return () => { alive = false; };
   }, []); // eslint-disable-line
 
@@ -39,7 +40,8 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   async function pick(text) {
     try {
       await api.patch(`/api/entries/${entry.id}`, { narrative: text });
-      emitToast('Narrative filed ✓');
+      emitToast('Narrative set — review & save');
+      openEditor({ id: entry.id });
       onFiled();
     } catch (e) {
       emitToast(e.message, { error: true });
@@ -105,6 +107,14 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
         <button class="btn btn-sm" onClick=${edit}><${Icon} name="edit" size=${14} /> Edit entry <kbd>e</kbd></button>
       </div>
     </div>`, document.body);
+}
+
+// Suggested narratives must never invent time amounts (spec: the app records
+// duration separately) — a stored free-text narrative can carry baked-in
+// amounts like "(0.5)" and still rank as a phrasebook hit, so drop those
+// before they ever become a one-tap chip.
+function clean(list) {
+  return list.filter((t) => !containsTimeAmounts(t));
 }
 
 function dedupe(list) {

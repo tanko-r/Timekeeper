@@ -480,8 +480,8 @@ kbd {
 
 /* ---------- stop chips (non-blocking stop affordance) ---------- */
 .stop-chips {
-  position: fixed; right: 18px; bottom: 18px; z-index: 250;
-  width: 380px; max-width: calc(100vw - 36px);
+  position: fixed; left: 50%; top: 22%; transform: translateX(-50%); right: auto; bottom: auto; z-index: 250;
+  width: 480px; max-width: calc(100vw - 36px);
   background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: var(--shadow); padding: 10px 12px;
 }

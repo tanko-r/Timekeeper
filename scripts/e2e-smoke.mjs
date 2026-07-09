@@ -155,7 +155,7 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
   if (!title.startsWith('00:00')) throw new Error(`misclick must fully revert, got ${title}`);
 });
 
-await step('backdated start (10m ago) → stop → non-blocking chips file the narrative', async () => {
+await step('backdated start (10m ago) → stop → non-blocking chips; picking one opens the entry editor', async () => {
   await page.click('.timer-card button[title="Timer menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-inline button', '10m');
@@ -165,8 +165,16 @@ await step('backdated start (10m ago) → stop → non-blocking chips file the n
   if (await page.$('.modal')) throw new Error('stop must not open a modal'); // …not a blocking one
   await shot('stop-chips');
   // one-tap narrative from the matter's history (the finalized Acme entry)
+  // opens the entry editor with that narrative already filed.
   await clickText('.stop-chips .chip-btn', 'Reviewed lease agreement');
+  await waitFor('.modal-wide .narrative-preview textarea');
   await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+  const narrative = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (!narrative.startsWith('Reviewed lease agreement')) {
+    throw new Error(`chip narrative did not land in the editor: "${narrative}"`);
+  }
+  await clickText('.modal-wide button', 'Save & close');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   await sleep(400);
   const entries = await page.$$eval('.entry-card', (els) => els.length);
   if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);

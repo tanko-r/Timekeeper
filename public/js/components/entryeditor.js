@@ -412,7 +412,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       </div>
 
       <div class="section-title"><h3 style=${{ margin: 0 }}>Narrative</h3>
-        ${isAuto ? html`<span class="muted small">generated from task lines — edit the fragments above</span>` : null}
+        ${isAuto ? html`<span class="muted small">generated from task lines — edit the fragments above (ghost suggestions appear in the fragment fields)</span>` : null}
         <div class="spacer" style=${{ flex: 1 }}></div>
         <${SaveShortcutBar} selection=${selText} />
       </div>
