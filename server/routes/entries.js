@@ -3,6 +3,7 @@ import { getSetting } from '../db.js';
 import { isValidDate } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
+import { extractPeople } from '../lib/people.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
@@ -67,6 +68,42 @@ export function syncNarrative(db, entryId) {
 
 export function touchCm(db, cmId, nowIso) {
   db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, cmId);
+}
+
+// matter_people is a DERIVED CACHE: rebuild the whole roster for one matter
+// from its live (non-deleted) entries. Idempotent — safe to call on every
+// write, edit, move, copy, delete, and restore; a per-matter scan is cheap in
+// a single-user DB and makes edits exactly correct with zero bookkeeping.
+// Names come from the narrative plus all task fragments, deduped per entry,
+// so count = number of live entries mentioning the person. last_seen_at
+// stores the entry DATE (local YYYY-MM-DD), not a wall clock, so backfilled
+// history ranks correctly by recency. Safe inside an outer db.transaction
+// (better-sqlite3 nests transactions via savepoints).
+export function rebuildMatterPeople(db, matterId) {
+  const rows = db.prepare(`
+    SELECT e.date, e.narrative,
+      (SELECT group_concat(t.fragment, char(10)) FROM entry_tasks t WHERE t.entry_id = e.id) AS fragments
+    FROM entries e WHERE e.cm_id = ? AND e.deleted_at IS NULL
+  `).all(matterId);
+  const agg = new Map(); // lower-cased name → { name, count, last }
+  for (const row of rows) {
+    for (const name of extractPeople(`${row.narrative}\n${row.fragments || ''}`)) {
+      const key = name.toLowerCase();
+      const cur = agg.get(key);
+      if (!cur) {
+        agg.set(key, { name, count: 1, last: row.date });
+      } else {
+        cur.count += 1;
+        if (row.date >= cur.last) { cur.last = row.date; cur.name = name; }
+      }
+    }
+  }
+  db.transaction(() => {
+    db.prepare('DELETE FROM matter_people WHERE matter_id=?').run(matterId);
+    const ins = db.prepare(
+      'INSERT INTO matter_people (matter_id, name, count, last_seen_at) VALUES (?, ?, ?, ?)');
+    for (const p of agg.values()) ins.run(matterId, p.name, p.count, p.last);
+  })();
 }
 
 export function entriesRouter({ db, clock }) {
@@ -139,6 +176,8 @@ export function entriesRouter({ db, clock }) {
               db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm_id, now(), id);
               touchCm(db, cm_id, now());
               recordAudit(db, row, { cm_id }, now());
+              rebuildMatterPeople(db, cm_id);
+              if (cm_id !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
             })();
             done.push(id);
             break;
@@ -201,6 +240,7 @@ export function entriesRouter({ db, clock }) {
       writeTasks(db, i.lastInsertRowid, norm.tasks);
       syncNarrative(db, i.lastInsertRowid);
       touchCm(db, cm.id, now());
+      rebuildMatterPeople(db, cm.id);
       return i;
     })();
     res.status(201).json(loadEntry(db, info.lastInsertRowid));
@@ -243,6 +283,8 @@ export function entriesRouter({ db, clock }) {
       syncNarrative(db, row.id);
       if (cmId !== row.cm_id) touchCm(db, cmId, now());
       recordAudit(db, row, req.body, now());
+      rebuildMatterPeople(db, cmId);
+      if (cmId !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
     })();
     res.json(loadEntry(db, row.id));
   });
@@ -276,6 +318,7 @@ export function entriesRouter({ db, clock }) {
         .run(date, src.cm_id, src.narrative, src.billable, src.total_override, now(), now());
       writeTasks(db, i.lastInsertRowid, src.tasks);
       touchCm(db, src.cm_id, now());
+      rebuildMatterPeople(db, src.cm_id);
       return i;
     })();
     res.status(201).json(loadEntry(db, info.lastInsertRowid));
@@ -316,6 +359,7 @@ function softDeleteEntry(db, row, nowIso) {
       db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
         .run(row.id, 'delete', JSON.stringify({ date: row.date, narrative: row.narrative }), nowIso);
     }
+    rebuildMatterPeople(db, row.cm_id);
   })();
 }
 
@@ -326,6 +370,7 @@ function restoreEntry(db, row, nowIso) {
       db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
         .run(row.id, 'restore', '{}', nowIso);
     }
+    rebuildMatterPeople(db, row.cm_id);
   })();
 }
 

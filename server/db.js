@@ -137,6 +137,21 @@ const MIGRATIONS = [
 
   CREATE UNIQUE INDEX idx_matters_client_matter ON matters(client_id, matter_number);
   `,
+  // memory layer (spec §5): per-matter people roster cache. Derived from
+  // entries — rebuilt by the app on entry writes; backfilled from existing
+  // history on the first jobs tick after upgrade (SQL can't run the JS
+  // extractor, so the backfill lives in jobs.js, not here).
+  // last_seen_at stores the ENTRY DATE (YYYY-MM-DD), not a wall clock.
+  `
+  CREATE TABLE matter_people (
+    id           INTEGER PRIMARY KEY,
+    matter_id    INTEGER NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    count        INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TEXT,
+    UNIQUE(matter_id, name)
+  );
+  `,
 ];
 
 const SEED_SETTINGS = {

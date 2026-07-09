@@ -135,3 +135,67 @@ test('filters: date range, cm, billable, status, narrative keyword', () =>
     assert.equal((await t.fetchJson('GET', '/api/entries?q=landlord')).body.length, 1);
     assert.equal((await t.fetchJson('GET', '/api/entries?status=draft')).body.length, 3);
   }));
+
+test('entry writes maintain the matter people roster', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      narrative: 'Telephone conference with M. Smith regarding lease terms.',
+      tasks: [{ task_code: 'Call/Conference', duration: 0.5, fragment: '' }],
+    })).body;
+    const roster = () => t.db.prepare(
+      'SELECT name, count, last_seen_at FROM matter_people WHERE matter_id=? ORDER BY name'
+    ).all(cm.id);
+    assert.deepEqual(roster(), [{ name: 'M. Smith', count: 1, last_seen_at: '2026-07-06' }]);
+
+    // a second entry mentioning the same person bumps count and recency
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-07', cm_id: cm.id,
+      narrative: 'Email to M. Smith re revised legal description.',
+      tasks: [{ task_code: 'Correspondence', duration: 0.2, fragment: '' }],
+    });
+    assert.deepEqual(roster(), [{ name: 'M. Smith', count: 2, last_seen_at: '2026-07-07' }]);
+
+    // editing the mention away rebuilds — derived cache, not append-only
+    await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      narrative: 'Review lease exhibit.',
+    });
+    assert.deepEqual(roster(), [{ name: 'M. Smith', count: 1, last_seen_at: '2026-07-07' }]);
+  }));
+
+test('moving or deleting an entry re-attributes its people', () =>
+  withServer(async (t, cm, nb) => {
+    const e = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      narrative: 'Call with A. Turner re loading dock lease.',
+      tasks: [{ task_code: 'Call/Conference', duration: 0.3, fragment: '' }],
+    })).body;
+    const count = (matterId) => t.db.prepare(
+      'SELECT COUNT(*) c FROM matter_people WHERE matter_id=?').get(matterId).c;
+
+    // move to the other matter → roster follows
+    await t.fetchJson('PATCH', `/api/entries/${e.id}`, { cm_id: nb.id });
+    assert.equal(count(cm.id), 0);
+    assert.equal(t.db.prepare(
+      'SELECT name FROM matter_people WHERE matter_id=?').get(nb.id).name, 'A. Turner');
+
+    // soft delete → roster empties; restore → it returns
+    await t.fetchJson('DELETE', `/api/entries/${e.id}`);
+    assert.equal(count(nb.id), 0);
+    await t.fetchJson('POST', `/api/entries/${e.id}/restore`);
+    assert.equal(count(nb.id), 1);
+  }));
+
+test('names in task fragments count too, once per entry', () =>
+  withServer(async (t, cm) => {
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      tasks: [
+        { task_code: 'Call/Conference', duration: 0.4, fragment: 'telephone conference with B. Novak re access road' },
+        { task_code: 'Correspondence', duration: 0.2, fragment: 'email to B. Novak re same' },
+      ],
+    });
+    const rows = t.db.prepare(
+      'SELECT name, count FROM matter_people WHERE matter_id=?').all(cm.id);
+    assert.deepEqual(rows, [{ name: 'B. Novak', count: 1 }]); // per-entry dedupe
+  }));

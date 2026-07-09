@@ -5,7 +5,7 @@ import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
-import { loadEntry, syncNarrative } from './entries.js';
+import { loadEntry, syncNarrative, rebuildMatterPeople } from './entries.js';
 import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 
@@ -72,6 +72,7 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       db.prepare('UPDATE timers SET linked_entry_id=? WHERE id=?').run(entryId, timer.id);
     }
     db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
+    rebuildMatterPeople(db, timer.cm_id);
   })();
 
   return { entryId, relinked, previousTotal };
