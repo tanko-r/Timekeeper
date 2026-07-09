@@ -316,3 +316,17 @@ test('timer-created entries bump the CM picker recency', () =>
     const row = t.db.prepare('SELECT last_used_at FROM matters WHERE id=?').get(cm.id);
     assert.ok(row.last_used_at, 'last_used_at set by timer entry');
   }));
+
+test('timer list carries client fields for by-client grouping', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    await t.fetchJson('POST', '/api/timers', { name: 'Acme research', cm_id: cm.id });
+    let list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].client_number, '100001');
+    assert.equal(list[0].client_name, ''); // blank until named
+    assert.ok(list[0].client_id);
+
+    const client = (await t.fetchJson('GET', '/api/clients')).body[0];
+    await t.fetchJson('PATCH', `/api/clients/${client.id}`, { name: 'Acme Holdings' });
+    list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].client_name, 'Acme Holdings');
+  }));
