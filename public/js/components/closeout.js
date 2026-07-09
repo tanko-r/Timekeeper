@@ -22,7 +22,7 @@ export function CloseOut({ onClose, openEditor }) {
   const [accepted, setAccepted] = useState(0);
   const [skipped, setSkipped] = useState(0);
   const [text, setText] = useState('');
-  const [warnInfo, setWarnInfo] = useState(null); // { warnOnly, hard }
+  const [warnInfo, setWarnInfo] = useState(null); // { warnOnly, hard, newDrafts? }
   const [closedInfo, setClosedInfo] = useState(null); // { total, stillBlocked }
   const [blockedInfo, setBlockedInfo] = useState(null); // { n }
   const [busy, setBusy] = useState(false);
@@ -122,6 +122,24 @@ export function CloseOut({ onClose, openEditor }) {
   async function finalizeAndExport(ack) {
     setBusy(true);
     try {
+      if (ack) {
+        // finalize-day applies ack DATE-WIDE, not per-entry (and the plan
+        // forbids changing it): a draft filed while this warning card sat on
+        // screen (background timer stop, another tab) would get its warnings
+        // acknowledged and finalized sight unseen. Guard client-side: only
+        // ack if today's draft set is still exactly what this sweep reviewed
+        // (the frozen cards + the blocked ids the warning screen listed).
+        const freshD = await api.get('/api/dashboard');
+        const reviewed = new Set([
+          ...(cards || []).map((c) => c.id),
+          ...(warnInfo ? [...warnInfo.warnOnly, ...warnInfo.hard].map((b) => b.id) : []),
+        ]);
+        const newDrafts = freshD.entries.filter((e) => e.status === 'draft' && !reviewed.has(e.id));
+        if (newDrafts.length > 0) {
+          setWarnInfo((w) => ({ ...w, newDrafts }));
+          return;
+        }
+      }
       const r = await api.post('/api/finalize-day', { date, ack });
       changedRef.current = true;
       const warnOnly = r.blocked.filter((b) => b.blocks.length === 0);
@@ -134,6 +152,28 @@ export function CloseOut({ onClose, openEditor }) {
       await doExport(hard.length);
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Re-run the whole sweep from a fresh snapshot (used when new drafts
+  // appeared mid-sweep and the warning ack was refused).
+  async function restartSweep() {
+    setPhase('loading');
+    setWarnInfo(null);
+    setAccepted(0);
+    setSkipped(0);
+    setIdx(0);
+    prevIdxRef.current = -1;
+    lastAutoRef.current = '';
+    try {
+      const d = await api.get('/api/dashboard');
+      const drafts = d.entries.filter((e) => e.status === 'draft');
+      setDate(d.date);
+      setCards(drafts);
+      setPhase(drafts.length === 0 ? 'empty' : 'sweep');
+    } catch (e) {
+      emitToast(e.message, { error: true });
+      onClose(changedRef.current);
     }
   }
 
@@ -158,31 +198,44 @@ export function CloseOut({ onClose, openEditor }) {
   useEffect(() => {
     function onKey(e) {
       const tag = (e.target.tagName || '').toLowerCase();
-      const typing = ['input', 'textarea', 'select'].includes(tag);
-      if (e.key === 'Enter') {
-        if (e.shiftKey) return;
-        if (typing && !e.target.closest('.closeout-card')) return;
-        if (phase !== 'sweep') return;
+      const typing = ['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable;
+      if (e.key === 'Enter' && phase === 'sweep' && !e.shiftKey
+          && (!typing || e.target.closest('.closeout-card'))) {
         e.preventDefault();
         e.stopPropagation();
         acceptCurrent();
         return;
       }
-      if (typing) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        e.stopPropagation();
-        onClose(changedRef.current);
-      } else if (e.key === 'e' && phase === 'sweep') {
-        e.preventDefault();
-        e.stopPropagation();
-        editCurrent();
-      } else if (e.key === 'ArrowDown' && phase === 'sweep') {
-        e.preventDefault();
-        e.stopPropagation();
-        skipCurrent();
+      if (typing) return; // never fence real typing — the field must see its own keys
+      if (!(e.metaKey || e.ctrlKey || e.altKey)) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose(changedRef.current);
+          return;
+        }
+        if (e.key === 'e' && phase === 'sweep') {
+          e.preventDefault();
+          e.stopPropagation();
+          editCurrent();
+          return;
+        }
+        if (e.key === 'ArrowDown' && phase === 'sweep') {
+          e.preventDefault();
+          e.stopPropagation();
+          skipCurrent();
+          return;
+        }
       }
+      // FENCE: app.js's global shortcut handler (n/t/q/c///g/?) is a
+      // document-level BUBBLE listener that only knows to stand down for the
+      // editor and quick-capture — this overlay is dashboard-local state it
+      // can't see, so without this a stray `n` would open the entry editor
+      // invisibly UNDER the close-out backdrop (z-index 100 vs 300). Stop
+      // propagation (capture runs before bubble) for every key we don't
+      // explicitly handle when the target isn't a form field. No
+      // preventDefault — browser defaults (button Enter/Space, etc.) survive.
+      e.stopPropagation();
     }
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
@@ -202,7 +255,9 @@ export function CloseOut({ onClose, openEditor }) {
         </div>
       </div>`;
   } else if (phase === 'sweep') {
-    const label = (current.cm.client_name ? `${current.cm.client_name} · ` : '') + current.cm.short_name;
+    // the dashboard's cm object carries no client_name (see enrich()); the
+    // short name alone matches how EntryList labels entries today
+    const label = current.cm.short_name;
     body = html`
       <div class="closeout-card">
         <div class="closeout-dots">
@@ -245,11 +300,24 @@ export function CloseOut({ onClose, openEditor }) {
                 <${ValidationList} findings=${b.warns} compact />
               </div>`)}
           </div>
-          <div class="row-end">
-            <button class="btn btn-primary" disabled=${busy} onClick=${() => finalizeAndExport(true)}>
-              Accept warnings & finalize
-            </button>
-          </div>` : null}
+          ${warnInfo.newDrafts ? html`
+            <div class="closeout-warnitem">
+              <strong>New drafts appeared while you reviewed</strong> — reopen
+              close-out to include them (the warning ack applies to the whole
+              day, so accepting now would finalize them unseen).
+              <div class="closeout-warnlist" style=${{ marginTop: '6px' }}>
+                ${warnInfo.newDrafts.map((e) => html`
+                  <span key=${e.id} class="small">${e.cm.short_name} · ${fmtHours(e.total)}h</span>`)}
+              </div>
+              <div class="row-end">
+                <button class="btn btn-primary" onClick=${restartSweep}>Restart the sweep</button>
+              </div>
+            </div>` : html`
+            <div class="row-end">
+              <button class="btn btn-primary" disabled=${busy} onClick=${() => finalizeAndExport(true)}>
+                Accept warnings & finalize
+              </button>
+            </div>`}` : null}
         ${warnInfo.hard.length > 0 ? html`
           <h3 class="closeout-warn-title">Cannot finalize yet</h3>
           <div class="closeout-warnlist">

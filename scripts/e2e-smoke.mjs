@@ -684,6 +684,14 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   await page.waitForFunction((name) => document.querySelector('.closeout-card')?.textContent.includes(name),
     { timeout: 4000 }, acme.short_name);
 
+  // global-shortcut fence: while the sweep is up, `n` must NOT open the entry
+  // editor underneath the overlay (CloseOut's capture listener stops
+  // propagation of unhandled keys before app.js's bubble handler sees them)
+  await page.keyboard.press('n');
+  await sleep(300);
+  if (await page.$('.modal-backdrop')) throw new Error('global `n` leaked under the close-out overlay');
+  if (!(await page.$('.closeout-card'))) throw new Error('close-out vanished after the fence check');
+
   // sweep through every draft card (Enter accepts and advances) until the summary
   for (let i = 0; i < 20; i++) {
     const phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
