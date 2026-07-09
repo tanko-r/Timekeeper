@@ -36,6 +36,41 @@ export const api = {
   del: (path) => request('DELETE', path),
 };
 
+// Streaming POST for NDJSON endpoints (/api/ai/narrate): calls onLine(obj)
+// per line as tokens arrive. Non-2xx rejects with ApiError before any line
+// is delivered (the server only streams after committing to 200).
+export async function streamNdjson(path, body, onLine) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+  });
+  if (res.status === 401) {
+    window.dispatchEvent(new CustomEvent('tk:auth-required'));
+    throw new ApiError(401, null);
+  }
+  if (!res.ok) {
+    let json = null;
+    try { json = await res.json(); } catch { /* keep null */ }
+    throw new ApiError(res.status, json);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) !== -1) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line) onLine(JSON.parse(line));
+    }
+  }
+}
+
 export function downloadText(filename, text, mime = 'text/csv') {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);

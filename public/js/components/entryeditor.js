@@ -1,4 +1,4 @@
-import { api } from '/js/api.js';
+import { api, streamNdjson } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useDebounced,
   Modal, Field, fmtHours, todayStr, emitToast, previewNarrative,
@@ -25,6 +25,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [brief, setBrief] = useState('');
   const [aiSplit, setAiSplit] = useState(true);
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiDone, setAiDone] = useState(false); // a narrate run finished → show rewrite controls
   const changedRef = useRef(false);
   const localRef = useRef(null);
   localRef.current = local;
@@ -294,6 +295,29 @@ export function EntryEditor({ spec, settings, onClose }) {
     }
   }
 
+  // Streamed narration (spec §6): tokens land in the narrative field live,
+  // replacing the blocking spinner. The "split into tasks" path keeps the
+  // JSON /ai/expand endpoint — a structured split can't stream. Each chunk
+  // goes through update(), so the normal debounced autosave applies.
+  async function aiNarrate(mode) {
+    setAiBusy(true);
+    try {
+      let acc = '';
+      await streamNdjson('/api/ai/narrate', {
+        mode, brief, narrative: localRef.current?.narrative || '',
+      }, (m) => {
+        if (m.error) throw new Error(m.message || m.error);
+        if (m.token) { acc += m.token; update({ narrative: acc }); }
+        if (m.done) update({ narrative: m.narrative });
+      });
+      setAiDone(true);
+    } catch (e) {
+      emitToast(e.body?.message || e.message, { error: true });
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   // ---------- render ----------
 
   if (!local) {
@@ -395,16 +419,24 @@ export function EntryEditor({ spec, settings, onClose }) {
       ${ai && ai.enabled && ai.reachable && !finalized ? html`
         <div class="ai-row">
           <input type="text" value=${brief}
-            placeholder=${`Brief description — ${ai.model} expands it…`}
+            placeholder=${`Brief description — ${ai.model} ${aiSplit ? 'expands it…' : 'writes it live…'}`}
             onInput=${(e) => setBrief(e.target.value)}
-            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !aiBusy) aiExpand(); }} />
+            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !aiBusy) (aiSplit ? aiExpand() : aiNarrate('draft')); }} />
           <label class="checkbox-row small">
             <input type="checkbox" checked=${aiSplit} onChange=${(e) => setAiSplit(e.target.checked)} />
             split into tasks
           </label>
-          <button class="btn" disabled=${!brief || aiBusy} onClick=${aiExpand}>
-            <${Icon} name="sparkles" size=${16} /> ${aiBusy ? 'Thinking…' : 'Expand'}
+          <button class="btn" disabled=${!brief || aiBusy} onClick=${() => (aiSplit ? aiExpand() : aiNarrate('draft'))}>
+            <${Icon} name="sparkles" size=${16} />
+            ${aiBusy ? (aiSplit ? 'Thinking…' : 'Streaming…') : (aiSplit ? 'Expand' : 'Write')}
           </button>
+          ${aiDone && !aiBusy && !isAuto ? html`
+            <span class="row" style=${{ gap: '4px', flexWrap: 'nowrap' }}>
+              <button class="btn btn-sm" title="Try a different phrasing" disabled=${!brief}
+                onClick=${() => aiNarrate('regenerate')}>↻ Regenerate</button>
+              <button class="btn btn-sm" onClick=${() => aiNarrate('shorter')}>Shorter</button>
+              <button class="btn btn-sm" onClick=${() => aiNarrate('longer')}>Longer</button>
+            </span>` : null}
         </div>` : null}
 
       <${ValidationList} findings=${validation} />
