@@ -67,6 +67,22 @@ const clickText = async (selector, text) => {
   }, selector, text);
   await page.mouse.click(box.x, box.y);
 };
+// Native HTML5 drag-and-drop, synthesized directly on the DOM — headless
+// Chromium has no real pointer to drive an actual drag gesture. The app's
+// own drag state lives in a plain ref (set by the source card's
+// onDragStart, read by the target's onDrop), not in the DataTransfer
+// payload, so dispatching real dragstart/dragover/drop events with a
+// constructed DataTransfer is enough to exercise the production handlers
+// end-to-end (not a mocked shortcut around them).
+const dndToTab = (sourceSel, tabText) => page.evaluate((srcSel, text) => {
+  const src = document.querySelector(srcSel);
+  const tgt = [...document.querySelectorAll('.timer-tab')].find((b) => b.textContent.includes(text));
+  if (!src || !tgt) throw new Error(`dndToTab: missing element (card=${!!src}, tab "${text}"=${!!tgt})`);
+  const dt = new DataTransfer();
+  src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  tgt.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  tgt.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+}, sourceSel, tabText);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const todayLocal = () => {
   const d = new Date();
@@ -471,12 +487,30 @@ await step('picker: client→matter create + fuzzy client-name search', async ()
   await clickText('.modal button', 'Cancel'); // no timer created
 });
 
-await step('groups: create, assign via menu, collapse; A-Z present', async () => {
+await step('groups as tabs: create, assign via menu, isolate, drop-on-tab, persist; A-Z present', async () => {
   await clickText('button', 'New group');
   await type('.modal input[placeholder="e.g. Litigation"]', 'Litigation');
   await clickText('.modal button', 'Create');
-  await page.waitForFunction(() => document.body.textContent.includes('Litigation'), { timeout: 4000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
+    .some((el) => el.textContent === 'Litigation'), { timeout: 4000 });
 
+  // tabs render with counts: the lone existing timer is still ungrouped
+  const counts1 = await page.evaluate(() => Object.fromEntries(
+    [...document.querySelectorAll('.timer-tab')].map((b) =>
+      [b.querySelector('.timer-tab-label').textContent, b.querySelector('.timer-tab-count').textContent])));
+  if (counts1.All !== '1') throw new Error(`All tab count wrong: ${JSON.stringify(counts1)}`);
+  if (counts1.Ungrouped !== '1') throw new Error(`Ungrouped tab count wrong: ${JSON.stringify(counts1)}`);
+  if (counts1.Litigation !== '0') throw new Error(`Litigation tab count wrong: ${JSON.stringify(counts1)}`);
+
+  // clicking a tab isolates its cards — the still-empty Litigation tab shows
+  // none of the existing (ungrouped) timers
+  await clickText('.timer-tab', 'Litigation');
+  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length === 0
+    && document.querySelector('.timer-board').textContent.includes('Drop timers here'), { timeout: 4000 });
+  await clickText('.timer-tab', 'All');
+  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length === 1, { timeout: 4000 });
+
+  // assign the existing timer to Litigation via the context-menu path
   await page.click('.timer-card button[title="Timer menu"]');
   await waitFor('.ctx-menu select');
   await page.evaluate(() => {
@@ -485,22 +519,77 @@ await step('groups: create, assign via menu, collapse; A-Z present', async () =>
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await page.waitForFunction(() => {
-    const sections = [...document.querySelectorAll('.timer-section')];
-    const lit = sections.find((s) => s.textContent.includes('Litigation'));
-    return lit && lit.querySelector('.timer-card');
+    const tab = [...document.querySelectorAll('.timer-tab')].find((b) => b.textContent.includes('Litigation'));
+    return tab && tab.querySelector('.timer-tab-count')?.textContent === '1';
+  }, { timeout: 4000 });
+  // no ungrouped timers left → the Ungrouped tab disappears entirely
+  await page.waitForFunction(() => ![...document.querySelectorAll('.timer-tab-label')]
+    .some((el) => el.textContent === 'Ungrouped'), { timeout: 4000 });
+
+  // still on "All" — no rename/delete tools anywhere (no group is active)
+  const toolsUnderAll = await page.evaluate(() => !!document.querySelector('.tab-tools'));
+  if (toolsUnderAll) throw new Error('group tools must not render while "All" is active');
+
+  // clicking Litigation isolates exactly that one (now-assigned) card, and
+  // now that it's the active tab, its rename/delete tools appear
+  await clickText('.timer-tab', 'Litigation');
+  await page.waitForFunction(() => {
+    const wrap = [...document.querySelectorAll('.timer-tab-wrap')].find((w) => w.textContent.includes('Litigation'));
+    return wrap && wrap.querySelector('.tab-tools button[title="Rename group"]');
+  }, { timeout: 4000 });
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    return cards.length === 1 && cards[0].textContent.includes('Acme research');
   }, { timeout: 4000 });
 
-  // collapse hides the cards
-  await page.evaluate(() => {
-    const head = [...document.querySelectorAll('.group-head')].find((h) => h.textContent.includes('Litigation'));
-    head.querySelector('button').click();
-  });
+  // drop-on-tab: create a second group, drag the card from the isolated
+  // Litigation grid onto its tab, then drag it back — exercises the actual
+  // dragstart/dragover/drop handlers (not just the context-menu path) in
+  // both directions and leaves the timer back in Litigation for later steps.
+  await clickText('button', 'New group');
+  await type('.modal input[placeholder="e.g. Litigation"]', 'General');
+  await clickText('.modal button', 'Create');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
+    .some((el) => el.textContent === 'General'), { timeout: 4000 });
+
+  await dndToTab('.timer-board .timer-card', 'General');
   await page.waitForFunction(() => {
-    const sections = [...document.querySelectorAll('.timer-section')];
-    const lit = sections.find((s) => s.textContent.includes('Litigation'));
-    return lit && !lit.querySelector('.timer-card');
+    const tabs = [...document.querySelectorAll('.timer-tab')];
+    const general = tabs.find((b) => b.textContent.includes('General'));
+    const litigation = tabs.find((b) => b.textContent.includes('Litigation'));
+    return general?.querySelector('.timer-tab-count')?.textContent === '1'
+      && litigation?.querySelector('.timer-tab-count')?.textContent === '0';
+  }, { timeout: 4000 });
+  await clickText('.timer-tab', 'General');
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    return cards.length === 1 && cards[0].textContent.includes('Acme research');
+  }, { timeout: 4000 });
+
+  await dndToTab('.timer-board .timer-card', 'Litigation');
+  await page.waitForFunction(() => {
+    const tabs = [...document.querySelectorAll('.timer-tab')];
+    const general = tabs.find((b) => b.textContent.includes('General'));
+    const litigation = tabs.find((b) => b.textContent.includes('Litigation'));
+    return general?.querySelector('.timer-tab-count')?.textContent === '0'
+      && litigation?.querySelector('.timer-tab-count')?.textContent === '1';
+  }, { timeout: 4000 });
+  await clickText('.timer-tab', 'Litigation');
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    return cards.length === 1 && cards[0].textContent.includes('Acme research');
   }, { timeout: 4000 });
   await shot('groups');
+
+  // active tab persists across reload (tk:timerTab:group), per mode
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-tab.on');
+  const activeLabel = await page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
+  if (activeLabel !== 'Litigation') throw new Error(`active tab did not persist across reload: ${activeLabel}`);
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    return cards.length === 1 && cards[0].textContent.includes('Acme research');
+  }, { timeout: 4000 });
 
   const az = await page.$$eval('button', (els) => els.some((b) => b.textContent.includes('A–Z')));
   if (!az) throw new Error('A–Z button missing');
@@ -518,16 +607,25 @@ await step('grouping selector: by client / flat / persists across reload', async
     return head?.textContent.includes('unnamed');
   });
   if (!unnamedHint) throw new Error('by-client head missing the "unnamed" hint for an unnamed client');
+  // by-client mode gets tabs too (just no rename/delete tools)
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
+    .some((el) => el.textContent === '100001'), { timeout: 4000 });
+  const hasClientTabTools = await page.evaluate(() =>
+    [...document.querySelectorAll('.timer-tab-wrap')]
+      .some((w) => w.textContent.includes('100001') && w.querySelector('.tab-tools')));
+  if (hasClientTabTools) throw new Error('client tabs must not show rename/delete tools');
+
   await clickText('.seg button', 'Flat');
-  await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
+  await page.waitForFunction(() => document.querySelectorAll('.timer-tabs').length === 0
+    && document.querySelectorAll('.group-head').length === 0
     && document.querySelectorAll('.timer-card').length >= 1, { timeout: 4000 });
   await page.reload({ waitUntil: 'networkidle0' });
   await waitFor('.timer-card');
   const on = await page.$eval('.seg button.on', (el) => el.textContent.trim());
   if (on !== 'Flat') throw new Error(`grouping did not persist: ${on}`);
   await clickText('.seg button', 'By group');
-  await page.waitForFunction(() => [...document.querySelectorAll('.group-name')]
-    .some((el) => el.textContent.includes('Litigation')), { timeout: 4000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
+    .some((el) => el.textContent === 'Litigation'), { timeout: 4000 });
 });
 
 await step('client rename: inline on CMs view, reflected in by-client grouping', async () => {
@@ -594,14 +692,14 @@ await step('client name editable from the matter Edit modal, reflected in C&M ro
 });
 
 await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today highlight', async () => {
-  // Acme research was left inside the collapsed "Litigation" group by the
-  // earlier groups step; expand it so its card renders again.
-  await page.evaluate(() => {
-    const head = [...document.querySelectorAll('.group-head')].find((h) => h.textContent.includes('Litigation'));
-    head?.querySelector('button')?.click();
-  });
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-section')]
-    .some((s) => s.textContent.includes('Litigation') && s.querySelector('.timer-card')), { timeout: 4000 });
+  // The dashboard is still in by-group mode with the "Litigation" tab active
+  // (persisted from the earlier groups step, isolating that group's cards);
+  // switch to "All" so every group's timers render together — this step
+  // needs to see Acme research alongside the fresh ungrouped timers it
+  // creates below.
+  await clickText('.timer-tab', 'All');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+    .some((c) => c.textContent.includes('Acme research')), { timeout: 4000 });
 
   // a second, untouched timer proves the worked/zero distinction
   await clickText('button', 'New timer');
