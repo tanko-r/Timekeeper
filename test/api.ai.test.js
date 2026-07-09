@@ -115,3 +115,20 @@ test('ai expand survives fenced/dirty model output', async () => {
     assert.equal(r.body.tasks[0].hours, null, 'no total → no allocation');
   } finally { await t.close(); await stub.close(); }
 });
+
+test('timer start refines the suggested narrative via the local model (async, non-blocking)', async () => {
+  const stub = await startStubOllama('Reviewed and revised lease legal description; correspondence with counsel.');
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const cm = (await t.fetchJson('POST', '/api/cms', { cm_number: '100001-000012', short_name: 'Cedar Lease' })).body;
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'MTR12', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`); // returns before the LLM does
+    let val = null;
+    for (let i = 0; i < 40 && !val; i++) { // fire-and-forget → poll briefly
+      await new Promise((r) => setTimeout(r, 50));
+      val = t.db.prepare('SELECT suggested_narrative FROM timers WHERE id=?').get(timer.id).suggested_narrative;
+    }
+    assert.equal(val, 'Reviewed and revised lease legal description; correspondence with counsel.');
+  } finally { await t.close(); await stub.close(); }
+});

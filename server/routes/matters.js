@@ -16,20 +16,15 @@ const FREE_NARRATIVE = `TRIM(e.narrative) != ''
       AND (SELECT COUNT(*) FROM entry_tasks t WHERE t.entry_id = e.id
             AND (TRIM(t.fragment) != '' OR TRIM(t.task_code) != '' OR t.duration > 0)) < 2`;
 
-export function mattersRouter({ db, clock }) {
-  const r = Router();
-  const getMatter = db.prepare('SELECT id, client_id FROM matters WHERE id=?');
-
-  const ownPhrases = db.prepare(`
+const OWN_PHRASES = `
     SELECT et.fragment AS text, e.date FROM entry_tasks et
     JOIN entries e ON e.id = et.entry_id
     WHERE e.cm_id = ? AND e.deleted_at IS NULL AND TRIM(et.fragment) != ''
     UNION ALL
     SELECT e.narrative AS text, e.date FROM entries e
-    WHERE e.cm_id = ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}
-  `);
+    WHERE e.cm_id = ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
 
-  const siblingPhrases = db.prepare(`
+const SIBLING_PHRASES = `
     SELECT et.fragment AS text, e.date FROM entry_tasks et
     JOIN entries e ON e.id = et.entry_id
     JOIN matters m ON m.id = e.cm_id
@@ -37,23 +32,35 @@ export function mattersRouter({ db, clock }) {
     UNION ALL
     SELECT e.narrative AS text, e.date FROM entries e
     JOIN matters m ON m.id = e.cm_id
-    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}
-  `);
+    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
+
+// Suggestions for one matter — exported for reuse (precedent: loadEntry /
+// syncNarrative in entries.js): timers.js calls this at timer START to
+// pre-compute a suggested narrative. Returns null for an unknown matter.
+// Statements are prepared per call — trivially cheap at single-user scale.
+export function matterSuggestions(db, matterId, today) {
+  const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
+  if (!matter) return null;
+  const own = db.prepare(OWN_PHRASES).all(matter.id, matter.id)
+    .map((o) => ({ ...o, source: 'matter' }));
+  let occurrences = own;
+  let borrowed = false;
+  if (rankPhrases(own, { today }).length < THIN_PHRASES && matter.client_id != null) {
+    const sib = db.prepare(SIBLING_PHRASES).all(matter.client_id, matter.id, matter.client_id, matter.id)
+      .map((o) => ({ ...o, source: 'client' }));
+    if (sib.length > 0) { borrowed = true; occurrences = own.concat(sib); }
+  }
+  return { matter_id: matter.id, borrowed, phrases: rankPhrases(occurrences, { today }) };
+}
+
+export function mattersRouter({ db, clock }) {
+  const r = Router();
+  const getMatter = db.prepare('SELECT id, client_id FROM matters WHERE id=?');
 
   r.get('/:id/suggestions', (req, res) => {
-    const matter = getMatter.get(req.params.id);
-    if (!matter) return res.status(404).json({ error: 'Matter not found.' });
-    const today = todayLocal(clock());
-    const own = ownPhrases.all(matter.id, matter.id)
-      .map((o) => ({ ...o, source: 'matter' }));
-    let occurrences = own;
-    let borrowed = false;
-    if (rankPhrases(own, { today }).length < THIN_PHRASES && matter.client_id != null) {
-      const sib = siblingPhrases.all(matter.client_id, matter.id, matter.client_id, matter.id)
-        .map((o) => ({ ...o, source: 'client' }));
-      if (sib.length > 0) { borrowed = true; occurrences = own.concat(sib); }
-    }
-    res.json({ matter_id: matter.id, borrowed, phrases: rankPhrases(occurrences, { today }) });
+    const out = matterSuggestions(db, req.params.id, todayLocal(clock()));
+    if (!out) return res.status(404).json({ error: 'Matter not found.' });
+    res.json(out);
   });
 
   const ownPeople = db.prepare(`

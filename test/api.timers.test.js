@@ -330,3 +330,35 @@ test('timer list carries client fields for by-client grouping', () =>
     list = (await t.fetchJson('GET', '/api/timers')).body;
     assert.equal(list[0].client_name, 'Acme Holdings');
   }));
+
+test('start pre-computes a suggested narrative from the phrasebook', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-05', cm_id: cm.id,
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: 'revise lease legal description' }],
+    });
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    assert.equal(timer.suggested_narrative, null, 'nothing suggested before first start');
+
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    let list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].suggested_narrative, 'revise lease legal description');
+
+    // the stop payload carries it too — the chips UI reads it from there
+    clock.advance(600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.timer.suggested_narrative, 'revise lease legal description');
+
+    // re-pointing the timer at a different matter clears the stale suggestion
+    const other = (await t.fetchJson('POST', '/api/cms', { cm_number: '100001-000099', short_name: 'Sibling' })).body;
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: other.id })).body;
+    assert.equal(patched.suggested_narrative, null);
+  }));
+
+test('start on a cold matter leaves the suggestion empty (and no LLM call when disabled)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Cold', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].suggested_narrative, null);
+  }));

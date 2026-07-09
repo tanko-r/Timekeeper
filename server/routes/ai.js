@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
+import { matterSuggestions } from './matters.js';
+import { todayLocal } from '../lib/dates.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
 // Brief description in → professional narrative + optional task split out.
@@ -38,6 +40,58 @@ Respond with ONLY this JSON, no other text:
 function systemPrompt(codes, custom) {
   const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   return `${instructions}\n\n${formatContract(codes)}`;
+}
+
+// Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
+// by the background suggested-narrative refinement and the streaming
+// /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
+export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context }) {
+  const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
+  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.`;
+  let user;
+  if (mode === 'shorter') {
+    user = `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`;
+  } else if (mode === 'longer') {
+    user = `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${narrative}`;
+  } else {
+    user = [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
+  }
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+// Background refinement of a timer's pre-computed narrative (spec §6,
+// "suggested narrative on timer start": phrasebook first, "optional async
+// llama3.1 pass"). FIRE-AND-FORGET: callers must never block a request on
+// this — timers.js calls it as `refineSuggestedNarrative(deps, id).catch(...)`.
+// No-op when AI is disabled (the default, so tests without a stub are
+// unaffected). The UPDATE is guarded by running=1 so a refinement finishing
+// after the stop (llama3.1:8b can take minutes) can't clobber anything.
+export async function refineSuggestedNarrative({ db, clock }, timerId) {
+  const cfg = getSetting(db, 'ai') || {};
+  if (!cfg.enabled) return;
+  const timer = db.prepare(
+    'SELECT t.id, t.name, t.cm_id, m.short_name FROM timers t JOIN matters m ON m.id = t.cm_id WHERE t.id=?'
+  ).get(timerId);
+  if (!timer) return;
+  const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock ? clock() : new Date()));
+  const recent = (sugg ? sugg.phrases : []).slice(0, 5).map((p) => `- ${p.text}`).join('\n');
+  const messages = buildNarrateMessages({
+    instructions: cfg.systemPrompt,
+    brief: `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`,
+    context: recent ? `The attorney's recent recurring work on this matter:\n${recent}` : null,
+  });
+  const resp = await fetch(`${cfg.url}/api/chat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: cfg.model, stream: false, options: { temperature: 0.3 }, messages }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!resp.ok) return;
+  const data = await resp.json();
+  const text = String((data.message && data.message.content) || '')
+    .trim().replace(/^["']|["']$/g, '').slice(0, 300);
+  if (!text || text.includes('{')) return; // refuse JSON-ish garbage
+  db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1').run(text, timerId);
 }
 
 export function aiRouter({ db }) {

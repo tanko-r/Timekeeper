@@ -8,6 +8,8 @@ import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.
 import { loadEntry, syncNarrative, rebuildMatterPeople } from './entries.js';
 import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
+import { matterSuggestions } from './matters.js';
+import { refineSuggestedNarrative } from './ai.js';
 
 // Round-2 timer model: the clock accumulates for the whole day across
 // start/stops. Each stop syncs the day total into ONE linked draft entry.
@@ -15,7 +17,7 @@ import { splitCmNumber } from '../lib/cmNumber.js';
 
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
-  group_id, linked_entry_id, last_stopped_at`;
+  group_id, linked_entry_id, last_stopped_at, suggested_narrative`;
 
 const TENTH_SECONDS = 360;
 
@@ -221,12 +223,13 @@ export function timersRouter({ db, clock }) {
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cmChanged = b.cm_id !== undefined && b.cm_id !== timer.cm_id;
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=? WHERE id=?').run(
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
       b.group_id !== undefined ? b.group_id : timer.group_id,
       cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
+      cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
       timer.id);
     res.json(withElapsed(getTimer.get(timer.id)));
   });
@@ -275,6 +278,13 @@ export function timersRouter({ db, clock }) {
       startMs = Math.max(startMs, localMidnightMs(todayLocal(clock())));
       db.prepare('UPDATE timers SET running=1, last_started_at=? WHERE id=?')
         .run(new Date(startMs).toISOString(), timer.id);
+      // Pre-compute the likely narrative NOW so it's ready before stop (spec
+      // §6): deterministic phrasebook top hit synchronously; the optional
+      // local-LLM pass refines it in the background and never blocks.
+      const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock()));
+      db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=?')
+        .run(sugg && sugg.phrases[0] ? sugg.phrases[0].text : null, timer.id);
+      refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});
     }
 
     const others = db.prepare(

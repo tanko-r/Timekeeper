@@ -165,6 +165,15 @@ const MIGRATIONS = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
   `,
+  // Phase 3 (spec §6): a likely narrative pre-computed at timer START so it's
+  // ready before stop — the phrasebook top hit lands synchronously, and an
+  // optional background local-LLM pass refines it while the session runs.
+  // Stored on the timer row (not in memory / localStorage): survives server
+  // restarts, works when start and stop come from different devices, and
+  // gives the async refinement a durable place to write.
+  `
+  ALTER TABLE timers ADD COLUMN suggested_narrative TEXT;
+  `,
 ];
 
 const SEED_SETTINGS = {
