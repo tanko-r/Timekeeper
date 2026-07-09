@@ -224,8 +224,10 @@ Each of these consumes §5 and applies the confirm-don't-compose principle.
    streamed AI — consuming Phase 2. Plus the remaining grid extensions (§4:
    type-to-filter, worked-today highlight, keyboard focus).
 4. **Capture & close-out** (§6 bill-from-a-sentence, §7) — quick-capture, the
-   close-out card stack, the motion language, and the animated today footer /
-   keyboard "close the day."
+   close-out card stack, the motion language, the animated today footer /
+   keyboard "close the day," and **billing-cadence date presets on the Export
+   view** (This month / Last month — promoted from quick-win QW1; Export only
+   offers day/week today at `exportview.js:42-48`).
 
 Each phase gets its own implementation plan (via writing-plans) and atomic commits.
 
@@ -249,6 +251,10 @@ Each phase gets its own implementation plan (via writing-plans) and atomic commi
 - Compact single-line timer grid is the ratified baseline (already shipped).
 - Migration leaves migrated client names **blank** (rendered as the 6-digit number
   until filled in).
+- Foundation uses the **clean rename** `cms` → `matters` (not the additive
+  keep-`cms` approach).
+- Of the audit's quick wins, **only Export date presets (QW1) is promoted** into
+  the spec (Phase 4); the other six stay parked in `TODO.md`.
 
 **Out of scope**
 - Leakage / unaccounted-time catcher (#6) — David passed.
