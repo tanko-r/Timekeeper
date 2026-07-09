@@ -19,9 +19,13 @@ export function enrich(db, row) {
   const tasks = db.prepare(
     'SELECT id, task_code, duration, fragment, sort_order FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id'
   ).all(row.id);
-  const cm = db.prepare(
-    'SELECT id, cm_number, short_name, billable, status, favorite FROM matters WHERE id=?'
-  ).get(row.cm_id);
+  const cm = db.prepare(`
+    SELECT matters.id, matters.cm_number, matters.short_name, matters.billable,
+      matters.status, matters.favorite,
+      clients.name AS client_name, COALESCE(clients.task_billing, 1) AS client_task_billing
+    FROM matters LEFT JOIN clients ON clients.id = matters.client_id
+    WHERE matters.id=?
+  `).get(row.cm_id);
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
   const entry = { ...row, tasks, cm, total, narrative_auto: substantiveCount(tasks) >= 2 };
@@ -55,12 +59,23 @@ export function writeTasks(db, entryId, tasks) {
   tasks.forEach((t, i) => ins.run(entryId, t.task_code, t.duration, t.fragment, i));
 }
 
-// Regenerate the stored narrative when the entry is multi-line.
+// Regenerate the stored narrative when the entry is multi-line. Consolidation
+// format follows the entry's matter → client task_billing flag (LEFT JOIN;
+// a matter with no linked client defaults to task-billed, same as loadEntry's
+// cm payload).
 export function syncNarrative(db, entryId) {
   const tasks = db.prepare(
     'SELECT task_code, duration, fragment FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entryId);
   const rounding = getSetting(db, 'rounding') || {};
-  const generated = buildNarrative(tasks, { increment: rounding.increment });
+  const client = db.prepare(`
+    SELECT COALESCE(clients.task_billing, 1) AS task_billing
+    FROM entries
+    JOIN matters ON matters.id = entries.cm_id
+    LEFT JOIN clients ON clients.id = matters.client_id
+    WHERE entries.id = ?
+  `).get(entryId);
+  const taskBilling = !client || !!client.task_billing;
+  const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling });
   if (generated != null) {
     db.prepare('UPDATE entries SET narrative=? WHERE id=?').run(generated, entryId);
   }

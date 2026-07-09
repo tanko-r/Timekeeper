@@ -204,16 +204,18 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
   // fake a db from just before this migration: undo everything added by the
-  // last three migrations (matter_people, phase-3's shortcuts, phase-3's
-  // timers column) and roll user_version back by three (positional — no
-  // hardcoded version numbers)
+  // last four migrations (matter_people, phase-3's shortcuts, phase-3's
+  // timers column, entry-editor-rework's clients.task_billing column) and
+  // roll user_version back by four (positional — no hardcoded version
+  // numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    ALTER TABLE clients DROP COLUMN task_billing;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 3}`);
+  db1.pragma(`user_version = ${v - 4}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -222,6 +224,8 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     "SELECT name FROM sqlite_master WHERE type='table' AND name='shortcuts'").get());
   assert.ok(db2.prepare('PRAGMA table_info(timers)').all()
     .some((c) => c.name === 'suggested_narrative'));
+  assert.ok(db2.prepare('PRAGMA table_info(clients)').all()
+    .some((c) => c.name === 'task_billing'));
   db2.close();
   cleanup();
 });
@@ -239,5 +243,23 @@ test('phase-3 migration: timers gain suggested_narrative', () => {
   const db = openDb(':memory:');
   const cols = db.prepare('PRAGMA table_info(timers)').all().map((c) => c.name);
   assert.ok(cols.includes('suggested_narrative'));
+  db.close();
+});
+
+test('entry-editor-rework migration: clients gain task_billing, defaults to 1 (task-billed)', () => {
+  const db = openDb(':memory:');
+  const cols = db.prepare('PRAGMA table_info(clients)').all().map((c) => c.name);
+  assert.ok(cols.includes('task_billing'));
+  db.prepare("INSERT INTO clients (client_number) VALUES ('999999')").run();
+  assert.equal(
+    db.prepare("SELECT task_billing FROM clients WHERE client_number='999999'").get().task_billing, 1);
+  db.close();
+});
+
+test('task_billing column accepts 0 for block-billing clients', () => {
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO clients (client_number, task_billing) VALUES ('888888', 0)").run();
+  assert.equal(
+    db.prepare("SELECT task_billing FROM clients WHERE client_number='888888'").get().task_billing, 0);
   db.close();
 });

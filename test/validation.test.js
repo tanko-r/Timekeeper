@@ -84,6 +84,63 @@ test('durations under minimum increment warn', () => {
   assert.ok(codes(v).includes('min_increment'));
 });
 
+test('task-billing client: multi-task entry whose narrative lacks allocations warns', () => {
+  const v = validateEntry(entry({
+    narrative: 'Draft motion for summary judgment; review record cites for accuracy.',
+    tasks: [
+      { task_code: 'Draft', duration: 3.5, fragment: 'Draft motion for summary judgment' },
+      { task_code: 'Review', duration: 0.5, fragment: 'review record cites' },
+    ],
+    cm: { cm_number: '123456-654321', client_task_billing: 1 },
+  }), SETTINGS);
+  assert.ok(codes(v).includes('missing_allocations'));
+  assert.equal(v.find((x) => x.code === 'missing_allocations').level, 'warn');
+});
+
+test('task-billing client: multi-task entry WITH allocations does not warn', () => {
+  const v = validateEntry(entry({
+    narrative: 'Draft motion for summary judgment (3.5); review record cites for accuracy (0.5).',
+    tasks: [
+      { task_code: 'Draft', duration: 3.5, fragment: 'Draft motion for summary judgment' },
+      { task_code: 'Review', duration: 0.5, fragment: 'review record cites' },
+    ],
+    cm: { cm_number: '123456-654321', client_task_billing: 1 },
+  }), SETTINGS);
+  assert.ok(!codes(v).includes('missing_allocations'));
+});
+
+test('block-billing client (client_task_billing: 0): multi-task entry without allocations does not warn', () => {
+  const v = validateEntry(entry({
+    narrative: 'Draft motion for summary judgment; review record cites for accuracy.',
+    tasks: [
+      { task_code: 'Draft', duration: 3.5, fragment: 'Draft motion for summary judgment' },
+      { task_code: 'Review', duration: 0.5, fragment: 'review record cites' },
+    ],
+    cm: { cm_number: '123456-654321', client_task_billing: 0 },
+  }), SETTINGS);
+  assert.ok(!codes(v).includes('missing_allocations'));
+});
+
+test('missing client_task_billing on cm defaults to task-billed (1)', () => {
+  const v = validateEntry(entry({
+    narrative: 'Draft motion for summary judgment; review record cites for accuracy.',
+    tasks: [
+      { task_code: 'Draft', duration: 3.5, fragment: 'Draft motion for summary judgment' },
+      { task_code: 'Review', duration: 0.5, fragment: 'review record cites' },
+    ],
+    cm: { cm_number: '123456-654321' },
+  }), SETTINGS);
+  assert.ok(codes(v).includes('missing_allocations'));
+});
+
+test('single-task-line entries never get missing_allocations (matches the ≥2 substantive-line rule)', () => {
+  const v = validateEntry(entry({
+    narrative: 'Reviewed lease with no allocation markers at all here.',
+    cm: { cm_number: '123456-654321', client_task_billing: 1 },
+  }), SETTINGS);
+  assert.ok(!codes(v).includes('missing_allocations'));
+});
+
 test('invalid CM blocks finalize', () => {
   const e = entry({ cm: { cm_number: 'bogus' } });
   const r = canFinalize(e, SETTINGS);

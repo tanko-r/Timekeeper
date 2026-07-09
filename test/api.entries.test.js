@@ -73,6 +73,55 @@ test('multi-line entries get auto-generated narrative, kept in sync', () =>
     assert.equal(single.narrative_auto, false);
   }));
 
+test('loadEntry cm payload gains client_name and client_task_billing (additive)', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      narrative: 'Reviewed lease agreement for renewal terms.',
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    })).body;
+    assert.equal(created.cm.client_task_billing, 1); // default, matches client_task_billing = 1
+    assert.equal(created.cm.client_name, ''); // blank client, not null — named-but-empty
+
+    const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { name: 'Acme Corp', task_billing: 0 });
+    const reloaded = (await t.fetchJson('GET', `/api/entries/${created.id}`)).body;
+    assert.equal(reloaded.cm.client_name, 'Acme Corp');
+    assert.equal(reloaded.cm.client_task_billing, 0);
+  }));
+
+test('a matter with no linked client defaults to client_task_billing: 1, client_name: null', () =>
+  withServer(async (t, cm) => {
+    // No API path leaves client_id null (POST /api/cms always ensures a client);
+    // simulate a pre-client-split matter directly, as the migration replay tests do.
+    const bare = t.db.prepare(
+      "INSERT INTO matters (cm_number, short_name, billable, client_id) VALUES ('100007-000001', 'Bare', 1, NULL)"
+    ).run();
+    const e = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: bare.lastInsertRowid,
+      narrative: 'Reviewed lease agreement for renewal terms.',
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    })).body;
+    assert.equal(e.cm.client_task_billing, 1);
+    assert.equal(e.cm.client_name, null);
+  }));
+
+test('block-billing client (task_billing=0): auto-narrative joins fragments without allocations', () =>
+  withServer(async (t, cm) => {
+    const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { task_billing: 0 });
+
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'ignored once multi-line',
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(created.narrative, 'Review lease; draft email to landlord.');
+    assert.equal(created.narrative_auto, true);
+  }));
+
 test('finalized entries reject edits with 409', () =>
   withServer(async (t, cm) => {
     const e = (await t.fetchJson('POST', '/api/entries', {

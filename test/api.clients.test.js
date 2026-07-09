@@ -39,6 +39,23 @@ test('clients: 404 for unknown id, 400 for bad client_number', () => withServer(
   assert.equal(bad.status, 400);
 }));
 
+test('clients: task_billing defaults to 1 and can be flipped to 0 via PATCH', () => withServer(async (t) => {
+  await t.fetchJson('POST', '/api/cms', { cm_number: '808001-000001', short_name: 'M' });
+  const client = (await t.fetchJson('GET', '/api/clients')).body[0];
+  assert.equal(client.task_billing, 1);
+
+  const patched = await t.fetchJson('PATCH', `/api/clients/${client.id}`, { task_billing: 0 });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.task_billing, 0);
+
+  const get = await t.fetchJson('GET', `/api/clients/${client.id}`);
+  assert.equal(get.body.task_billing, 0);
+
+  // 0/1 coercion for truthy/falsy inputs, not raw passthrough
+  const back = await t.fetchJson('PATCH', `/api/clients/${client.id}`, { task_billing: true });
+  assert.equal(back.body.task_billing, 1);
+}));
+
 test('clients: 409 rejects client_number change when the client has matters (would break cm_number linkage)', () => withServer(async (t) => {
   await t.fetchJson('POST', '/api/cms', { cm_number: '111111-000001', short_name: 'M' });
   const client = (await t.fetchJson('GET', '/api/clients')).body.find((c) => c.client_number === '111111');

@@ -62,6 +62,43 @@ test('skipping empties can drop below two lines -> null', () => {
   assert.equal(buildNarrative(lines, INC), null);
 });
 
+test('block billing (taskBilling: false): fragments joined without parenthetical allocations', () => {
+  const lines = [
+    { fragment: 'Review lease', taskCode: 'Review', duration: 1.2 },
+    { fragment: 'draft email to landlord', taskCode: 'Draft', duration: 0.3 },
+  ];
+  assert.equal(
+    buildNarrative(lines, { increment: 0.1, taskBilling: false }),
+    'Review lease; draft email to landlord.'
+  );
+});
+
+test('block billing: first fragment capitalized, empty fragment falls back to task code, trailing punctuation normalized', () => {
+  const lines = [
+    { fragment: '', taskCode: 'research', duration: 0.8 },
+    { fragment: 'draft brief.', taskCode: 'Draft', duration: 2.1 },
+  ];
+  assert.equal(
+    buildNarrative(lines, { increment: 0.1, taskBilling: false }),
+    'Research; draft brief.'
+  );
+});
+
+test('block billing: same ≥2-substantive-lines rule — single line still returns null', () => {
+  assert.equal(
+    buildNarrative([{ fragment: 'Review lease', taskCode: 'Review', duration: 1.2 }], { taskBilling: false }),
+    null
+  );
+});
+
+test('taskBilling defaults to true (today\'s behavior) when omitted', () => {
+  const lines = [
+    { fragment: 'Review lease', taskCode: 'Review', duration: 1.0 },
+    { fragment: 'Draft memo', taskCode: 'Draft', duration: 0.5 },
+  ];
+  assert.equal(buildNarrative(lines, { increment: 0.1 }), 'Review lease (1.0); Draft memo (0.5).');
+});
+
 test('duration label precision follows increment', () => {
   assert.equal(durationLabel(1.2, 0.1), '1.2');
   assert.equal(durationLabel(2, 0.1), '2.0');

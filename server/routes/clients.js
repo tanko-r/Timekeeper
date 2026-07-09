@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { SIX } from '../lib/cmNumber.js';
 
-const CLIENT_COLS = 'id, client_number, name, created_at, updated_at';
+const CLIENT_COLS = 'id, client_number, name, task_billing, created_at, updated_at';
 
 export function clientsRouter({ db, clock }) {
   const r = Router();
@@ -41,10 +41,11 @@ export function clientsRouter({ db, clock }) {
     const next = {
       client_number: b.client_number ?? c.client_number,
       name: b.name ?? c.name,
+      task_billing: b.task_billing !== undefined ? (b.task_billing ? 1 : 0) : c.task_billing,
     };
     try {
-      db.prepare('UPDATE clients SET client_number=?, name=?, updated_at=? WHERE id=?')
-        .run(String(next.client_number), String(next.name), now(), c.id);
+      db.prepare('UPDATE clients SET client_number=?, name=?, task_billing=?, updated_at=? WHERE id=?')
+        .run(String(next.client_number), String(next.name), next.task_billing, now(), c.id);
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {
         return res.status(409).json({ error: `Client ${b.client_number} already exists.` });

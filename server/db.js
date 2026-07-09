@@ -174,6 +174,14 @@ const MIGRATIONS = [
   `
   ALTER TABLE timers ADD COLUMN suggested_narrative TEXT;
   `,
+  // Entry editor rework (2026-07-09): per-client billing style. 1 = task-billed
+  // — consolidated narratives carry per-task time allocations in parens, e.g.
+  // "Review lease (0.5)" (today's behavior, preserved for all existing
+  // clients). 0 = block-billed — fragments are joined without allocations.
+  // David flips individual clients to 0 himself; new clients default to 1.
+  `
+  ALTER TABLE clients ADD COLUMN task_billing INTEGER NOT NULL DEFAULT 1;
+  `,
 ];
 
 const SEED_SETTINGS = {

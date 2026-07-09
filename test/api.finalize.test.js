@@ -42,6 +42,47 @@ test('warnings gate finalize until acknowledged', () => withServer(async (t, cm,
   assert.equal(r2.body.ack_validation, 1);
 }));
 
+test('task-billing client: finalize warns when a stale narrative lacks allocations', () =>
+  withServer(async (t, cm, mkEntry) => {
+    // Write the entry while the client is block-billed (no allocations in the
+    // synced narrative), then flip the client to task-billed WITHOUT touching
+    // the entry — its narrative is now stale relative to the current flag,
+    // which is exactly what the finalize warn should catch.
+    const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { task_billing: 0 });
+    const e = await mkEntry({
+      narrative: 'Reviewed lease and drafted email to landlord regarding renewal.',
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    });
+    assert.equal(e.narrative, 'Review lease; draft email to landlord.');
+
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { task_billing: 1 });
+    const r1 = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`);
+    assert.equal(r1.status, 422);
+    assert.ok(r1.body.warns.some((w) => w.code === 'missing_allocations'));
+
+    const r2 = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, { ack: true });
+    assert.equal(r2.status, 200);
+  }));
+
+test('block-billing client: finalize does not warn about missing allocations', () =>
+  withServer(async (t, cm, mkEntry) => {
+    const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;
+    await t.fetchJson('PATCH', `/api/clients/${clientId}`, { task_billing: 0 });
+    const e = await mkEntry({
+      narrative: 'Reviewed lease and drafted email to landlord regarding renewal.',
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    });
+    const r = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  }));
+
 test('blocks cannot be acknowledged away', () => withServer(async (t, cm, mkEntry) => {
   const e = await mkEntry({ narrative: '' });
   const r = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, { ack: true });

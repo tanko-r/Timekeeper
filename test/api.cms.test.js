@@ -176,6 +176,18 @@ test('matter payloads include client fields', () => withServer(async (t) => {
   assert.ok(list.every((m) => 'client_number' in m));
 }));
 
+test('matter payloads include client_task_billing (additive), defaulting to 1', () => withServer(async (t) => {
+  const created = (await t.fetchJson('POST', '/api/cms', { cm_number: '909002-000001', short_name: 'Flagged' })).body;
+  assert.equal(created.client_task_billing, 1);
+
+  await t.fetchJson('PATCH', `/api/clients/${created.client_id}`, { task_billing: 0 });
+  const list = (await t.fetchJson('GET', '/api/cms')).body;
+  assert.equal(list.find((m) => m.id === created.id).client_task_billing, 0);
+
+  const picker = (await t.fetchJson('GET', '/api/cms/picker?q=909002')).body;
+  assert.equal(picker[0].client_task_billing, 0);
+}));
+
 test('task codes: CRUD and reorder', () => withServer(async (t) => {
   const list = (await t.fetchJson('GET', '/api/task-codes')).body;
   assert.equal(list.length, 11);

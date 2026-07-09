@@ -6,7 +6,8 @@ import { rankMatters } from '../lib/matterSearch.js';
 const CM_COLS = `matters.id, matters.cm_number, matters.short_name, matters.billable,
   matters.status, matters.favorite, matters.last_used_at, matters.created_at, matters.updated_at,
   matters.client_id, matters.matter_number,
-  clients.client_number, clients.name AS client_name`;
+  clients.client_number, clients.name AS client_name,
+  COALESCE(clients.task_billing, 1) AS client_task_billing`;
 const CM_FROM = 'FROM matters LEFT JOIN clients ON clients.id = matters.client_id';
 
 // Upsert the client for a 6-digit client number and return its id. Blank name;
