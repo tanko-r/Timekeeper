@@ -28,6 +28,10 @@ daily entry; exports CSV for manual keying into the firm's billing system.
   password (Settings → Remote access); LAN is trusted by default
   (`auth.mode = remote-only`). Do not weaken this without asking David.
 - After changing server code: `systemctl --user restart timekeeper`.
+- After changing any `public/js/**` or `public/css/*.css` file, **bump `CACHE`
+  in `public/sw.js`** — otherwise installed/PWA clients keep serving the old
+  cached shell indefinitely (cache-first service worker; no build step means
+  nothing else signals an update).
 
 ## Design docs
 
