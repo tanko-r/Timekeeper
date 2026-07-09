@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtHours, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon,
+  fmtClock, fmtHours, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
@@ -22,6 +22,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [importing, setImporting] = useState(false);
   const [taskCodes, setTaskCodes] = useState([]);
   const dragId = useRef(null);
+
+  // Grouping view (spec §3.4/§4): 'group' = user-defined timer_groups,
+  // 'client' = the matter's client, 'flat' = one list. Persisted per-browser.
+  const [grouping, setGroupingState] = useState(() => {
+    const v = localStorage.getItem('tk:timerGrouping');
+    return ['group', 'client', 'flat'].includes(v) ? v : 'group';
+  });
+  const setGrouping = (v) => { localStorage.setItem('tk:timerGrouping', v); setGroupingState(v); };
 
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
@@ -208,14 +216,37 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   if (!timers) return null;
   const idleAfter = (settings.idleNudgeHours ?? 3) * 3600;
   const hasGroups = groups.length > 0;
-  const sections = [
-    ...groups.map((g) => ({ group: g, list: timers.filter((t) => t.group_id === g.id) })),
-    { group: null, list: timers.filter((t) => t.group_id == null) },
-  ];
+  const byGroupMode = grouping === 'group';
+
+  let sections; // [{ key, group, label, list }] — group is non-null only in by-group mode
+  if (grouping === 'client') {
+    const byClient = new Map();
+    for (const t of timers) {
+      const key = t.client_id ?? 'none';
+      if (!byClient.has(key)) {
+        byClient.set(key, { key: `client-${key}`, group: null, label: clientLabel(t) || 'No client', list: [] });
+      }
+      byClient.get(key).list.push(t);
+    }
+    sections = [...byClient.values()].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  } else if (grouping === 'flat') {
+    sections = [{ key: 'flat', group: null, label: null, list: timers }];
+  } else {
+    sections = [
+      ...groups.map((g) => ({ key: `group-${g.id}`, group: g, label: g.name, list: timers.filter((t) => t.group_id === g.id) })),
+      { key: 'ungrouped', group: null, label: null, list: timers.filter((t) => t.group_id == null) },
+    ];
+  }
 
   return html`
     <div class="section-title">
       <h2>Timers</h2>
+      <div class="seg" role="group" aria-label="Timer grouping">
+        ${[['group', 'By group'], ['client', 'By client'], ['flat', 'Flat']].map(([v, label]) => html`
+          <button key=${v} class=${grouping === v ? 'on' : ''} title=${`Show timers: ${label.toLowerCase()}`}
+            onClick=${() => setGrouping(v)}>${label}</button>`)}
+      </div>
       <div class="spacer" style=${{ flex: 1 }}></div>
       <button class="btn btn-sm" title="Sort by CM name within groups" onClick=${() => guard(sortAZ())}>
         <${Icon} name="sortAZ" size=${16} /> A–Z
@@ -231,14 +262,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       </button>
     </div>
 
-    ${sections.map(({ group, list }) => {
-      if (!group && list.length === 0 && hasGroups) return null;
-      const collapsed = group && group.collapsed;
+    ${sections.map((sec) => {
+      const { group, list } = sec;
+      if (byGroupMode && !group && list.length === 0 && hasGroups) return null;
+      const collapsed = byGroupMode && group && group.collapsed;
+      const showHead = byGroupMode ? (group || hasGroups) : grouping === 'client';
       return html`
-        <div key=${group ? group.id : 'ungrouped'} class="timer-section"
-          onDragOver=${(e) => e.preventDefault()}
-          onDrop=${(e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); }}>
-          ${group || hasGroups ? html`
+        <div key=${sec.key} class="timer-section"
+          onDragOver=${byGroupMode ? (e) => e.preventDefault() : undefined}
+          onDrop=${byGroupMode ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); } : undefined}>
+          ${showHead ? html`
             <div class="group-head">
               ${group ? html`
                 <button class="btn btn-ghost btn-sm" title=${collapsed ? 'Expand' : 'Collapse'}
@@ -253,7 +286,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                   <button class="btn btn-ghost btn-sm" title="Delete group (timers kept)"
                     onClick=${() => guard(api.del(`/api/timer-groups/${group.id}`).then(reload))}>
                     <${Icon} name="trash" size=${14} /></button>
-                </span>` : html`
+                </span>` : sec.label != null ? html`
+                <span class="group-name">${sec.label}</span>
+                <span class="muted small">${list.length}</span>` : html`
                 <span class="group-name muted">Ungrouped</span>
                 <span class="muted small">${list.length}</span>`}
             </div>` : null}
@@ -261,13 +296,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
             <div class="timer-grid">
               ${list.map((t) => html`
                 <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                  canDrag=${byGroupMode}
                   roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
                   onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
                   onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
                   onMenu=${(x, y) => setMenu({ x, y, timer: t })}
                   onDragStart=${() => { dragId.current = t.id; }}
                   onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
-              ${list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
+              ${byGroupMode && list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
             </div>`}
         </div>`;
     })}
@@ -309,7 +345,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const idle = timer.running && secs > idleAfter;
@@ -322,11 +358,11 @@ function TimerCard({ timer, secs, idleAfter, roundMode, onStart, onStop, onDelta
 
   return html`
     <div class=${'timer-card' + (timer.running ? ' running' : '')}
-      draggable="true"
+      draggable=${canDrag ? 'true' : 'false'}
       title=${`${timer.name} — ${fmtClock(secs)} elapsed`}
-      onDragStart=${(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
-      onDragOver=${(e) => { e.preventDefault(); e.stopPropagation(); }}
-      onDrop=${(e) => { e.preventDefault(); e.stopPropagation(); onDropOn(); }}
+      onDragStart=${(e) => { if (!canDrag) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); }}
+      onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
       onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
       <span class="timer-name" title=${timer.name}>${timer.name}</span>
       <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>

@@ -243,6 +243,23 @@ await step('groups: create, assign via menu, collapse; A-Z present', async () =>
   if (!az) throw new Error('A–Z button missing');
 });
 
+await step('grouping selector: by client / flat / persists across reload', async () => {
+  await clickText('.seg button', 'By client');
+  // Acme's client is unnamed → its section is labeled by the 6-digit number
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === '100001'), { timeout: 4000 });
+  await clickText('.seg button', 'Flat');
+  await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
+    && document.querySelectorAll('.timer-card').length >= 1, { timeout: 4000 });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-card');
+  const on = await page.$eval('.seg button.on', (el) => el.textContent.trim());
+  if (on !== 'Flat') throw new Error(`grouping did not persist: ${on}`);
+  await clickText('.seg button', 'By group');
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-name')]
+    .some((el) => el.textContent.includes('Litigation')), { timeout: 4000 });
+});
+
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');

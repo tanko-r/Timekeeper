@@ -182,6 +182,13 @@ table.tk tr.clickable { cursor: pointer; }
 .group-name { font-size: 13px; font-weight: 700; }
 .group-tools { visibility: hidden; display: flex; gap: 0; }
 .group-head:hover .group-tools { visibility: visible; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-left: 10px; }
+.seg button {
+  border: 0; background: none; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  color: var(--text-muted);
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
 .timer-card {
   border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px;
   background: var(--surface-1); display: flex; align-items: center; gap: 6px;
