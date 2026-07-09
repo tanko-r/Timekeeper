@@ -17,7 +17,16 @@ function startStubOllama(chatBody) {
         req.on('data', (c) => { body += c; });
         req.on('end', () => {
           state.lastChat = JSON.parse(body);
-          res.end(JSON.stringify({ message: { role: 'assistant', content: chatBody } }));
+          if (state.lastChat.stream) {
+            // Ollama streaming shape: NDJSON chunks, each carrying a token
+            res.setHeader('content-type', 'application/x-ndjson');
+            for (const token of String(chatBody).match(/.{1,12}/gs) || []) {
+              res.write(JSON.stringify({ message: { role: 'assistant', content: token }, done: false }) + '\n');
+            }
+            res.end(JSON.stringify({ message: { role: 'assistant', content: '' }, done: true }) + '\n');
+          } else {
+            res.end(JSON.stringify({ message: { role: 'assistant', content: chatBody } }));
+          }
         });
       } else {
         res.statusCode = 404;
@@ -130,5 +139,56 @@ test('timer start refines the suggested narrative via the local model (async, no
       val = t.db.prepare('SELECT suggested_narrative FROM timers WHERE id=?').get(timer.id).suggested_narrative;
     }
     assert.equal(val, 'Reviewed and revised lease legal description; correspondence with counsel.');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai narrate streams NDJSON tokens and a final assembled narrative', async () => {
+  const stub = await startStubOllama('Reviewed lease exhibit; revised legal description.');
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief: 'lease exhibit work', mode: 'draft' }),
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /x-ndjson/);
+    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l));
+    const last = lines.at(-1);
+    assert.equal(last.done, true);
+    assert.equal(last.narrative, 'Reviewed lease exhibit; revised legal description.');
+    const tokens = lines.slice(0, -1);
+    assert.ok(tokens.length >= 2, 'multiple token chunks streamed');
+    assert.equal(tokens.map((x) => x.token).join(''), last.narrative);
+    assert.equal(stub.state.lastChat.stream, true);
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai narrate: validation, shorter/longer rewrite modes, clean failures', async () => {
+  const stub = await startStubOllama('Shorter version.');
+  const t = await startTestServer();
+  try {
+    // disabled → clean 400 before any streaming
+    assert.equal((await t.fetchJson('POST', '/api/ai/narrate', { brief: 'x' })).status, 400);
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    assert.equal((await t.fetchJson('POST', '/api/ai/narrate', { mode: 'shorter' })).status, 400); // no narrative
+    assert.equal((await t.fetchJson('POST', '/api/ai/narrate', {})).status, 400);                  // no brief
+
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'shorter', narrative: 'A very long narrative about the lease.' }),
+    });
+    assert.equal(res.status, 200);
+    const last = JSON.parse((await res.text()).trim().split('\n').at(-1));
+    assert.equal(last.narrative, 'Shorter version.');
+    const user = stub.state.lastChat.messages[1].content;
+    assert.ok(user.includes('A very long narrative about the lease.'));
+    assert.match(stub.state.lastChat.messages[0].content, /plain text/);
+    assert.ok(!stub.state.lastChat.messages[0].content.includes('Respond with ONLY this JSON'),
+      'no JSON contract in narrate prompts');
+
+    // unreachable ollama → clean 502 JSON (nothing streamed)
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: 'http://127.0.0.1:1' });
+    assert.equal((await t.fetchJson('POST', '/api/ai/narrate', { brief: 'x' })).status, 502);
   } finally { await t.close(); await stub.close(); }
 });

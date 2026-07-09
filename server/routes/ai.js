@@ -184,5 +184,74 @@ export function aiRouter({ db }) {
     });
   });
 
+  // Streamed narrative (spec §6 "faster AI narration"): plain-text tokens as
+  // NDJSON lines — {"token":"…"} per chunk, then {"done":true,"narrative":…}
+  // — so the UI renders while llama3.1:8b grinds (~180s on CPU). Fails as
+  // normal JSON before the first byte; as an {"error":…} line after.
+  // Unlike /ai/expand this never asks for JSON output — token streams of a
+  // JSON document aren't displayable, so the structured task-split flow keeps
+  // the blocking endpoint and this one owns narrative-only generation.
+  r.post('/ai/narrate', async (req, res) => {
+    const cfg = getSetting(db, 'ai') || {};
+    if (!cfg.enabled) return res.status(400).json({ error: 'ai_disabled' });
+    const b = req.body || {};
+    const mode = ['draft', 'regenerate', 'shorter', 'longer'].includes(b.mode) ? b.mode : 'draft';
+    const brief = String(b.brief || '').trim();
+    const narrative = String(b.narrative || '').trim();
+    if ((mode === 'shorter' || mode === 'longer') ? !narrative : !brief) {
+      return res.status(400).json({ error: 'Describe the work first.' });
+    }
+    const messages = buildNarrateMessages({
+      instructions: cfg.systemPrompt, brief, narrative, mode,
+      context: b.context ? String(b.context).slice(0, 2000) : null,
+    });
+
+    let resp;
+    try {
+      resp = await fetch(`${cfg.url}/api/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: cfg.model, stream: true,
+          // regenerate wants a *different* sample; rewrites stay conservative
+          options: { temperature: mode === 'regenerate' ? 0.8 : 0.3 },
+          messages,
+        }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`ollama returned ${resp.status}`);
+    } catch (e) {
+      return res.status(502).json({
+        error: 'ollama_unreachable',
+        message: `Could not reach the local model: ${e.message}`,
+      });
+    }
+
+    res.setHeader('content-type', 'application/x-ndjson');
+    res.setHeader('cache-control', 'no-store');
+    const send = (obj) => res.write(JSON.stringify(obj) + '\n');
+    let full = '';
+    try {
+      let buf = '';
+      for await (const chunk of resp.body) {
+        buf += Buffer.from(chunk).toString('utf8');
+        let nl;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let data;
+          try { data = JSON.parse(line); } catch { continue; }
+          const token = data.message && data.message.content;
+          if (token) { full += token; send({ token }); }
+        }
+      }
+      send({ done: true, narrative: full.trim() });
+    } catch (e) {
+      send({ error: 'ai_stream_failed', message: e.message });
+    }
+    res.end();
+  });
+
   return r;
 }
