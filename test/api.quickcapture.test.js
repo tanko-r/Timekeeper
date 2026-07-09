@@ -70,6 +70,40 @@ test('ai:true fills ONLY missing fields; deterministic wins; amounts rejected', 
   } finally { await t.close(); await stub.close(); }
 });
 
+test('ai:true can supply the topic and rematch the matter from it', async () => {
+  // "call jane .5" has no re-marker, so the deterministic topic ("jane")
+  // matches nothing; the LLM's topic must drive a second matter match.
+  const stub = await startStubOllama(JSON.stringify({
+    hours: null, task_code: null, topic: 'loading dock', narrative: null,
+  }));
+  const t = await startTestServer();
+  try {
+    const cm = await seed(t);
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/quickcapture', { line: 'call jane .5', ai: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.matches[0] && r.body.matches[0].id, cm.id, 'LLM topic re-matched the matter');
+    assert.ok(!r.body.missing.includes('matter'), 'matter no longer missing');
+    assert.equal(r.body.hours, 0.5, 'deterministic duration kept');
+    assert.equal(r.body.task_code, 'Call/Conference', 'deterministic verb kept');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai fill: lowercase task_code normalized; out-of-range hours rejected', async () => {
+  const stub = await startStubOllama(JSON.stringify({
+    hours: 99, task_code: 'research', topic: null, narrative: null,
+  }));
+  const t = await startTestServer();
+  try {
+    await seed(t);
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/quickcapture', { line: 'zoning setback stuff', ai: true });
+    assert.equal(r.body.task_code, 'Research', 'case-insensitive match normalized to canonical code');
+    assert.equal(r.body.hours, null, 'hours outside 0<h<=12 rejected');
+    assert.ok(r.body.missing.includes('hours'));
+  } finally { await t.close(); await stub.close(); }
+});
+
 test('ai:true with AI disabled degrades to the deterministic result', async () => {
   const t = await startTestServer();
   try {

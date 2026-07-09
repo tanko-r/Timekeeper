@@ -28,17 +28,37 @@ export function quickCaptureRouter({ db }) {
     if ((req.body || {}).ai && cfg.enabled && parsed.missing.length > 0) {
       try {
         const filled = await llmFill(cfg, line, parsed, taskCodes);
+        // topic is '' (never null) on a deterministic miss — empty counts as fillable.
         for (const k of ['hours', 'task_code', 'person', 'topic']) {
-          if (parsed[k] == null && filled[k] != null) parsed[k] = filled[k];
+          const fillable = parsed[k] == null || (k === 'topic' && !parsed[k]);
+          if (!fillable || filled[k] == null) continue;
+          if (k === 'hours') {
+            // Mirror parseDuration's bounds: finite, 0 < h <= 12.
+            const h = Number(filled.hours);
+            if (Number.isFinite(h) && h > 0 && h <= 12) parsed.hours = h;
+          } else {
+            parsed[k] = filled[k];
+          }
         }
         if (filled.narrative && !containsTimeAmounts(filled.narrative)
             && (!parsed.narrative || parsed.missing.includes('action'))) {
           parsed.narrative = String(filled.narrative).slice(0, 300);
         }
-        if (parsed.task_code && !taskCodes.includes(parsed.task_code)) parsed.task_code = null;
-        if (parsed.matches.length === 0 && parsed.topic) {
-          const re = parseQuickCapture(`re ${parsed.topic}`, { matters, taskCodes });
-          parsed.matches = re.matches;
+        if (parsed.task_code) {
+          // Case-insensitive validation, normalized to the canonical code.
+          const canon = taskCodes.find(
+            (c) => c.toLowerCase() === String(parsed.task_code).toLowerCase());
+          parsed.task_code = canon || null;
+        }
+        if (parsed.matches.length === 0) {
+          // Prefer the LLM's topic for the rematch: when the line had no
+          // re-marker, the deterministic topic is the same text that already
+          // failed to match, so retrying it verbatim would be a no-op.
+          const rematchTopic = filled.topic || parsed.topic;
+          if (rematchTopic) {
+            const re = parseQuickCapture(`re ${rematchTopic}`, { matters, taskCodes });
+            parsed.matches = re.matches;
+          }
         }
         parsed.missing = [];
         if (parsed.matches.length === 0) parsed.missing.push('matter');
