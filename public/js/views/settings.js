@@ -44,7 +44,7 @@ function AiCard({ settings, reloadSettings }) {
       <h2>AI narrative assist</h2>
       <p class="muted small">
         Uses a local model through Ollama on this machine — nothing leaves the box.
-        Type a brief description in an entry (or the timer-stop popup) and it drafts the
+        Type a brief description in an entry and it drafts the
         narrative; optionally it splits the time into task lines.
         ${status ? (status.reachable
           ? html` <span style=${{ color: 'var(--status-good)' }}>Ollama detected (${status.models.length} models).</span>`

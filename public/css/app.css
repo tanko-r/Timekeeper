@@ -462,6 +462,28 @@ kbd {
 .ghost-hint { color: var(--text-muted); opacity: .75; }
 .shortcut-save { display: inline-flex; align-items: center; gap: 6px; }
 
+/* ---------- stop chips (non-blocking stop affordance) ---------- */
+.stop-chips {
+  position: fixed; right: 18px; bottom: 18px; z-index: 250;
+  width: 380px; max-width: calc(100vw - 36px);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 10px 12px;
+}
+.stop-chips-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.stop-chips-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.chip-btn {
+  display: flex; align-items: flex-start; gap: 8px; text-align: left; width: 100%;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+  border-radius: 7px; padding: 7px 9px; font-size: 13px; cursor: pointer;
+}
+.chip-btn:hover { border-color: var(--accent); background: var(--surface-1); }
+.chip-btn kbd { flex: none; }
+.stop-chips-warn {
+  border: 1px solid var(--status-warning); border-radius: 7px; padding: 6px 8px;
+  font-size: 12.5px; margin-bottom: 8px;
+}
+.stop-chips-foot { display: flex; justify-content: flex-end; }
+
 /* ---------- CSV timer import ---------- */
 .import-map {
   display: grid;

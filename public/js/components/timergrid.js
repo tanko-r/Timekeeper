@@ -1,10 +1,11 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtHours, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
+  fmtClock, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
+import { StopChips } from '/js/components/stopchips.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -337,8 +338,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         onClose=${() => setDeleting(null)} />` : null}
 
     ${stopPopup ? html`
-      <${StopPopup} popup=${stopPopup} openEditor=${openEditor}
+      <${StopChips} popup=${stopPopup} openEditor=${openEditor}
         onClockDeduct=${(h) => guard(clockDelta(stopPopup.timer, -h))}
+        onFiled=${() => { setStopPopup(null); onEntryChanged(); reload(); }}
         onClose=${(changed) => { setStopPopup(null); if (changed) onEntryChanged(); reload(); }} />` : null}
   `;
 }
@@ -389,91 +391,6 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, onStart,
         <${Icon} name="more" size=${15} />
       </button>
     </div>`;
-}
-
-// ---------- stop popup: narrative prompt (+ AI) ----------
-
-function StopPopup({ popup, onClose, openEditor, onClockDeduct }) {
-  const { result } = popup;
-  const entry = result.entry;
-  const [narrative, setNarrative] = useState(entry.narrative || '');
-  const [ai, setAi] = useState(null); // /api/ai/status
-  const [brief, setBrief] = useState('');
-  const [split, setSplit] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [tasks, setTasks] = useState(entry.tasks);
-  const changed = useRef(false);
-  const auto = tasks.filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || t.duration > 0).length >= 2;
-
-  useEffect(() => { api.get('/api/ai/status').then(setAi).catch(() => {}); }, []);
-
-  async function saveNarrative() {
-    if (!auto && narrative !== entry.narrative) {
-      await api.patch(`/api/entries/${entry.id}`, { narrative });
-      changed.current = true;
-    }
-  }
-
-  async function expand() {
-    setBusy(true);
-    try {
-      const r = await api.post('/api/ai/expand', { brief, totalHours: result.hours });
-      changed.current = true;
-      if (split && r.tasks.length > 0) {
-        const updated = await api.patch(`/api/entries/${entry.id}`, {
-          tasks: r.tasks.map((t) => ({ task_code: t.task_code, duration: t.hours ?? 0, fragment: t.fragment })),
-        });
-        setTasks(updated.tasks);
-        setNarrative(updated.narrative);
-      } else {
-        setNarrative(r.narrative);
-      }
-    } catch (e) {
-      emitToast(e.message, { error: true });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return html`
-    <${Modal} title=${`${fmtHours(result.hours)}h filed — ${entry.cm.short_name}`} onClose=${async () => { await saveNarrative(); onClose(changed.current); }}>
-      ${result.relinked ? html`
-        <div class="error-box" style=${{ marginBottom: '10px' }}>
-          The entry this timer was filling got finalized, so the full day clock
-          (${fmtHours(result.hours)}h) went to a <strong>new</strong> entry.
-          ${result.previousTotal ? html`
-            Already finalized earlier: ${fmtHours(result.previousTotal)}h.
-            <button class="btn btn-sm" style=${{ marginLeft: '8px' }}
-              onClick=${() => { onClockDeduct(result.previousTotal); onClose(true); }}>
-              Deduct ${fmtHours(result.previousTotal)}h from the clock
-            </button>` : null}
-        </div>` : null}
-
-      <${Field} label=${auto ? 'Narrative (auto-generated from task lines)' : 'What did you do?'}>
-        <textarea rows="3" value=${auto ? entry.narrative : narrative} readOnly=${auto}
-          placeholder="Reviewed …; drafted …; telephone conference with …"
-          onInput=${(e) => setNarrative(e.target.value)}></textarea>
-      <//>
-
-      ${ai && ai.enabled && ai.reachable ? html`
-        <div class="ai-row">
-          <input type="text" placeholder="Brief description — let ${ai.model} write it…" value=${brief}
-            onInput=${(e) => setBrief(e.target.value)}
-            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !busy) expand(); }} />
-          <label class="checkbox-row small"><input type="checkbox" checked=${split}
-            onChange=${(e) => setSplit(e.target.checked)} /> split into tasks</label>
-          <button class="btn" disabled=${!brief || busy} onClick=${expand}>
-            <${Icon} name="sparkles" size=${16} /> ${busy ? 'Thinking…' : 'Expand'}
-          </button>
-        </div>` : null}
-
-      <div class="row-end">
-        <button class="btn" onClick=${async () => { await saveNarrative(); onClose(changed.current); openEditor({ id: entry.id }); }}>
-          <${Icon} name="edit" size=${16} /> Open full editor
-        </button>
-        <button class="btn btn-primary" onClick=${async () => { await saveNarrative(); onClose(changed.current); }}>Done</button>
-      </div>
-    <//>`;
 }
 
 // ---------- modals ----------

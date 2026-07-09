@@ -155,19 +155,19 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
   if (!title.startsWith('00:00')) throw new Error(`misclick must fully revert, got ${title}`);
 });
 
-await step('context menu: backdated start (10m ago) → stop → narrative popup', async () => {
+await step('backdated start (10m ago) → stop → non-blocking chips file the narrative', async () => {
   await page.click('.timer-card button[title="Timer menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-inline button', '10m');
   await page.waitForFunction(() => document.querySelector('.timer-card.running'), { timeout: 4000 });
   await page.click('.timer-card button[title="Stop & file time"]');
-  await page.waitForFunction(
-    () => [...document.querySelectorAll('.modal')].some((m) => m.textContent.includes('filed')),
-    { timeout: 5000 });
-  await page.type('.modal textarea', 'Legal research regarding lease renewal options and notice deadlines.');
-  await shot('stop-popup');
-  await clickText('.modal button', 'Done');
-  await sleep(500);
+  await waitFor('.stop-chips'); // lightweight affordance…
+  if (await page.$('.modal')) throw new Error('stop must not open a modal'); // …not a blocking one
+  await shot('stop-chips');
+  // one-tap narrative from the matter's history (the finalized Acme entry)
+  await clickText('.stop-chips .chip-btn', 'Reviewed lease agreement');
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+  await sleep(400);
   const entries = await page.$$eval('.entry-card', (els) => els.length);
   if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);
 });
