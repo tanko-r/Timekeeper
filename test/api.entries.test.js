@@ -237,6 +237,36 @@ test('copy entry to another date resets export/finalize state', () =>
     assert.equal(copy.narrative_manual, 0); // source wasn't detached, copy isn't either
   }));
 
+test('copy preserves narrative_manual: a detached manual narrative stays durable on the copy', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-01', cm_id: cm.id,
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    const manualText = 'Handled lease renewal end to end for the client.';
+    await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      narrative: manualText, narrative_manual: 1,
+    });
+
+    const copy = (await t.fetchJson('POST', `/api/entries/${created.id}/copy`, { date: '2026-07-06' })).body;
+    assert.ok(copy.narrative_manual, 'copy must carry the detached flag forward');
+    assert.equal(copy.narrative_auto, false);
+    assert.equal(copy.narrative, manualText);
+
+    // and the flag holds on the copy: a task-touching PATCH must not regenerate
+    const touched = (await t.fetchJson('PATCH', `/api/entries/${copy.id}`, {
+      tasks: [
+        { task_code: 'Review', duration: 1.0, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.5, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(touched.narrative, manualText);
+    assert.equal(touched.narrative_auto, false);
+  }));
+
 test('filters: date range, cm, billable, status, narrative keyword', () =>
   withServer(async (t, cm, nb) => {
     const mk = (date, cmId, narrative, dur = 0.5) => t.fetchJson('POST', '/api/entries', {
