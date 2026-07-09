@@ -566,3 +566,29 @@ tr.import-skip td { opacity: 0.55; }
 .tf-meter-fill { display: block; height: 100%; background: var(--accent); }
 .tf-running { display: inline-flex; align-items: center; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .tf-total.bump { animation: none; } }
+
+/* ---------- close-out (one-sweep card stack) ---------- */
+.closeout-backdrop {
+  position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.3);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.closeout-card {
+  width: 560px; max-width: calc(100vw - 36px);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); padding: 20px 22px;
+}
+.closeout-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.closeout-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.closeout-dot.on { background: var(--accent); }
+.closeout-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.closeout-head strong { font-size: 16px; }
+.closeout-hours { font-size: 20px; font-weight: 650; }
+.closeout-card textarea { width: 100%; }
+.closeout-keys { display: flex; justify-content: center; gap: 4px; margin-top: 14px; }
+.closeout-warn-title { margin: 0 0 8px; font-size: 15px; }
+.closeout-warnlist { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.closeout-warnitem {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-2);
+}
+.closeout-warnitem .validation-list { margin: 6px 0; }
+.closeout-warnitem .btn { margin-top: 4px; }

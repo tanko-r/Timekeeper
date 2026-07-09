@@ -68,6 +68,10 @@ const clickText = async (selector, text) => {
   await page.mouse.click(box.x, box.y);
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const todayLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
 
 console.log(`E2E against ${base}`);
 
@@ -655,6 +659,75 @@ await step('dark mode applies', async () => {
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   if (bg !== 'rgb(18, 18, 17)') throw new Error(`dark surface not applied: ${bg}`);
   await shot('dashboard-dark');
+});
+
+// Last data-mutating step (per plan): finalizes and exports today's drafts,
+// so it runs after everything else that reads today's entry/timer state.
+await step('one-sweep close-out: card stack finalizes & exports the day (c)', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];
+  const seeded = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: todayLocal(),
+      cm_id: acme.id,
+      narrative: 'Reviewed the closing checklist and confirmed signature pages with opposing counsel.',
+      tasks: [{ task_code: 'Review', duration: 0.4, fragment: '' }],
+    }),
+  })).json();
+
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  await page.keyboard.press('c');
+  await waitFor('.closeout-card');
+  // the just-seeded draft is the newest (highest id) → first card in the sweep
+  await page.waitForFunction((name) => document.querySelector('.closeout-card')?.textContent.includes(name),
+    { timeout: 4000 }, acme.short_name);
+
+  // sweep through every draft card (Enter accepts and advances) until the summary
+  for (let i = 0; i < 20; i++) {
+    const phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+    if (phase !== 'sweep') break;
+    const before = await page.$$eval('.closeout-dot.on', (els) => els.length);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction((prevOn) => {
+      const backdrop = document.querySelector('.closeout-backdrop');
+      if (!backdrop || backdrop.dataset.phase !== 'sweep') return true;
+      return document.querySelectorAll('.closeout-dot.on').length > prevOn;
+    }, { timeout: 4000 }, before);
+  }
+  const afterSweep = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+  if (afterSweep !== 'summary') throw new Error(`expected the summary card after sweeping, got phase="${afterSweep}"`);
+
+  await clickText('.closeout-card button', 'Finalize & export');
+  await page.waitForFunction(() => {
+    const p = document.querySelector('.closeout-backdrop')?.dataset.phase;
+    return p === 'closed' || p === 'warn' || p === 'blocked';
+  }, { timeout: 6000 });
+
+  let phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+  if (phase === 'warn') {
+    // the harness's entries must be clean to reach here on a warning, not a
+    // hard block — assert the warning card, then accept and finalize anyway.
+    const hasAccept = await page.evaluate(() => [...document.querySelectorAll('.closeout-card button')]
+      .some((b) => b.textContent.includes('Accept warnings & finalize')));
+    if (!hasAccept) throw new Error('warn phase reached without an "Accept warnings & finalize" button (hard block?)');
+    await clickText('.closeout-card button', 'Accept warnings & finalize');
+    await page.waitForFunction(() => {
+      const p = document.querySelector('.closeout-backdrop')?.dataset.phase;
+      return p === 'closed' || p === 'blocked';
+    }, { timeout: 6000 });
+    phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+  }
+  if (phase !== 'closed') throw new Error(`expected the closed card, got phase="${phase}"`);
+  await page.waitForFunction(() => document.body.textContent.includes('Day closed'), { timeout: 4000 });
+  await shot('closeout-closed');
+  await clickText('.closeout-card button', 'Done');
+  await page.waitForFunction(() => !document.querySelector('.closeout-backdrop'), { timeout: 4000 });
+
+  const after = await (await fetch(`${base}/api/entries/${seeded.id}`)).json();
+  if (after.status !== 'finalized') throw new Error(`seeded draft was not finalized: status=${after.status}`);
+  if (!after.exported_at) throw new Error('seeded draft was finalized but never marked exported');
 });
 
 await browser.close();

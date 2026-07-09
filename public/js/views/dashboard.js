@@ -6,13 +6,12 @@ import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
+import { CloseOut } from '/js/components/closeout.js';
 import { nav } from '/js/app.js';
 
 export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const { loading, data, error, reload } = useAsync(() => api.get('/api/dashboard'), [refreshKey]);
   const [warnGate, setWarnGate] = useState(null);
-  // Consumed by Task 6 (close-out flow); this task only opens it — nothing
-  // renders for it yet.
   const [closeOut, setCloseOut] = useState(false);
   // Timestamp of the dashboard payload — the footer adds wall-clock time since
   // this moment to the (fetch-frozen) running-timer seconds.
@@ -118,5 +117,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     </div>
 
     <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt} onCloseDay=${() => setCloseOut(true)} />
+
+    ${closeOut ? html`
+      <${CloseOut} onClose=${(changed) => { setCloseOut(false); if (changed) bumpRefresh(); }} openEditor=${openEditor} />` : null}
   `;
 }
