@@ -13,7 +13,22 @@ const GENERIC_ROLES = new Set([
 ]);
 
 // Connector tokens end a name capture ("John Smith Re Draft" → "John Smith").
-const CUT_WORDS = new Set(['re', 'regarding', 'about', 'concerning', 'and', 'for', 'on']);
+// Also includes the trigger vocabulary itself (conference, call, email, ...)
+// plus a couple of common narrative verbs (reviewed, drafted): callers join
+// narrative + fragments across entries with plain newlines and no terminal
+// punctuation, and NAME's \s+ separator matches across those newlines, so
+// without this a name capture can otherwise bleed into the next clause
+// ("John Smith\n\nEmail to Mary Jones" → "John Smith Email"; "John Smith
+// Reviewed the draft" → "John Smith Reviewed").
+const CUT_WORDS = new Set([
+  're', 'regarding', 'about', 'concerning', 'and', 'for', 'on',
+  'conference', 'conferences', 'call', 'calls', 'meeting', 'meetings', 'meet',
+  'confer', 'discussion', 'discussions', 'correspondence', 'correspond',
+  'zoom', 'negotiation', 'negotiations', 'negotiate', 'spoke', 'speak',
+  'email', 'emails', 'e-mail', 'e-mails', 'letter', 'letters', 'memo', 'memos',
+  'voicemail', 'voicemails', 'message', 'messages',
+  'reviewed', 'drafted',
+]);
 
 // Trigger phrases that introduce a counterparty. Two families:
 //   <meeting word> with X     (telephone conference with, call with, ...)
@@ -23,9 +38,9 @@ const TRIGGERS = /\b(?:(?:(?:telephone|video|phone)\s+)?(?:conference|conference
 // A name: optional courtesy title (consumed, not captured), then 1–4
 // capitalized tokens; single-letter initials keep their period ("M. Smith").
 // \w never matches "." or ",", so trailing sentence punctuation is excluded.
-const NAME = /^(?:(?:Mr|Ms|Mrs|Dr)\.?\s+)?((?:[A-Z]\.|[A-Z][\w''-]+)(?:\s+(?:[A-Z]\.|[A-Z][\w''-]+)){0,3})/;
+const NAME = /^(?:(?:Mr|Ms|Mrs|Dr)\.?\s+)?((?:[A-Z]\.|[A-Z][\w'’-]+)(?:\s+(?:[A-Z]\.|[A-Z][\w'’-]+)){0,3})/;
 
-const POSSESSIVE = /['']s$/i;
+const POSSESSIVE = /['’]s$/i;
 const SINGLE_INITIAL = /^[A-Z]\.$/;
 
 export function extractPeople(text) {

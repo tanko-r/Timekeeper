@@ -25,7 +25,7 @@ test('generic roles are not people', () => {
 
 test('possessive captures are descriptions, not names', () => {
   assert.deepEqual(extractPeople("Conference with Sam's counsel re lease."), []);
-  assert.deepEqual(extractPeople('Call with Landlord\'s broker.'), []);
+  assert.deepEqual(extractPeople('Call with Landlord’s broker.'), []);
 });
 
 test('trailing punctuation and duration labels never leak into names', () => {
@@ -58,6 +58,18 @@ test('dedupes case-insensitively within one text', () => {
 
 test('a bare single initial is not a name', () => {
   assert.deepEqual(extractPeople('call with M. re lease'), []);
+});
+
+test('name capture does not bleed across segment boundaries', () => {
+  assert.deepEqual(
+    extractPeople('Meeting with John Smith\n\n\nEmail to Mary Jones'),
+    ['John Smith', 'Mary Jones']);
+  assert.deepEqual(
+    extractPeople('Meeting with John Smith Email to Mary Jones'),
+    ['John Smith', 'Mary Jones']);
+  assert.deepEqual(
+    extractPeople('Call with John Smith Reviewed the draft'),
+    ['John Smith']);
 });
 
 test('no triggers, empty, or non-string input → empty', () => {
