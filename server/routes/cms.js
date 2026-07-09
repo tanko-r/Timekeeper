@@ -51,14 +51,17 @@ export function cmsRouter({ db, clock }) {
     try {
       const { clientNumber, matterNumber } = splitCmNumber(cm_number);
       const clientId = ensureClient(db, clientNumber, now());
+      // INSERT first: it's the statement that can throw (duplicate cm_number).
+      // Only once it has actually succeeded do we apply the client_name side
+      // effect, so a failed (409) request never leaves a persisted mutation.
+      const info = db.prepare(
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, clientId, matterNumber, now(), now());
       if (typeof client_name === 'string' && client_name.trim() !== '') {
         // Name a still-blank client at creation time; never overwrite a real name.
         db.prepare("UPDATE clients SET name=?, updated_at=? WHERE id=? AND name=''")
           .run(client_name.trim(), now(), clientId);
       }
-      const info = db.prepare(
-        'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, clientId, matterNumber, now(), now());
       res.status(201).json(getCm.get(info.lastInsertRowid));
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {

@@ -132,6 +132,23 @@ test('POST /api/cms client_name: null or non-string is ignored, not coerced', ()
   assert.equal(c.client_name, 'Real Name');
 }));
 
+test('POST /api/cms duplicate cm_number: 409 leaves no client_name side effect', () => withServer(async (t) => {
+  const a = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '999001-000001', short_name: 'First',
+  })).body;
+  assert.equal(a.client_name, '');
+
+  const dup = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '999001-000001', short_name: 'Duplicate', client_name: 'SnuckIn',
+  });
+  assert.equal(dup.status, 409);
+
+  // A failed (409) request must not have named the client behind the scenes.
+  const picker = (await t.fetchJson('GET', '/api/cms/picker?q=999001')).body;
+  assert.equal(picker.length, 1);
+  assert.equal(picker[0].client_name, '');
+}));
+
 test('cannot hard-delete a CM with entries; unreferenced CM deletes', () => withServer(async (t) => {
   const cm = (await t.fetchJson('POST', '/api/cms', { cm_number: '222222-000001', short_name: 'Used' })).body;
   t.db.prepare(
