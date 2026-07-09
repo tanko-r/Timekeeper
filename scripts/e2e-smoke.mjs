@@ -81,6 +81,19 @@ await step('app shell renders (dashboard, SVG icons)', async () => {
   await waitFor('.timer-new');
 });
 
+await step('PWA shell files are reachable (manifest.json, sw.js) — cheap reachability check, not a full SW-lifecycle test (headless SW registration is flaky)', async () => {
+  const manifestRes = await fetch(`${base}/manifest.json`);
+  if (!manifestRes.ok) throw new Error(`manifest.json fetch failed: ${manifestRes.status}`);
+  const manifest = await manifestRes.json();
+  if (manifest.name !== 'Timekeeper') throw new Error(`manifest.json missing expected name: ${JSON.stringify(manifest)}`);
+  if (!Array.isArray(manifest.icons) || manifest.icons.length < 2) throw new Error('manifest.json missing icons');
+
+  const swRes = await fetch(`${base}/sw.js`);
+  if (!swRes.ok) throw new Error(`sw.js fetch failed: ${swRes.status}`);
+  const swBody = await swRes.text();
+  if (!swBody.includes('/api/')) throw new Error('sw.js does not appear to guard /api/ requests');
+});
+
 await step('create client+matter through picker (client→matter path, prefilled)', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');

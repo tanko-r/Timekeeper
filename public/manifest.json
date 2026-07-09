@@ -1,0 +1,14 @@
+{
+  "name": "Timekeeper",
+  "short_name": "Timekeeper",
+  "description": "Self-hosted attorney timekeeping — timers, narratives, and daily close-out.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f4f2",
+  "theme_color": "#2a78d6",
+  "icons": [
+    { "src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
