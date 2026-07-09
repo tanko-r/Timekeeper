@@ -61,8 +61,13 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
         pick(chips[Number(e.key) - 1]);
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    // Capture phase: the timer grid's board-level onKeyDown (a React bubble
+    // listener) swallows printable keys into type-to-filter before they'd
+    // reach a bubble-phase document listener, since the stopped card keeps
+    // DOM focus. Intercepting in capture wins the race; the input/textarea
+    // guard above still keeps normal typing (e.g. the editor) unaffected.
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
   }, [chips]); // eslint-disable-line
 
   return createPortal(html`

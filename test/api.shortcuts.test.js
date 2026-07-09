@@ -24,6 +24,7 @@ test('shortcuts: create, list (alpha, case-insensitive), delete', () => withServ
 
 test('shortcuts: validation and case-insensitive uniqueness', () => withServer(async (t) => {
   assert.equal((await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'has space', phrase: 'x' })).status, 400);
+  assert.equal((await t.fetchJson('POST', '/api/shortcuts', { abbrev: 't.c', phrase: 'x' })).status, 400); // unreachable: expand.js treats "." as a delimiter
   assert.equal((await t.fetchJson('POST', '/api/shortcuts', { abbrev: '', phrase: 'x' })).status, 400);
   assert.equal((await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'ok', phrase: '' })).status, 400);
   assert.equal((await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'IA', phrase: 'one' })).status, 201);

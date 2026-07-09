@@ -61,16 +61,22 @@ export async function streamNdjson(path, body, onLine, signal) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    let nl;
-    while ((nl = buf.indexOf('\n')) !== -1) {
-      const line = buf.slice(0, nl).trim();
-      buf = buf.slice(nl + 1);
-      if (line) onLine(JSON.parse(line));
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (line) onLine(JSON.parse(line));
+      }
     }
+  } finally {
+    // onLine can throw (e.g. a mid-stream {"error":"ai_stream_failed"} line);
+    // cancel so the reader/underlying connection doesn't linger open.
+    reader.cancel().catch(() => {});
   }
 }
 

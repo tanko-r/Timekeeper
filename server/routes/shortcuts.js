@@ -5,7 +5,11 @@ import { Router } from 'express';
 // dictionary is built IN-FLOW (select text → save as shortcut), so this API
 // is deliberately tiny: list, create, delete. Expansion itself happens in the
 // browser (public/js/lib/expand.js).
-const ABBREV_RE = /^\S{1,24}$/;
+// Must stay reachable by the expansion engine's delimiter set
+// (public/js/lib/expand.js DELIMS): whitespace and . , ; : ) all end an
+// abbreviation there, so an abbrev containing one could never be typed and
+// matched as a whole (e.g. "t.c" is unreachable — typing it triggers on "c").
+const ABBREV_RE = /^[^\s.,;:)]{1,24}$/;
 
 export function shortcutsRouter({ db, clock }) {
   const r = Router();
@@ -21,7 +25,9 @@ export function shortcutsRouter({ db, clock }) {
     const abbrev = String(b.abbrev || '').trim();
     const phrase = String(b.phrase || '').replace(/\s+/g, ' ').trim();
     if (!ABBREV_RE.test(abbrev)) {
-      return res.status(400).json({ error: 'Abbreviation must be 1–24 characters with no spaces.' });
+      return res.status(400).json({
+        error: 'Abbreviation must be 1–24 characters, no spaces, and cannot contain . , ; : or )',
+      });
     }
     if (!phrase || phrase.length > 200) {
       return res.status(400).json({ error: 'Phrase must be 1–200 characters.' });
