@@ -30,6 +30,14 @@ export function clientsRouter({ db, clock }) {
     if (b.client_number !== undefined && !SIX.test(String(b.client_number))) {
       return res.status(400).json({ error: 'Client number must be 6 digits.' });
     }
+    if (b.client_number !== undefined && String(b.client_number) !== c.client_number) {
+      const { matterCount } = db.prepare('SELECT COUNT(*) AS matterCount FROM matters WHERE client_id=?').get(c.id);
+      if (matterCount > 0) {
+        return res.status(409).json({
+          error: 'Cannot change client number: this client has matters. Renumbering would break their CM# linkage.',
+        });
+      }
+    }
     const next = {
       client_number: b.client_number ?? c.client_number,
       name: b.name ?? c.name,

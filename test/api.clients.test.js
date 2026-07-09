@@ -38,3 +38,22 @@ test('clients: 404 for unknown id, 400 for bad client_number', () => withServer(
   const bad = await t.fetchJson('PATCH', `/api/clients/${client.id}`, { client_number: '12345' });
   assert.equal(bad.status, 400);
 }));
+
+test('clients: 409 rejects client_number change when the client has matters (would break cm_number linkage)', () => withServer(async (t) => {
+  await t.fetchJson('POST', '/api/cms', { cm_number: '111111-000001', short_name: 'M' });
+  const client = (await t.fetchJson('GET', '/api/clients')).body.find((c) => c.client_number === '111111');
+
+  const renamed = await t.fetchJson('PATCH', `/api/clients/${client.id}`, { client_number: '222222' });
+  assert.equal(renamed.status, 409);
+
+  // client_number is untouched, and the matter's derived cm_number/client link still agree.
+  const stillThere = (await t.fetchJson('GET', `/api/clients/${client.id}`)).body;
+  assert.equal(stillThere.client_number, '111111');
+  const matter = t.db.prepare('SELECT cm_number, client_id FROM matters WHERE client_id=?').get(client.id);
+  assert.equal(matter.cm_number, '111111-000001');
+
+  // name-only patches are unaffected by the guard.
+  const renamedOk = await t.fetchJson('PATCH', `/api/clients/${client.id}`, { name: 'Acme' });
+  assert.equal(renamedOk.status, 200);
+  assert.equal(renamedOk.body.name, 'Acme');
+}));
