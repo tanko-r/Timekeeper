@@ -46,6 +46,19 @@ export function ExportView({ refreshKey, bumpRefresh }) {
           const dow = (new Date().getDay() + 6) % 7;
           setFrom(addDays(t, -dow)); setTo(t);
         }}>This week</button>
+        <button class="btn btn-sm" onClick=${() => {
+          const t = todayStr();
+          setFrom(t.slice(0, 8) + '01'); setTo(t);
+        }}>This month</button>
+        <button class="btn btn-sm" onClick=${() => {
+          const t = todayStr();
+          const firstOfThis = new Date(t.slice(0, 8) + '01T12:00:00');
+          const lastMonthEnd = new Date(firstOfThis.getTime() - 86400000);
+          const y = lastMonthEnd.getFullYear();
+          const m = String(lastMonthEnd.getMonth() + 1).padStart(2, '0');
+          const d = String(lastMonthEnd.getDate()).padStart(2, '0');
+          setFrom(`${y}-${m}-01`); setTo(`${y}-${m}-${d}`);
+        }}>Last month</button>
         <input type="date" value=${from} style=${{ width: '160px' }} onChange=${(e) => setFrom(e.target.value)} />
         <span class="muted">→</span>
         <input type="date" value=${to} style=${{ width: '160px' }} onChange=${(e) => setTo(e.target.value)} />

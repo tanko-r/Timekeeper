@@ -569,6 +569,20 @@ await step('export view offers CSV, .TIM, and text', async () => {
   await shot('export');
 });
 
+await step('export view: This month preset sets from=1st, to=today', async () => {
+  await clickText('button', 'This month');
+  const { fromVal, toVal, today } = await page.evaluate(() => {
+    const inputs = document.querySelectorAll('input[type="date"]');
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return { fromVal: inputs[0].value, toVal: inputs[1].value, today: `${y}-${m}-${d}` };
+  });
+  if (!fromVal.endsWith('-01')) throw new Error(`This month "from" should be the 1st, got ${fromVal}`);
+  if (toVal !== today) throw new Error(`This month "to" should be today (${today}), got ${toVal}`);
+});
+
 await step('settings shows AI + .TIM cards', async () => {
   await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.textContent.includes('AI narrative assist'));
