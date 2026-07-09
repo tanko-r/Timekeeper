@@ -51,10 +51,10 @@ export function cmsRouter({ db, clock }) {
     try {
       const { clientNumber, matterNumber } = splitCmNumber(cm_number);
       const clientId = ensureClient(db, clientNumber, now());
-      if (client_name !== undefined && String(client_name).trim() !== '') {
+      if (typeof client_name === 'string' && client_name.trim() !== '') {
         // Name a still-blank client at creation time; never overwrite a real name.
         db.prepare("UPDATE clients SET name=?, updated_at=? WHERE id=? AND name=''")
-          .run(String(client_name).trim(), now(), clientId);
+          .run(client_name.trim(), now(), clientId);
       }
       const info = db.prepare(
         'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'

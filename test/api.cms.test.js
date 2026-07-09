@@ -114,6 +114,24 @@ test('POST /api/cms client_name names a blank client but never overwrites', () =
   assert.equal(b.client_name, 'Brightwater'); // existing name kept
 }));
 
+test('POST /api/cms client_name: null or non-string is ignored, not coerced', () => withServer(async (t) => {
+  const a = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '512002-000001', short_name: 'First', client_name: null,
+  })).body;
+  assert.equal(a.client_name, ''); // stays blank, not the string "null"
+
+  const b = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '512002-000002', short_name: 'Second', client_name: 42,
+  })).body;
+  assert.equal(b.client_name, ''); // non-string ignored, not coerced
+
+  // A later, real string name can still fill the still-blank client.
+  const c = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '512002-000003', short_name: 'Third', client_name: 'Real Name',
+  })).body;
+  assert.equal(c.client_name, 'Real Name');
+}));
+
 test('cannot hard-delete a CM with entries; unreferenced CM deletes', () => withServer(async (t) => {
   const cm = (await t.fetchJson('POST', '/api/cms', { cm_number: '222222-000001', short_name: 'Used' })).body;
   t.db.prepare(
