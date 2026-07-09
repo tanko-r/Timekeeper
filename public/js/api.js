@@ -38,13 +38,16 @@ export const api = {
 
 // Streaming POST for NDJSON endpoints (/api/ai/narrate): calls onLine(obj)
 // per line as tokens arrive. Non-2xx rejects with ApiError before any line
-// is delivered (the server only streams after committing to 200).
-export async function streamNdjson(path, body, onLine) {
+// is delivered (the server only streams after committing to 200). An
+// optional AbortSignal cancels mid-stream (rejects with AbortError) — the
+// server aborts its Ollama fetch on disconnect, so this stops generation.
+export async function streamNdjson(path, body, onLine, signal) {
   const res = await fetch(path, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
     credentials: 'same-origin',
+    signal,
   });
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent('tk:auth-required'));

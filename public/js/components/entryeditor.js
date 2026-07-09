@@ -26,6 +26,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [aiSplit, setAiSplit] = useState(true);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiDone, setAiDone] = useState(false); // a narrate run finished → show rewrite controls
+  const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
   localRef.current = local;
@@ -48,6 +49,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   useEffect(() => {
     api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
     api.get('/api/ai/status').then(setAi).catch(() => {});
+    return () => aiAbortRef.current?.abort(); // closing the editor cancels a live stream
   }, []);
 
   // load / create
@@ -299,22 +301,30 @@ export function EntryEditor({ spec, settings, onClose }) {
   // replacing the blocking spinner. The "split into tasks" path keeps the
   // JSON /ai/expand endpoint — a structured split can't stream. Each chunk
   // goes through update(), so the normal debounced autosave applies.
+  // Starting a new run aborts any in-flight one (regenerate mid-stream), and
+  // unmount aborts too — otherwise the server never sees a disconnect and
+  // Ollama keeps generating for up to 180s. A superseded run's callbacks and
+  // state writes are ignored so it can't fight the run that replaced it.
   async function aiNarrate(mode) {
+    aiAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    aiAbortRef.current = ctrl;
     setAiBusy(true);
     try {
       let acc = '';
       await streamNdjson('/api/ai/narrate', {
         mode, brief, narrative: localRef.current?.narrative || '',
       }, (m) => {
+        if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.error) throw new Error(m.message || m.error);
         if (m.token) { acc += m.token; update({ narrative: acc }); }
         if (m.done) update({ narrative: m.narrative });
-      });
+      }, ctrl.signal);
       setAiDone(true);
     } catch (e) {
-      emitToast(e.body?.message || e.message, { error: true });
+      if (e.name !== 'AbortError') emitToast(e.body?.message || e.message, { error: true });
     } finally {
-      setAiBusy(false);
+      if (aiAbortRef.current === ctrl) setAiBusy(false);
     }
   }
 
