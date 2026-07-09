@@ -67,8 +67,12 @@ export function parseNarrativeEdit(text, lineCount, { taskBilling = true } = {})
       if (!m) return null;
       const fragment = m[1].trim();
       const numStr = m[2].trim();
-      if (!fragment || numStr === '' || Number.isNaN(Number(numStr))) return null;
-      segments.push({ fragment, duration: Number(numStr) });
+      const duration = Number(numStr);
+      // A non-positive allocation is structurally meaningless in a task-billed
+      // narrative (and the server rejects negatives), so treat it as a break
+      // → null, giving a clean AUTO detach instead of an autosave 400 loop.
+      if (!fragment || numStr === '' || !Number.isFinite(duration) || duration <= 0) return null;
+      segments.push({ fragment, duration });
     }
     return { segments };
   }

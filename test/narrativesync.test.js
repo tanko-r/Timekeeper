@@ -203,6 +203,14 @@ test('parseNarrativeEdit: structural break — empty fragment text returns null'
   assert.equal(parseNarrativeEdit(text, 2, { taskBilling: true }), null);
 });
 
+test('parseNarrativeEdit: a negative duration returns null (clean AUTO detach, not a 400 loop)', () => {
+  assert.equal(parseNarrativeEdit('Foo (-0.5); bar (0.3).', 2, { taskBilling: true }), null);
+});
+
+test('parseNarrativeEdit: a zero duration returns null (meaningless allocation)', () => {
+  assert.equal(parseNarrativeEdit('Foo (0); bar (0.3).', 2, { taskBilling: true }), null);
+});
+
 test('parseNarrativeEdit: block-mode fragment count mismatch (user typed a semicolon inside a fragment) returns null', () => {
   const text = 'Review lease; sub-point; draft email to landlord.';
   assert.equal(parseNarrativeEdit(text, 2, { taskBilling: false }), null);
