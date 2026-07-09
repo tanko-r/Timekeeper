@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>SPIKE — WebGPU in-browser LLM evaluation</title>
+<link rel="stylesheet" href="/css/app.css">
+<style>
+  /* Spike-only layout. Everything component-ish (.card, .btn, table.tk,
+     .field, .badge, .chip) comes from /css/app.css so this still looks like
+     the app. This block is just page scaffolding that app.css doesn't have. */
+  body { padding: 20px 24px 60px; max-width: 1180px; margin: 0 auto; }
+  .spike-banner {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    margin-bottom: 18px; border-radius: 8px; font-weight: 650; font-size: 13.5px;
+    background: var(--nonbillable-soft); color: var(--nonbillable);
+    border: 1px solid color-mix(in srgb, var(--nonbillable) 45%, transparent);
+  }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .status-log {
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; max-height: 180px; overflow-y: auto;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; margin-top: 8px;
+  }
+  .progress-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin-top: 8px; }
+  .progress-bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .15s; }
+  .out-panel {
+    font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap; word-break: break-word; min-height: 140px; max-height: 320px; overflow-y: auto;
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+  }
+  .stat-row { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); }
+  .stat-row b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  .mode-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mode-row .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+  fieldset { border: 0; padding: 0; margin: 0; }
+  .gpu-badge-ok { background: var(--accent-soft); color: var(--accent-strong); }
+  .gpu-badge-bad { background: color-mix(in srgb, var(--status-critical) 18%, transparent); color: var(--status-critical); }
+</style>
+</head>
+<body>
+
+<div class="spike-banner">
+  ⚠️ SPIKE — throwaway evaluation page, not part of the app. Not linked from
+  any nav. Judges whether a small in-browser (WebGPU) model is good enough
+  for billing-narrative AI tasks before any real integration. Safe to delete
+  once David has an answer.
+</div>
+
+<h1>WebGPU in-browser LLM spike</h1>
+<p class="muted small">
+  Loads a small instruction model straight into this browser tab via
+  <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>
+  (no server round-trip once loaded) and runs it side-by-side against the
+  app's existing server-side Ollama narration endpoint on the exact same
+  prompts, so you can judge speed and quality directly.
+</p>
+
+<div class="card">
+  <h2>1. Environment &amp; model</h2>
+  <div class="row">
+    <span id="gpu-badge" class="badge">checking WebGPU…</span>
+    <span class="muted small">First load of a model pulls ~1-2GB of weights from Hugging Face/MLC CDN and caches them in the browser (IndexedDB/Cache Storage) — subsequent loads are fast and offline-capable.</span>
+  </div>
+  <div class="row" style="margin-top:10px;">
+    <div class="field" style="min-width:280px;">
+      <label class="field-label" for="model-select">Model</label>
+      <select id="model-select" disabled><option>loading model list…</option></select>
+    </div>
+    <button id="load-btn" class="btn btn-primary" disabled style="margin-top:18px;">Load model</button>
+  </div>
+  <div class="progress-bar"><i id="progress-fill"></i></div>
+  <div id="status-log" class="status-log">Starting up…</div>
+</div>
+
+<div class="card">
+  <h2>2. Task harness</h2>
+  <div class="field">
+    <label class="field-label" for="brief">Rough narrative / brief (edit freely)</label>
+    <textarea id="brief" rows="3">call w opposing counsel re lease scope, revised legal description after</textarea>
+  </div>
+  <div class="mode-row" style="margin-top:10px;">
+    <button class="btn mode-btn active" data-mode="draft">Expand</button>
+    <button class="btn mode-btn" data-mode="shorter">Shorten</button>
+    <button class="btn mode-btn" data-mode="longer">Rewrite</button>
+    <span class="muted small">Mode determines which server-identical prompt is sent to both panels below. "Expand" treats the box above as a rough brief; "Shorten"/"Rewrite" treat it as an existing narrative to revise.</span>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="card">
+    <h2>WebLLM (in-browser)</h2>
+    <div class="row">
+      <button id="run-webllm" class="btn btn-primary" disabled>Run in browser</button>
+      <span class="muted small">mode: <b id="webllm-mode-label">Expand</b></span>
+    </div>
+    <div id="webllm-out" class="out-panel" style="margin-top:10px;"></div>
+    <div class="stat-row">
+      <span>time-to-first-token: <b id="webllm-ttft">–</b></span>
+      <span>tokens/sec: <b id="webllm-tps">–</b></span>
+      <span>total: <b id="webllm-total">–</b></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Ollama (server, existing endpoint)</h2>
+    <div class="row">
+      <button id="run-ollama" class="btn" disabled>Run same prompt via server Ollama</button>
+      <span class="muted small">mode: <b id="ollama-mode-label">Expand</b></span>
+    </div>
+    <div id="ollama-out" class="out-panel" style="margin-top:10px;"></div>
+    <div class="stat-row">
+      <span>time-to-first-token: <b id="ollama-ttft">–</b></span>
+      <span>tokens/sec: <b id="ollama-tps">–</b></span>
+      <span>total: <b id="ollama-total">–</b></span>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>3. Run history</h2>
+  <p class="muted small">Newest first. Nothing here persists across a page reload — copy anything worth keeping.</p>
+  <div class="table-wrap">
+    <table class="tk">
+      <thead><tr><th>Time</th><th>Engine</th><th>Mode</th><th>TTFT</th><th>tok/s</th><th>Total</th><th>Input</th><th>Output</th></tr></thead>
+      <tbody id="history-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script type="module">
+import { streamNdjson, ApiError } from '/js/api.js';
+
+// ---------------------------------------------------------------------
+// Prompt construction — copied verbatim from server/routes/ai.js so this
+// spike judges the SAME prompts the real app would send. If ai.js changes,
+// re-sync this block by hand (it's intentionally not imported: this page
+// has to work as a static file with no build step and no server changes).
+// ---------------------------------------------------------------------
+
+// server/routes/ai.js: export const DEFAULT_AI_INSTRUCTIONS (lines ~22-28)
+const DEFAULT_AI_INSTRUCTIONS = `You are a legal billing assistant for an attorney. The user gives a brief, informal description of legal work performed. You expand it into (1) a professional billing narrative and (2) its component tasks.
+
+Rules for the narrative:
+- Specific, professional billing language with concrete action verbs (reviewed, drafted, revised, analyzed, telephone conference with, correspondence with).
+- Never use vague phrases like "work on", "attention to", or "review file".
+- No client-confidential embellishment: only expand on what the user said; do not invent facts, names, or documents.
+- 1–3 sentences.`;
+
+// server/routes/ai.js: buildNarrateMessages() (lines ~49-61). This is the
+// plain-text (no JSON contract) prompt shared by /api/ai/narrate and the
+// suggested-narrative background refinement — the one this spike's "Ollama"
+// panel calls, so replicate it exactly for the WebLLM side too.
+function buildNarrateMessages(mode, text) {
+  const system = `${DEFAULT_AI_INSTRUCTIONS}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.`;
+  let user;
+  if (mode === 'shorter') {
+    user = `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${text}`;
+  } else if (mode === 'longer') {
+    user = `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${text}`;
+  } else {
+    user = `Work done: ${text}`;
+  }
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+const MODE_LABELS = { draft: 'Expand', shorter: 'Shorten', longer: 'Rewrite' };
+
+// ---------------------------------------------------------------------
+// DOM plumbing
+// ---------------------------------------------------------------------
+const $ = (sel) => document.querySelector(sel);
+const statusLog = $('#status-log');
+const logLines = [];
+function log(msg) {
+  logLines.push(`[${new Date().toLocaleTimeString()}] ${msg}`);
+  statusLog.textContent = logLines.join('\n');
+  statusLog.scrollTop = statusLog.scrollHeight;
+}
+
+let currentMode = 'draft';
+document.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    currentMode = btn.dataset.mode;
+    document.querySelectorAll('.mode-btn').forEach((b) => b.classList.toggle('active', b === btn));
+    $('#webllm-mode-label').textContent = MODE_LABELS[currentMode];
+    $('#ollama-mode-label').textContent = MODE_LABELS[currentMode];
+  });
+});
+
+function addHistoryRow({ engine, mode, ttft, tps, total, input, output }) {
+  const tr = document.createElement('tr');
+  const td = (text) => { const el = document.createElement('td'); el.textContent = text; return el; };
+  tr.append(
+    td(new Date().toLocaleTimeString()),
+    td(engine),
+    td(MODE_LABELS[mode] || mode),
+    td(ttft),
+    td(tps),
+    td(total),
+    td(input.length > 80 ? input.slice(0, 80) + '…' : input),
+    td(output.length > 160 ? output.slice(0, 160) + '…' : output),
+  );
+  $('#history-body').prepend(tr);
+}
+
+// ---------------------------------------------------------------------
+// 1. WebGPU feature detection + WebLLM module load + model list
+// ---------------------------------------------------------------------
+const REQUESTED_MODELS = [
+  'Qwen2.5-3B-Instruct-q4f16_1-MLC',
+  'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+  'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
+];
+
+let webllm = null;
+let engine = null;
+
+async function initWebGpuAndModelList() {
+  const gpuBadge = $('#gpu-badge');
+  if (!('gpu' in navigator)) {
+    gpuBadge.textContent = 'WebGPU not available in this browser';
+    gpuBadge.classList.add('gpu-badge-bad');
+    log('navigator.gpu is undefined — this browser/device cannot run WebGPU. Try a recent desktop Chrome/Edge (chrome://gpu to check) or a WebGPU-enabled build. Model list will still be logged below for reference.');
+  } else {
+    gpuBadge.textContent = 'WebGPU available';
+    gpuBadge.classList.add('gpu-badge-ok');
+    log('navigator.gpu detected.');
+  }
+
+  log('Loading WebLLM module from https://esm.run/@mlc-ai/web-llm …');
+  try {
+    webllm = await import('https://esm.run/@mlc-ai/web-llm');
+  } catch (e) {
+    log(`Failed to load WebLLM module: ${e.message}`);
+    return;
+  }
+  log('WebLLM module loaded.');
+
+  const allIds = webllm.prebuiltAppConfig.model_list.map((m) => m.model_id);
+  log(`prebuiltAppConfig.model_list has ${allIds.length} models. Full list:`);
+  log(allIds.join(', '));
+
+  const available = REQUESTED_MODELS.filter((id) => allIds.includes(id));
+  const missing = REQUESTED_MODELS.filter((id) => !allIds.includes(id));
+  if (missing.length) {
+    log(`Not found in this WebLLM build's prebuiltAppConfig (renamed/removed upstream?): ${missing.join(', ')}`);
+  }
+
+  const select = $('#model-select');
+  select.innerHTML = '';
+  if (!available.length) {
+    const opt = document.createElement('option');
+    opt.textContent = 'none of the 3 target models are available — see log / full list above';
+    select.appendChild(opt);
+    log('None of the 3 requested models exist in this build — pick a replacement from the full list above and edit REQUESTED_MODELS in this file if you want it in the picker.');
+    return;
+  }
+  for (const id of available) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id === REQUESTED_MODELS[0] ? `${id} (default)` : id;
+    select.appendChild(opt);
+  }
+  select.disabled = false;
+  if ('gpu' in navigator) $('#load-btn').disabled = false;
+  log(`Picker filled with ${available.length}/${REQUESTED_MODELS.length} requested models.`);
+}
+
+$('#load-btn').addEventListener('click', async () => {
+  const modelId = $('#model-select').value;
+  if (!modelId || !webllm) return;
+  $('#load-btn').disabled = true;
+  $('#load-btn').textContent = 'Loading…';
+  $('#progress-fill').style.width = '0%';
+  log(`Creating MLCEngine for ${modelId} (first time: expect a ~1-2GB download; cached after that)…`);
+  try {
+    engine = await webllm.CreateMLCEngine(modelId, {
+      initProgressCallback: (p) => {
+        const pct = Math.round((p.progress || 0) * 100);
+        $('#progress-fill').style.width = `${pct}%`;
+        log(p.text || `progress ${pct}%`);
+      },
+    });
+    log(`Model ${modelId} ready.`);
+    $('#run-webllm').disabled = false;
+  } catch (e) {
+    log(`Model load failed: ${e.message}`);
+  } finally {
+    $('#load-btn').disabled = false;
+    $('#load-btn').textContent = 'Load model';
+  }
+});
+
+// ---------------------------------------------------------------------
+// 2. WebLLM run: stream tokens, measure TTFT + tokens/sec ourselves
+// (chunk-count based — WebLLM's OpenAI-shaped stream emits one delta per
+// decode step, so counting deltas is a reasonable proxy for token count
+// without depending on a specific usage-stats API shape/version).
+// ---------------------------------------------------------------------
+$('#run-webllm').addEventListener('click', async () => {
+  if (!engine) return;
+  const mode = currentMode;
+  const input = $('#brief').value.trim();
+  if (!input) return;
+  const messages = buildNarrateMessages(mode, input);
+  const out = $('#webllm-out');
+  out.textContent = '';
+  $('#webllm-ttft').textContent = '–';
+  $('#webllm-tps').textContent = '–';
+  $('#webllm-total').textContent = 'running…';
+  $('#run-webllm').disabled = true;
+
+  const t0 = performance.now();
+  let ttft = null;
+  let chunkCount = 0;
+  let full = '';
+  try {
+    const stream = await engine.chat.completions.create({ messages, stream: true, temperature: 0.3 });
+    for await (const chunk of stream) {
+      const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
+      if (delta) {
+        if (ttft === null) {
+          ttft = performance.now() - t0;
+          $('#webllm-ttft').textContent = `${ttft.toFixed(0)}ms`;
+        }
+        chunkCount += 1;
+        full += delta;
+        out.textContent = full;
+        out.scrollTop = out.scrollHeight;
+        const elapsedSinceFirst = (performance.now() - t0 - ttft) / 1000;
+        if (elapsedSinceFirst > 0) $('#webllm-tps').textContent = (chunkCount / elapsedSinceFirst).toFixed(1);
+      }
+    }
+    const totalMs = performance.now() - t0;
+    $('#webllm-total').textContent = `${(totalMs / 1000).toFixed(1)}s`;
+    addHistoryRow({
+      engine: `WebLLM (${$('#model-select').value})`, mode,
+      ttft: ttft ? `${ttft.toFixed(0)}ms` : '–',
+      tps: $('#webllm-tps').textContent, total: `${(totalMs / 1000).toFixed(1)}s`,
+      input, output: full,
+    });
+  } catch (e) {
+    out.textContent = `Error: ${e.message}`;
+    $('#webllm-total').textContent = 'error';
+  } finally {
+    $('#run-webllm').disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------------
+// 3. Ollama run via the app's existing streaming endpoint — same prompt,
+// same mode. streamNdjson mirrors the reader used everywhere else in the
+// app (public/js/api.js), so this exercises the real code path.
+// ---------------------------------------------------------------------
+$('#run-ollama').addEventListener('click', async () => {
+  const mode = currentMode;
+  const input = $('#brief').value.trim();
+  if (!input) return;
+  const out = $('#ollama-out');
+  out.textContent = '';
+  $('#ollama-ttft').textContent = '–';
+  $('#ollama-tps').textContent = '–';
+  $('#ollama-total').textContent = 'running…';
+  $('#run-ollama').disabled = true;
+
+  const body = mode === 'shorter' || mode === 'longer'
+    ? { mode, narrative: input }
+    : { mode: 'draft', brief: input };
+
+  const t0 = performance.now();
+  let ttft = null;
+  let chunkCount = 0;
+  let full = '';
+  try {
+    await streamNdjson('/api/ai/narrate', body, (line) => {
+      if (line.error) throw new Error(line.message || line.error);
+      if (line.token) {
+        if (ttft === null) {
+          ttft = performance.now() - t0;
+          $('#ollama-ttft').textContent = `${ttft.toFixed(0)}ms`;
+        }
+        chunkCount += 1;
+        full += line.token;
+        out.textContent = full;
+        out.scrollTop = out.scrollHeight;
+        const elapsedSinceFirst = (performance.now() - t0 - ttft) / 1000;
+        if (elapsedSinceFirst > 0) $('#ollama-tps').textContent = (chunkCount / elapsedSinceFirst).toFixed(1);
+      }
+    });
+    const totalMs = performance.now() - t0;
+    $('#ollama-total').textContent = `${(totalMs / 1000).toFixed(1)}s`;
+    addHistoryRow({
+      engine: 'Ollama (server)', mode,
+      ttft: ttft ? `${ttft.toFixed(0)}ms` : '–',
+      tps: $('#ollama-tps').textContent, total: `${(totalMs / 1000).toFixed(1)}s`,
+      input, output: full,
+    });
+  } catch (e) {
+    if (e instanceof ApiError) {
+      out.textContent = e.body && e.body.error === 'ai_disabled'
+        ? 'AI is disabled in Settings → AI. Enable it there to compare against Ollama.'
+        : `Error (${e.status}): ${e.message}`;
+    } else {
+      out.textContent = `Error: ${e.message}`;
+    }
+    $('#ollama-total').textContent = 'error';
+  } finally {
+    $('#run-ollama').disabled = false;
+  }
+});
+
+initWebGpuAndModelList();
+</script>
+</body>
+</html>

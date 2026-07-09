@@ -94,6 +94,13 @@ await step('PWA shell files are reachable (manifest.json, sw.js) — cheap reach
   if (!swBody.includes('/api/')) throw new Error('sw.js does not appear to guard /api/ requests');
 });
 
+await step('spike page is reachable (public/spike-webllm.html) — cheap static-file check; actual WebGPU/WebLLM cannot run in this headless harness (no GPU, and it CDN-loads a multi-GB model)', async () => {
+  const res = await fetch(`${base}/spike-webllm.html`);
+  if (!res.ok) throw new Error(`spike-webllm.html fetch failed: ${res.status}`);
+  const body = await res.text();
+  if (!body.includes('SPIKE')) throw new Error('spike-webllm.html missing "SPIKE" banner text');
+});
+
 await step('create client+matter through picker (client→matter path, prefilled)', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');
