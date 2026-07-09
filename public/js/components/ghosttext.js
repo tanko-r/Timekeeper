@@ -64,6 +64,23 @@ export function GhostInput({
     setGhost(ghostCompletion(text, caret, suggestions));
   }, [suggestions]);
 
+  // Native 'select' listener as a fallback to React's synthetic onSelect:
+  // React's onSelect only fires from a real 'selectionchange' paired with a
+  // keyboard/mouse event on the field — a purely scripted
+  // setSelectionRange() + dispatched 'select' event (e.g. Task 4's
+  // save-as-shortcut e2e coverage) doesn't reach it. Listening natively
+  // covers both paths; harmless to run alongside the synthetic one.
+  useEffect(() => {
+    const el = fieldRef.current;
+    if (!el) return undefined;
+    const onNativeSelect = () => {
+      recompute(el.value, el.selectionStart);
+      if (onSelectionChange) onSelectionChange(el);
+    };
+    el.addEventListener('select', onNativeSelect);
+    return () => el.removeEventListener('select', onNativeSelect);
+  }, [recompute, onSelectionChange]);
+
   // after programmatic edits (expansion / Tab accept): restore the caret;
   // always: keep the mirror scrolled with the field
   useEffect(() => {

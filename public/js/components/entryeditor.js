@@ -6,6 +6,8 @@ import {
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
+import { expandShortcuts } from '/js/lib/expand.js';
 
 const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
 const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
@@ -34,6 +36,13 @@ export function EntryEditor({ spec, settings, onClose }) {
   // Ghost-text autocomplete (spec §6): deterministic phrasebook completions
   // for the picked matter; Tab accepts. No LLM anywhere in this path.
   const phrases = useMatterSuggestions(local?.cm?.id);
+
+  // Text-expansion shortcuts (spec §6): deterministic inline expansion in
+  // fragment/narrative fields + in-flow capture from a text selection.
+  const shortcuts = useShortcuts();
+  const [selText, setSelText] = useState('');
+  const expand = useCallback((text, caret) => expandShortcuts(text, caret, shortcuts), [shortcuts]);
+  const onFieldSelect = useCallback((el) => setSelText(el.value.slice(el.selectionStart, el.selectionEnd)), []);
 
   useEffect(() => {
     api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
@@ -344,6 +353,7 @@ export function EntryEditor({ spec, settings, onClose }) {
               placeholder="0.0" disabled=${finalized} class="mono"
               onInput=${(e) => updateLine(i, { duration: e.target.value })} />
             <${GhostInput} value=${t.fragment} suggestions=${phrases} disabled=${finalized}
+              expand=${expand} onSelectionChange=${onFieldSelect}
               placeholder=${isAuto ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
               onChange=${(v) => updateLine(i, { fragment: v })} />
             <div class="row" style=${{ flexWrap: 'nowrap', gap: '2px' }}>
@@ -369,13 +379,15 @@ export function EntryEditor({ spec, settings, onClose }) {
 
       <div class="section-title"><h3 style=${{ margin: 0 }}>Narrative</h3>
         ${isAuto ? html`<span class="muted small">generated from task lines — edit the fragments above</span>` : null}
+        <div class="spacer" style=${{ flex: 1 }}></div>
+        <${SaveShortcutBar} selection=${selText} />
       </div>
       <div class="narrative-preview">
         ${isAuto ? html`
           <span class="auto-badge">AUTO</span>
           <textarea readOnly value=${autoNarrative || ''}></textarea>` : html`
           <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
-            suggestions=${phrases}
+            suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onChange=${(v) => update({ narrative: v })} />`}
       </div>

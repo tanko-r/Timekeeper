@@ -211,6 +211,43 @@ await step('ghost-text: phrasebook completion in the entry editor, Tab accepts',
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
+await step('shortcuts: save-from-selection, inline expansion, settings list', async () => {
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'Acme');
+  await waitFor('.modal-wide .narrative-preview textarea');
+  await page.type('.modal-wide .narrative-preview textarea', 'Interconnect Agreement');
+  await page.evaluate(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    ta.focus();
+    ta.setSelectionRange(0, ta.value.length);
+    ta.dispatchEvent(new Event('select', { bubbles: true }));
+  });
+  await waitFor('[data-shortcut-save]');
+  await clickText('[data-shortcut-save] button', 'shortcut');
+  await type('[data-shortcut-save] input', 'IA');
+  await clickText('[data-shortcut-save] button', 'Save');
+  await page.waitForFunction(() => document.body.textContent.includes('Shortcut saved'), { timeout: 4000 });
+  // expansion: clear the field, then type the abbreviation + space
+  await page.evaluate(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    set.call(ta, '');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.type('.modal-wide .narrative-preview textarea', 'review IA ', { delay: 20 });
+  const val = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (val !== 'review Interconnect Agreement ') throw new Error(`expansion failed: "${val}"`);
+  await clickText('.modal-wide button', 'Delete');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+  // settings shows the minimal list (no management screen beyond list/delete)
+  await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => document.body.textContent.includes('Text-expansion shortcuts')
+    && document.body.textContent.includes('Interconnect Agreement'), { timeout: 4000 });
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+});
+
 await step('picker: client→matter create + fuzzy client-name search', async () => {
   await clickText('button', 'New timer');
   await waitFor('.modal .cmpicker input');

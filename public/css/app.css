@@ -460,6 +460,7 @@ kbd {
 .ghost-wrap.multiline .ghost-mirror { white-space: pre-wrap; overflow-wrap: break-word; }
 .ghost-typed { color: transparent; }
 .ghost-hint { color: var(--text-muted); opacity: .75; }
+.shortcut-save { display: inline-flex; align-items: center; gap: 6px; }
 
 /* ---------- CSV timer import ---------- */
 .import-map {

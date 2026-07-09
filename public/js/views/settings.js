@@ -1,5 +1,6 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, Field, emitToast } from '/js/ui.js';
+import { useShortcuts, refreshShortcuts } from '/js/components/shortcuts.js';
 
 export function SettingsView({ settings, reloadSettings, authState, reloadAuth }) {
   return html`
@@ -9,6 +10,7 @@ export function SettingsView({ settings, reloadSettings, authState, reloadAuth }
       <${AiCard} settings=${settings} reloadSettings=${reloadSettings} />
       <${TimCard} settings=${settings} reloadSettings=${reloadSettings} />
       <${TaskCodesCard} />
+      <${ShortcutsCard} />
       <${ValidationCard} settings=${settings} reloadSettings=${reloadSettings} />
       <${RemoteCard} authState=${authState} reloadAuth=${reloadAuth} />
       <${BackupCard} settings=${settings} reloadSettings=${reloadSettings} />
@@ -357,5 +359,31 @@ function BackupCard({ settings, reloadSettings }) {
         <p class="muted small" style=${{ marginBottom: 0 }}>
           On disk: ${backups.slice(0, 3).map((b) => b.name).join(', ')}${backups.length > 3 ? ` … +${backups.length - 3} more` : ''}
         </p>` : null}
+    </div>`;
+}
+
+// Minimal by design (spec §6): the dictionary is BUILT in-flow (select text
+// in a narrative field → "save as shortcut"); Settings only lists & deletes.
+function ShortcutsCard() {
+  const list = useShortcuts();
+  return html`
+    <div class="card">
+      <h2>Text-expansion shortcuts</h2>
+      <p class="muted small">
+        Type an abbreviation in any narrative or fragment field and it expands when you
+        hit space or punctuation. Add new ones in-flow: select text in a narrative
+        field and click “＋ shortcut”.
+      </p>
+      ${list.length === 0 ? html`<p class="muted small">No shortcuts yet.</p>` : html`
+        <div class="table-wrap"><table class="tk">
+          <thead><tr><th>Abbreviation</th><th>Expands to</th><th></th></tr></thead>
+          <tbody>${list.map((s) => html`
+            <tr key=${s.id}>
+              <td class="mono">${s.abbrev}</td>
+              <td>${s.phrase}</td>
+              <td><button class="btn btn-ghost btn-sm" title="Delete shortcut"
+                onClick=${async () => { await api.del(`/api/shortcuts/${s.id}`); await refreshShortcuts(); }}>✕</button></td>
+            </tr>`)}</tbody>
+        </table></div>`}
     </div>`;
 }
