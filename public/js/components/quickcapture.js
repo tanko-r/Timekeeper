@@ -1,14 +1,9 @@
 import { api } from '/js/api.js';
-import { html, useState, useEffect, useRef, createPortal, emitToast, fmtHours, Icon } from '/js/ui.js';
+import { html, useState, useEffect, useRef, createPortal, emitToast, fmtHours, todayStr, Icon } from '/js/ui.js';
 
 // Bill from a sentence (spec §6, magic #1): one line in, a ready-to-approve
 // entry out. Deterministic parse previews live; Enter approves and files.
 // Deliberately NOT the shared Modal — this owns Enter/Escape itself.
-
-const todayStr = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
 
 export function QuickCapture({ onClose, onFiled }) {
   const [line, setLine] = useState('');

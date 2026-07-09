@@ -177,7 +177,11 @@ function App() {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = ['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable;
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (editor) return; // editor handles its own keys
+      // The editor and the quick-capture palette own their keys. While the
+      // palette is open, ALL global shortcuts must stay dead: a chip click
+      // moves focus off its input, and e.g. `n` would then open an editor
+      // invisibly UNDER the qc backdrop (z-index 100 vs 300).
+      if (editor || quickCapture) return;
       if (pendingG) {
         pendingG = false;
         clearTimeout(gTimer);
@@ -204,7 +208,7 @@ function App() {
         window.dispatchEvent(new CustomEvent('tk:toggle-last-timer'));
         if (route.path !== 'dashboard') nav('#/');
       } else if (e.key === 'q') {
-        if (showHelp || quickCapture) return; // don't stack overlays, don't open twice
+        if (showHelp) return; // don't open the palette under the help overlay
         e.preventDefault();
         setQuickCapture(true);
       } else if (e.key === '?') {
