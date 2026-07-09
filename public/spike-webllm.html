@@ -210,9 +210,13 @@ function addHistoryRow({ engine, mode, ttft, tps, total, input, output }) {
 // ---------------------------------------------------------------------
 // 1. WebGPU feature detection + WebLLM module load + model list
 // ---------------------------------------------------------------------
+// Llama first = default (David prefers non-Chinese-origin models; the Qwen
+// entries stay in the picker for comparison only, clearly non-default).
+// Gemma builds are appended dynamically from whatever prebuiltAppConfig
+// actually ships (see initWebGpuAndModelList) rather than hardcoded.
 const REQUESTED_MODELS = [
-  'Qwen2.5-3B-Instruct-q4f16_1-MLC',
   'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+  'Qwen2.5-3B-Instruct-q4f16_1-MLC',
   'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
 ];
 
@@ -250,24 +254,33 @@ async function initWebGpuAndModelList() {
     log(`Not found in this WebLLM build's prebuiltAppConfig (renamed/removed upstream?): ${missing.join(', ')}`);
   }
 
+  // Surface every Gemma build MLC actually ships (David asked about Gemma —
+  // ids change across WebLLM releases, so match rather than hardcode).
+  const gemmaIds = allIds.filter((id) => /gemma/i.test(id) && !available.includes(id));
+  log(gemmaIds.length
+    ? `Gemma builds in prebuiltAppConfig: ${gemmaIds.join(', ')}`
+    : 'No Gemma builds found in prebuiltAppConfig.');
+
+  const picker = [...available, ...gemmaIds];
   const select = $('#model-select');
   select.innerHTML = '';
-  if (!available.length) {
+  if (!picker.length) {
     const opt = document.createElement('option');
-    opt.textContent = 'none of the 3 target models are available — see log / full list above';
+    opt.textContent = 'no target or Gemma models available — see log / full list above';
     select.appendChild(opt);
-    log('None of the 3 requested models exist in this build — pick a replacement from the full list above and edit REQUESTED_MODELS in this file if you want it in the picker.');
+    log('Nothing to offer in the picker — choose a replacement from the full list above and edit REQUESTED_MODELS in this file.');
     return;
   }
-  for (const id of available) {
+  for (const id of picker) {
     const opt = document.createElement('option');
     opt.value = id;
-    opt.textContent = id === REQUESTED_MODELS[0] ? `${id} (default)` : id;
+    opt.textContent = id === REQUESTED_MODELS[0] && allIds.includes(REQUESTED_MODELS[0])
+      ? `${id} (default)` : id;
     select.appendChild(opt);
   }
   select.disabled = false;
   if ('gpu' in navigator) $('#load-btn').disabled = false;
-  log(`Picker filled with ${available.length}/${REQUESTED_MODELS.length} requested models.`);
+  log(`Picker filled: ${available.length}/${REQUESTED_MODELS.length} requested + ${gemmaIds.length} Gemma builds.`);
 }
 
 $('#load-btn').addEventListener('click', async () => {
