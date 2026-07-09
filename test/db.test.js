@@ -98,11 +98,12 @@ test('deleting an entry cascades to its task lines', () => {
 test('migration v3 flips a pre-existing rounding mode to up', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
-  // simulate a pre-v3 database that still has nearest-rounding; also undo v4's
-  // and v5's schema changes (openDb ran all migrations fresh) so reopening
-  // replays v3, v4, v5 cleanly instead of re-creating already-existing objects.
+  // simulate a pre-v3 database that still has nearest-rounding; also undo
+  // every later migration's schema changes (openDb ran all migrations fresh)
+  // so reopening replays them cleanly instead of re-creating existing objects.
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
   db1.exec(`
+    DROP TABLE shortcuts;
     DROP TABLE matter_people;
     DROP INDEX idx_matters_client_matter;
     ALTER TABLE matters DROP COLUMN matter_number;
@@ -144,10 +145,11 @@ test('migration v4 backfills clients and links matters', () => {
   const db1 = openDb(path);
   // simulate a pre-v4 database with cms rows: fully undo v4's schema changes
   // (index + added columns must go before the rename, or SQLite refuses to
-  // drop the indexed/referenced columns; then drop clients and v5's
-  // matter_people (openDb ran all migrations fresh) and roll back
-  // user_version so reopening replays v4 and v5 against a genuine pre-v4 shape).
+  // drop the indexed/referenced columns; then drop the later migrations'
+  // tables (openDb ran all migrations fresh) and roll back user_version so
+  // reopening replays v4 onward against a genuine pre-v4 shape).
   db1.exec(`
+    DROP TABLE shortcuts;
     DROP TABLE matter_people;
     DROP INDEX idx_matters_client_matter;
     ALTER TABLE matters DROP COLUMN matter_number;
@@ -199,15 +201,27 @@ test('memory-layer migration: matter_people table, unique per-matter names, casc
 test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
-  // fake a db from just before this migration: drop the new table and roll
-  // user_version back by one (positional — no hardcoded version numbers)
+  // fake a db from just before this migration: drop the tables added by the
+  // last two migrations (matter_people, then phase-3's shortcuts) and roll
+  // user_version back by two (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
-  db1.exec('DROP TABLE matter_people');
-  db1.pragma(`user_version = ${v - 1}`);
+  db1.exec('DROP TABLE shortcuts; DROP TABLE matter_people;');
+  db1.pragma(`user_version = ${v - 2}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name='matter_people'").get());
+  assert.ok(db2.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='shortcuts'").get());
   db2.close();
   cleanup();
+});
+
+test('phase-3 migration: shortcuts table with case-insensitive unique abbrev', () => {
+  const db = openDb(':memory:');
+  const cols = db.prepare('PRAGMA table_info(shortcuts)').all().map((c) => c.name);
+  assert.deepEqual(cols, ['id', 'abbrev', 'phrase', 'created_at']);
+  db.prepare("INSERT INTO shortcuts (abbrev, phrase) VALUES ('IA', 'Interconnect Agreement')").run();
+  assert.throws(() => db.prepare("INSERT INTO shortcuts (abbrev, phrase) VALUES ('ia', 'dup')").run(), /UNIQUE/);
+  db.close();
 });

@@ -4,6 +4,7 @@ import { repoRoot } from './config.js';
 import { cmsRouter } from './routes/cms.js';
 import { clientsRouter } from './routes/clients.js';
 import { mattersRouter } from './routes/matters.js';
+import { shortcutsRouter } from './routes/shortcuts.js';
 import { taskCodesRouter } from './routes/taskcodes.js';
 import { settingsRouter } from './routes/settings.js';
 import { entriesRouter, finalizeDayRouter } from './routes/entries.js';
@@ -29,6 +30,7 @@ export function createApp(deps) {
   app.use('/api/cms', cmsRouter(deps));
   app.use('/api/clients', clientsRouter(deps));
   app.use('/api/matters', mattersRouter(deps));
+  app.use('/api/shortcuts', shortcutsRouter(deps));
   app.use('/api/task-codes', taskCodesRouter(deps));
   app.use('/api/settings', settingsRouter(deps));
   app.use('/api/entries', entriesRouter(deps));

@@ -152,6 +152,19 @@ const MIGRATIONS = [
     UNIQUE(matter_id, name)
   );
   `,
+  // Phase 3 (spec §6): user-defined text-expansion shortcuts — a deterministic
+  // abbreviation → phrase dictionary, distinct from the derived phrasebook.
+  // abbrev is case-insensitively unique ("ia" and "IA" are the same shortcut).
+  // Expansion itself runs in the browser (public/js/lib/expand.js); this is
+  // just the store, built IN-FLOW via select-text → "save as shortcut".
+  `
+  CREATE TABLE shortcuts (
+    id         INTEGER PRIMARY KEY,
+    abbrev     TEXT NOT NULL COLLATE NOCASE UNIQUE CHECK (length(abbrev) > 0),
+    phrase     TEXT NOT NULL CHECK (length(phrase) > 0),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
 ];
 
 const SEED_SETTINGS = {

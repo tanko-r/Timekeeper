@@ -24,6 +24,7 @@ export function backupRouter({ db, config, clock }) {
       clients: db.prepare('SELECT * FROM clients ORDER BY id').all(),
       matters: db.prepare('SELECT * FROM matters ORDER BY id').all(),
       matter_people: db.prepare('SELECT * FROM matter_people ORDER BY matter_id, id').all(),
+      shortcuts: db.prepare('SELECT * FROM shortcuts ORDER BY id').all(),
       task_codes: db.prepare('SELECT * FROM task_codes ORDER BY sort_order, id').all(),
       entries: db.prepare('SELECT * FROM entries ORDER BY id').all().map((e) => ({
         ...e,

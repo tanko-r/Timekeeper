@@ -18,6 +18,7 @@ test('backup: sqlite download, json dump without secrets, list', async () => {
     assert.equal(json.status, 200);
     assert.equal(json.body.matters.length, 1);
     assert.ok(Array.isArray(json.body.matter_people), 'dump must include matter_people');
+    assert.ok(Array.isArray(json.body.shortcuts), 'dump must include shortcuts');
     assert.ok(Array.isArray(json.body.clients));
     assert.ok(Array.isArray(json.body.entries));
     assert.ok(Array.isArray(json.body.task_codes));
