@@ -32,6 +32,21 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   });
   const setGrouping = (v) => { localStorage.setItem('tk:timerGrouping', v); setGroupingState(v); };
 
+  // Active timer tab within by-group/by-client modes (Intapp-style client
+  // tabs, replacing the old stacked collapsible sections). Persisted per
+  // grouping mode; re-read from localStorage whenever the mode changes.
+  // Render-time validation against the current tab list (see `effectiveTab`
+  // below) is what actually implements the "fall back to All" rule — this
+  // effect just keeps `activeTab` itself in sync with the right mode's key.
+  const [activeTab, setActiveTabState] = useState(() => localStorage.getItem('tk:timerTab:group') || 'all');
+  useEffect(() => {
+    setActiveTabState(localStorage.getItem(`tk:timerTab:${grouping}`) || 'all');
+  }, [grouping]);
+  const setActiveTab = (key) => {
+    localStorage.setItem(`tk:timerTab:${grouping}`, key);
+    setActiveTabState(key);
+  };
+
   // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
   const [focusId, setFocusId] = useState(null);
 
@@ -326,10 +341,34 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ];
   }
 
-  // ordered list of cards actually on screen (collapse-aware); the roving
-  // tabindex + arrow keys walk this list. Task 9 filters it further.
-  const visible = sections.flatMap((sec) =>
-    (byGroupMode && sec.group && sec.group.collapsed) ? [] : sec.list);
+  // ---------- tabs (by-group / by-client modes only; flat keeps one grid) ----------
+  // Note: timer_groups.collapsed (still returned by /api/timer-groups, still
+  // patchable) is deliberately NOT consulted anywhere below — the old
+  // collapse-to-hide sections UI is gone, replaced by tabs. Left alone in the
+  // API/schema in case anything else still relies on it.
+  const tabsEnabled = byGroupMode || grouping === 'client';
+  const tabList = !tabsEnabled ? [] : [
+    { key: 'all', label: 'All', count: shown.length, group: null },
+    ...sections
+      .filter((sec) => !(norm && sec.list.length === 0)) // filtering hides empty tabs, same as the old empty-section hiding
+      .filter((sec) => !(byGroupMode && !sec.group && sec.list.length === 0 && hasGroups)) // hide empty "Ungrouped" tab
+      .map((sec) => ({
+        key: sec.key, group: sec.group, count: sec.list.length,
+        label: sec.label ?? 'Ungrouped', unnamedClient: sec.unnamedClient,
+      })),
+  ];
+  // Falls back to "All" whenever the persisted/stale tab key isn't in the
+  // current tab list — covers a deleted group, a client filtered to zero
+  // matches, or simply never having a stored tab for this mode.
+  const effectiveTab = tabList.some((t) => t.key === activeTab) ? activeTab : 'all';
+  const activeSection = tabsEnabled && effectiveTab !== 'all'
+    ? sections.find((sec) => sec.key === effectiveTab) : null;
+  const renderedSections = activeSection ? [activeSection] : sections;
+
+  // ordered list of cards actually on screen: the active tab's cards only,
+  // or every section's cards under "All" (or in flat mode, which has no
+  // tabs). The roving tabindex + arrow keys walk this list.
+  const visible = renderedSections.flatMap((sec) => sec.list);
   const tabbableId = visible.some((t) => t.id === focusId) ? focusId : (visible[0] && visible[0].id);
 
   const focusCard = (id) => {
@@ -453,15 +492,40 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         <${Icon} name="plus" size=${16} /> New timer
       </button>
     </div>
+    ${tabsEnabled ? html`
+      <div class="timer-tabs" role="tablist" aria-label=${byGroupMode ? 'Timer groups' : 'Clients'}>
+        ${tabList.map((tab) => html`
+          <span key=${tab.key} class="timer-tab-wrap">
+            <button class=${'timer-tab' + (effectiveTab === tab.key ? ' on' : '')}
+              role="tab" aria-selected=${effectiveTab === tab.key}
+              onClick=${() => setActiveTab(tab.key)}
+              onDragOver=${byGroupMode && tab.key !== 'all' ? (e) => e.preventDefault() : undefined}
+              onDrop=${byGroupMode && tab.key !== 'all' ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: tab.group ? tab.group.id : null })); } : undefined}>
+              <span class="timer-tab-label">${tab.label}</span>
+              ${tab.unnamedClient ? html`<span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
+              <span class="muted small timer-tab-count">${tab.count}</span>
+            </button>
+            ${byGroupMode && tab.group && effectiveTab === tab.key ? html`
+              <span class="tab-tools">
+                <button class="btn btn-ghost btn-sm" title="Rename group" onClick=${() => setGroupModal(tab.group)}>
+                  <${Icon} name="edit" size=${14} /></button>
+                <button class="btn btn-ghost btn-sm" title="Delete group (timers kept)"
+                  onClick=${() => guard(api.del(`/api/timer-groups/${tab.group.id}`).then(reload))}>
+                  <${Icon} name="trash" size=${14} /></button>
+              </span>` : null}
+          </span>`)}
+      </div>` : null}
     <div class="timer-board" tabIndex=${-1} onKeyDown=${onBoardKey}
       onFocus=${(e) => { if (e.target === e.currentTarget && tabbableId != null) focusCard(tabbableId); }}>
 
-    ${sections.map((sec) => {
+    ${renderedSections.map((sec) => {
       const { group, list } = sec;
       if (norm && list.length === 0) return null; // filtering hides empty sections
       if (byGroupMode && !group && list.length === 0 && hasGroups) return null;
-      const collapsed = byGroupMode && group && group.collapsed;
-      const showHead = byGroupMode ? (group || hasGroups) : grouping === 'client';
+      // Only the "All" view shows a plain heading (name + count, no
+      // rename/delete tools — those live on the active tab above, not per
+      // section). A single active-tab section renders just its grid.
+      const showHead = tabsEnabled ? effectiveTab === 'all' : grouping === 'client';
       return html`
         <div key=${sec.key} class="timer-section"
           onDragOver=${byGroupMode ? (e) => e.preventDefault() : undefined}
@@ -469,19 +533,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
           ${showHead ? html`
             <div class="group-head">
               ${group ? html`
-                <button class="btn btn-ghost btn-sm" title=${collapsed ? 'Expand' : 'Collapse'}
-                  onClick=${() => guard(api.patch(`/api/timer-groups/${group.id}`, { collapsed: collapsed ? 0 : 1 }).then(reload))}>
-                  <${Icon} name=${collapsed ? 'chevronRight' : 'chevronDown'} size=${16} />
-                </button>
                 <span class="group-name">${group.name}</span>
-                <span class="muted small">${list.length}</span>
-                <span class="group-tools">
-                  <button class="btn btn-ghost btn-sm" title="Rename group" onClick=${() => setGroupModal(group)}>
-                    <${Icon} name="edit" size=${14} /></button>
-                  <button class="btn btn-ghost btn-sm" title="Delete group (timers kept)"
-                    onClick=${() => guard(api.del(`/api/timer-groups/${group.id}`).then(reload))}>
-                    <${Icon} name="trash" size=${14} /></button>
-                </span>` : sec.label != null ? html`
+                <span class="muted small">${list.length}</span>` : sec.label != null ? html`
                 <span class="group-name">${sec.label}</span>
                 ${sec.unnamedClient ? html`
                   <span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
@@ -489,20 +542,19 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                 <span class="group-name muted">Ungrouped</span>
                 <span class="muted small">${list.length}</span>`}
             </div>` : null}
-          ${collapsed ? null : html`
-            <div class="timer-grid">
-              ${list.map((t) => html`
-                <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
-                  canDrag=${byGroupMode}
-                  tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
-                  roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
-                  onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
-                  onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
-                  onMenu=${(x, y) => setMenu({ x, y, timer: t })}
-                  onDragStart=${() => { dragId.current = t.id; }}
-                  onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
-              ${byGroupMode && list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
-            </div>`}
+          <div class="timer-grid">
+            ${list.map((t) => html`
+              <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                canDrag=${byGroupMode}
+                tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
+                roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
+                onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
+                onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
+                onMenu=${(x, y) => setMenu({ x, y, timer: t })}
+                onDragStart=${() => { dragId.current = t.id; }}
+                onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
+            ${byGroupMode && list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
+          </div>
         </div>`;
     })}
     ${timers.length === 0 ? html`
