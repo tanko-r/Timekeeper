@@ -261,7 +261,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // stopPropagation keeps these away from the app-level shortcuts (n/t/g/…).
   function onBoardKey(e) {
     const tag = (e.target.tagName || '').toLowerCase();
-    if (['input', 'textarea', 'select'].includes(tag)) return; // in-card clock editing etc.
+    // in-card clock editing etc.; buttons keep native Enter/Space activation
+    if (['input', 'textarea', 'select', 'button'].includes(tag)) return;
     const list = visible;
     if (list.length === 0) return;
     const idx = Math.max(0, list.findIndex((t) => t.id === focusId));
@@ -435,16 +436,16 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
           onInput=${(e) => setClockText(e.target.value)}
           onBlur=${commitClock}
           onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
-        <button class="timer-clock mono" title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
+        <button class="timer-clock mono" tabIndex=${-1} title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
           onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
           ${fmtTenths(secs, roundMode)}
         </button>`}
       ${timer.running
-        ? html`<button class="btn btn-primary btn-sm" title="Stop & file time" onClick=${onStop}>
+        ? html`<button class="btn btn-primary btn-sm" tabIndex=${-1} title="Stop & file time" onClick=${onStop}>
             <${Icon} name="stop" size=${15} /></button>`
-        : html`<button class="btn btn-sm" title="Start" onClick=${onStart}>
+        : html`<button class="btn btn-sm" tabIndex=${-1} title="Start" onClick=${onStart}>
             <${Icon} name="play" size=${15} /></button>`}
-      <button class="btn btn-ghost btn-sm timer-more" title="Timer menu"
+      <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1} title="Timer menu"
         onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(r.left, r.bottom + 2); }}>
         <${Icon} name="more" size=${15} />
       </button>
