@@ -75,10 +75,18 @@ function ToastHost() {
 // ---------- keyboard help ----------
 
 function KeyboardHelp({ onClose }) {
+  // Raw backdrop div (not the shared Modal — kbd-help styling is custom), so
+  // Escape handling has to be added by hand here.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose]);
+
   const rows = [
     ['n', 'New time entry'],
     ['t', 'Start / stop the last-used timer'],
-    ['/', 'Jump to search'],
+    ['/', 'Search — timers on the dashboard, everything elsewhere'],
     ['g then d / c / s / e', 'Go to Dashboard / Calendar / Stats / Export'],
     ['[ and ]', 'Previous / next day (day view)'],
     ['Ctrl+Enter', 'Save and close the entry editor'],
@@ -87,7 +95,6 @@ function KeyboardHelp({ onClose }) {
     ['Tab / click', 'Focus the timer grid'],
     ['← → ↑ ↓', 'Move between timer cards'],
     ['Enter or Space', 'Start–stop the focused timer'],
-    ['type letters/digits', 'Filter the grid in place — any printable key (Esc clears)'],
     ['Alt+↑ / Alt+↓', 'Nudge the focused timer ±0.1h (+Shift: ±0.2h)'],
     ['Shift+Enter', 'Edit the focused timer'],
     ['Ctrl+Enter (grid)', 'Open the focused timer’s entry'],
@@ -183,8 +190,12 @@ function App() {
         openEditor({ template: {} });
       } else if (e.key === '/') {
         e.preventDefault();
-        nav('#/search');
-        setTimeout(() => document.querySelector('[data-search-q]')?.focus(), 80);
+        if (route.path === 'dashboard') {
+          window.dispatchEvent(new CustomEvent('tk:timer-search'));
+        } else {
+          nav('#/search');
+          setTimeout(() => document.querySelector('[data-search-q]')?.focus(), 80);
+        }
       } else if (e.key === 't') {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:toggle-last-timer'));

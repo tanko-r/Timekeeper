@@ -225,11 +225,8 @@ table.tk tr.client-row td {
 .timer-card.worked { border-left: 3px solid var(--status-good); padding-left: 4px; }
 .timer-card.worked.running { border-left-color: var(--accent); }
 
-.grid-filter {
-  display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
-  border: 1px solid var(--accent); border-radius: 999px; padding: 1px 4px 1px 10px;
-  font-size: 12.5px; background: var(--accent-soft);
-}
+.timer-search-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.timer-search { width: 180px; padding: 3px 8px; font-size: 12.5px; }
 .clock-input {
   width: 48px; font-size: 14px; font-weight: 700; padding: 1px 4px; text-align: center; flex: none;
 }

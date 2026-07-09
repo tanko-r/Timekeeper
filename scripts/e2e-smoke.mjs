@@ -393,25 +393,70 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await waitFor('.stop-chips');
   await page.keyboard.press('Escape');             // dismiss — the draft is already filed
   await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+
+  // A4: geometry-aware arrows. The grid is multi-column, so a flat ±1 index
+  // (the old behavior) would send ArrowDown sideways instead of to the row
+  // below. Force a wrap onto a second row (flat view, several cards), then
+  // confirm ArrowRight walks DOM order and ArrowDown lands below.
+  for (const name of ['Acme filing', 'Acme calls', 'Acme review']) {
+    await clickText('button', 'New timer');
+    await type('.modal input[placeholder="e.g. Acme — research"]', name);
+    await page.click('.modal .cmpicker input');
+    await sleep(250);
+    await clickText('.cmpicker-item .name', 'Acme');
+    await clickText('.modal button', 'Create');
+    await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+  }
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+
+  await clickText('.seg button', 'Flat');
+  await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
+    && document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+
+  // ArrowRight: next card in DOM order (row 1 has multiple columns)
+  await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => {
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    return document.activeElement === cards[1];
+  }, { timeout: 4000 });
+
+  // ArrowDown from the top-left card: must land on a card in the row below,
+  // not on cards[1] (which a flat index+1 would incorrectly pick).
+  await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
+  const topBefore = await page.evaluate(() => document.activeElement.getBoundingClientRect().top);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction((prevTop) => {
+    const el = document.activeElement;
+    return el && el.classList.contains('timer-card') && el.getBoundingClientRect().top > prevTop + 4;
+  }, { timeout: 4000 }, topBefore);
+
+  await clickText('.seg button', 'By group'); // restore for later steps
 });
 
-await step('type-to-filter narrows the grid in place; Esc restores', async () => {
-  await page.evaluate(() => {
-    [...document.querySelectorAll('.timer-card')]
-      .find((c) => c.textContent.includes('Acme research')).focus();
-  });
+await step('/ opens the timer search bar; narrows in place; Esc restores', async () => {
+  // dashboard route, body focus (not a card, not a form field) — `/` must
+  // open the search bar rather than jumping to the Search view.
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  await page.keyboard.press('/');
+  await waitFor('.timer-search');
+  await page.waitForFunction(() =>
+    document.activeElement === document.querySelector('.timer-search'), { timeout: 4000 });
+
   await page.keyboard.type('meridian', { delay: 20 });
-  await waitFor('.grid-filter');
   await page.waitForFunction(() => {
     const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
     return names.length === 1 && names[0] === 'Harbor drafting'; // matched via CLIENT name
   }, { timeout: 4000 });
+  const narrowedCount = await page.$eval('.timer-search-wrap .muted', (el) => el.textContent);
+  if (narrowedCount !== '1/5') throw new Error(`match count wrong: ${narrowedCount}`);
 
   // zero matches must not trap the keyboard: over-type past any match, then
-  // Backspace back down to a matching query — all without touching the mouse
+  // Backspace back down to a matching query — all via native input editing
   await page.keyboard.type('zzz', { delay: 20 });
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length === 0
-    && document.querySelector('.grid-filter'), { timeout: 4000 });
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length === 0, { timeout: 4000 });
+  const zeroCount = await page.$eval('.timer-search-wrap .muted', (el) => el.textContent);
+  if (zeroCount !== '0/5') throw new Error(`match count wrong: ${zeroCount}`);
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Backspace');
@@ -420,9 +465,11 @@ await step('type-to-filter narrows the grid in place; Esc restores', async () =>
     return names.length === 1 && names[0] === 'Harbor drafting';
   }, { timeout: 4000 });
 
-  await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.grid-filter')
-    && document.querySelectorAll('.timer-card').length >= 2, { timeout: 4000 });
+  await page.keyboard.press('Escape'); // bar closes, filter clears, focus lands on a card
+  await page.waitForFunction(() => !document.querySelector('.timer-search')
+    && document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+  await page.waitForFunction(() =>
+    document.activeElement && document.activeElement.classList.contains('timer-card'), { timeout: 4000 });
 });
 
 await step('calendar renders month grid with data', async () => {

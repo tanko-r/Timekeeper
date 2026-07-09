@@ -35,10 +35,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
   const [focusId, setFocusId] = useState(null);
 
-  // Type-to-filter (spec §4): live, in-place, distinct from the `/` global
-  // search. Plain string state — no input element; the focused card (or the
-  // board) receives the keystrokes.
+  // Grid search bar: `/` on the dashboard (or the toolbar button) opens an
+  // explicit search input; typing narrows the grid in place (still just a
+  // plain string — `gridFilter` — shared with the filtering internals).
   const [gridFilter, setGridFilter] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef(null);
 
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
@@ -120,6 +122,24 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     window.addEventListener('tk:toggle-last-timer', onToggle);
     return () => window.removeEventListener('tk:toggle-last-timer', onToggle);
   }, [timers, start, stop]);
+
+  // `/` (dashboard route) opens the search bar.
+  useEffect(() => {
+    const onSearch = () => setSearchOpen(true);
+    window.addEventListener('tk:timer-search', onSearch);
+    return () => window.removeEventListener('tk:timer-search', onSearch);
+  }, []);
+
+  // Focus the search input whenever it opens. This has to be an effect keyed
+  // on `searchOpen` rather than a same-tick requestAnimationFrame after
+  // setSearchOpen(true): a bare rAF scheduled inside the event handler can
+  // fire one frame *before* React commits the re-render (confirmed —
+  // searchInputRef.current is still null on that first frame), so focus
+  // silently no-ops. An effect is guaranteed to run only after the DOM for
+  // its triggering render has committed, so the ref is always live here.
+  useEffect(() => {
+    if (searchOpen) searchInputRef.current?.focus();
+  }, [searchOpen]);
 
   // ---------- ordering ----------
 
@@ -225,12 +245,34 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // hook-safe: runs before the early return, touches only the DOM
   useEffect(() => {
     if (!gridFilter) return;
-    const cards = [...document.querySelectorAll('.timer-card')];
     const active = document.activeElement;
+    // the search input owns focus while the user is typing into it — don't
+    // yank focus away from it on every keystroke.
+    if (active && active.classList && active.classList.contains('timer-search')) return;
+    const cards = [...document.querySelectorAll('.timer-card')];
     if (active && cards.includes(active)) return;
     if (cards[0]) { setFocusId(Number(cards[0].dataset.timerId)); cards[0].focus(); }
     else document.querySelector('.timer-board')?.focus();
   }, [gridFilter]);
+
+  // hook-safe (see above): if the focused card vanishes from the board —
+  // filtered out, its group collapsed, or deleted — and focus dropped along
+  // with it (fell to <body>, or a now-gone timer card), reclaim it onto
+  // whatever card is now tabbable. DOM-driven (not the `visible` list, which
+  // isn't computed yet at this point in the render) so it stays safe to
+  // declare above the early `if (!timers) return null;`.
+  useEffect(() => {
+    if (focusId == null) return;
+    const stillThere = document.querySelector(`.timer-board .timer-card[data-timer-id="${focusId}"]`);
+    if (stillThere) return;
+    const active = document.activeElement;
+    const wasCard = !!(active && active.classList && active.classList.contains('timer-card'));
+    const fellToBody = !active || active === document.body;
+    if (!wasCard && !fellToBody) return;
+    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+    const next = cards.find((c) => c.tabIndex === 0) || cards[0];
+    if (next) { setFocusId(Number(next.dataset.timerId)); next.focus(); }
+  });
 
   if (!timers) return null;
   const idleAfter = (settings.idleNudgeHours ?? 3) * 3600;
@@ -277,25 +319,31 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     });
   };
 
+  function onSearchKeyDown(e) {
+    e.stopPropagation(); // keep app-level shortcuts / StopChips out of the search box
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      setGridFilter('');
+      setSearchOpen(false);
+      if (tabbableId != null) focusCard(tabbableId);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (tabbableId != null) focusCard(tabbableId);
+    }
+  }
+
   // Keys for the focused card. Every command is a NON-PRINTABLE chord —
-  // printable characters are reserved for type-to-filter (spec §4).
+  // filtering now lives in the explicit `/` search bar, not the grid itself.
   // stopPropagation keeps these away from the app-level shortcuts (n/t/g/…).
   function onBoardKey(e) {
     const tag = (e.target.tagName || '').toLowerCase();
-    // in-card clock editing etc.; buttons keep native Enter/Space activation
-    if (['input', 'textarea', 'select', 'button'].includes(tag)) return;
+    // in-card clock editing etc. always bail out; a <button> only bails for
+    // its own native Enter/Space activation — arrows and Alt-nudge must
+    // still drive the grid even when DOM focus sits on an inner button (e.g.
+    // after a mouse click), otherwise the keyboard goes dead until Tab.
+    if (['input', 'textarea', 'select'].includes(tag)) return;
+    if (tag === 'button' && (e.key === 'Enter' || e.key === ' ')) return;
     const done = () => { e.preventDefault(); e.stopPropagation(); };
-
-    // Filter keys run BEFORE the empty-list guard: when the query matches
-    // zero cards the filter must stay keyboard-editable (Backspace/Esc),
-    // otherwise the only way out would be clicking the pill's ✕.
-    if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      setGridFilter((f) => f + e.key); // printable keys build the filter (space = start/stop)
-      return done();
-    }
-    if (e.key === 'Backspace') { setGridFilter((f) => f.slice(0, -1)); return done(); }
-    if (e.key === 'Escape' && gridFilter) { setGridFilter(''); return done(); }
-    // Escape with no filter falls through (StopChips etc. listen on document)
 
     const list = visible;
     if (list.length === 0) return;
@@ -307,8 +355,37 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       guard(clockDelta(cur, step));
       return done();
     }
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { focusCard(list[Math.min(idx + 1, list.length - 1)].id); return done(); }
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { focusCard(list[Math.max(idx - 1, 0)].id); return done(); }
+
+    if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      // Geometry-aware: DOM order for Left/Right (can't desync from what's
+      // actually on screen); rendered position for Up/Down, since the grid
+      // is multi-column and a flat ±1 index walks the wrong axis.
+      const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+      const curEl = document.querySelector(`.timer-board .timer-card[data-timer-id="${cur.id}"]`);
+      if (cards.length === 0 || !curEl) return done();
+      const curIdx = cards.indexOf(curEl);
+
+      if (e.key === 'ArrowRight') { focusCard(Number(cards[Math.min(curIdx + 1, cards.length - 1)].dataset.timerId)); return done(); }
+      if (e.key === 'ArrowLeft') { focusCard(Number(cards[Math.max(curIdx - 1, 0)].dataset.timerId)); return done(); }
+
+      const rect = curEl.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const candidates = cards
+        .filter((el) => el !== curEl)
+        .map((el) => ({ el, r: el.getBoundingClientRect() }))
+        .filter(({ r }) => (e.key === 'ArrowDown' ? r.top > rect.top + 4 : r.top < rect.top - 4));
+      if (candidates.length === 0) return done(); // no row in that direction — keep focus
+      candidates.sort((a, b) => {
+        const rowDeltaDiff = Math.abs(a.r.top - rect.top) - Math.abs(b.r.top - rect.top);
+        if (rowDeltaDiff !== 0) return rowDeltaDiff;
+        const dxA = Math.abs((a.r.left + a.r.width / 2) - cx);
+        const dxB = Math.abs((b.r.left + b.r.width / 2) - cx);
+        return dxA - dxB;
+      });
+      focusCard(Number(candidates[0].el.dataset.timerId));
+      return done();
+    }
+
     if (e.key === 'Enter' && e.shiftKey) { setEditing(cur); return done(); }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       // quick-note: today's entry if linked, else a fresh entry on this matter
@@ -330,14 +407,19 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
           <button key=${v} class=${grouping === v ? 'on' : ''} title=${`Show timers: ${label.toLowerCase()}`}
             onClick=${() => setGrouping(v)}>${label}</button>`)}
       </div>
-      ${gridFilter ? html`
-        <span class="grid-filter" title="Type-to-filter — Esc clears">
-          <${Icon} name="search" size=${13} />
-          <span class="mono">${gridFilter}</span>
-          <span class="muted small">${shown.length}/${timers.length}</span>
-          <button class="btn btn-ghost btn-sm" title="Clear filter" onClick=${() => setGridFilter('')}>✕</button>
-        </span>` : null}
       <div class="spacer" style=${{ flex: 1 }}></div>
+      <button class="btn btn-sm" title="Search timers ( / )"
+        onClick=${() => setSearchOpen((v) => !v)}>
+        <${Icon} name="search" size=${16} />
+      </button>
+      ${(searchOpen || gridFilter) ? html`
+        <span class="timer-search-wrap">
+          <input ref=${searchInputRef} type="search" class="timer-search" placeholder="Filter timers…"
+            value=${gridFilter}
+            onInput=${(e) => setGridFilter(e.target.value)}
+            onKeyDown=${onSearchKeyDown} />
+          ${gridFilter ? html`<span class="muted small">${shown.length}/${timers.length}</span>` : null}
+        </span>` : null}
       <button class="btn btn-sm" title="Sort by CM name within groups" onClick=${() => guard(sortAZ())}>
         <${Icon} name="sortAZ" size=${16} /> A–Z
       </button>
@@ -351,7 +433,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         <${Icon} name="plus" size=${16} /> New timer
       </button>
     </div>
-    <div class="timer-board" tabIndex=${-1} onKeyDown=${onBoardKey}>
+    <div class="timer-board" tabIndex=${-1} onKeyDown=${onBoardKey}
+      onFocus=${(e) => { if (e.target === e.currentTarget && tabbableId != null) focusCard(tabbableId); }}>
 
     ${sections.map((sec) => {
       const { group, list } = sec;
@@ -470,7 +553,6 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
       <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
         ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
       </span>
-      ${timer.linked_entry_id ? html`<span class="timer-flag" title="Linked to today’s entry"><${Icon} name="check" size=${12} /></span>` : null}
       ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
       ${editingClock ? html`
         <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
