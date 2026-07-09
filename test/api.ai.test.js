@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { startTestServer } from './helpers.js';
 import { setSetting, getSetting } from '../server/db.js';
-import { containsTimeAmounts } from '../server/lib/timeAmounts.js';
 
 // Stub Ollama server; records the last /api/chat request body.
 function startStubOllama(chatBody) {
@@ -50,20 +49,9 @@ const GOOD_CHAT = JSON.stringify({
   ],
 });
 
-test('containsTimeAmounts: flags parenthetical/worded amounts, spares plain prose (incl. years)', () => {
-  // reject: these must be flagged (suggested narratives may not carry them)
-  assert.equal(containsTimeAmounts('Reviewed lease (0.5); drafted amendment (1.2).'), true);
-  assert.equal(containsTimeAmounts('Analyzed development agreement (0.2); draft revised agreement (0.5).'), true);
-  assert.equal(containsTimeAmounts('Billed 2 hours for the review.'), true);
-  assert.equal(containsTimeAmounts('Spent 1.5 hrs drafting the motion.'), true);
-  assert.equal(containsTimeAmounts('Worked 3h on the escrow instructions.'), true);
-  // accept: plain prose, including a bare year or unrelated numbers, must NOT be flagged
-  assert.equal(containsTimeAmounts('Reviewed and revised lease legal description; correspondence with counsel.'), false);
-  assert.equal(containsTimeAmounts('Negotiated the 2026 lease renewal with the county.'), false);
-  assert.equal(containsTimeAmounts('Reviewed Section 8 housing regulations with opposing counsel.'), false);
-  assert.equal(containsTimeAmounts(''), false);
-  assert.equal(containsTimeAmounts(null), false);
-});
+// containsTimeAmounts accept/reject cases (incl. citation subsections and
+// years) live in test/timeAmounts.test.js, which runs one fixture table
+// against BOTH the server helper and its browser mirror.
 
 test('ai status reports reachability and local models', async () => {
   const stub = await startStubOllama(GOOD_CHAT);

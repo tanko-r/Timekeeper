@@ -3,13 +3,19 @@
 // refined) BEFORE a timer stops has no real duration to describe yet. This
 // guard flags text that looks like it's carrying a billed amount — either a
 // task-billing parenthetical ("(0.5)") or a spelled-out amount ("2 hours",
-// "1.5 hrs", "3h") — so callers can reject/skip it.
+// "1.5 hrs", "0.3 h") — so callers can reject/skip it.
 //
-// Deliberately narrow: a bare number (a year, a room/section number, a
-// docket entry) must NOT trip this. See test/api.ai.test.js for accept/
-// reject cases, including the "2026 lease" guard case.
-const PAREN_AMOUNT = /\(\s*\d+(?:\.\d+)?\s*\)/;
-const WORDED_AMOUNT = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?|h)\b/i;
+// Deliberately narrow — this is an attorney billing app, so citation
+// subsections like "12(b)(6)", "1542(3)", or "Rule 56(c)(2)" are everyday
+// narrative text and must NOT trip this. Every real task-billing
+// parenthetical here is a DECIMAL ("(0.5)", "(1.2)"), so the parenthetical
+// pattern requires one; the bare "h" suffix likewise requires a decimal
+// ("0.3 h" yes, "8h x 10w" no) while "hours"/"hrs" also match integers
+// ("2 hours" is unambiguously a duration). Shared fixture table in
+// test/timeAmounts.test.js runs against BOTH this file and the client
+// mirror (public/js/lib/timeamounts.js) — keep the logic identical.
+const PAREN_AMOUNT = /\(\s*\d+\.\d+\s*\)/;
+const WORDED_AMOUNT = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?)\b|\b\d+\.\d+\s*h\b/i;
 
 export function containsTimeAmounts(text) {
   const s = String(text ?? '');
