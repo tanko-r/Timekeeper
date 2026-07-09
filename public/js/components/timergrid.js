@@ -35,6 +35,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
   const [focusId, setFocusId] = useState(null);
 
+  // Type-to-filter (spec §4): live, in-place, distinct from the `/` global
+  // search. Plain string state — no input element; the focused card (or the
+  // board) receives the keystrokes.
+  const [gridFilter, setGridFilter] = useState('');
+
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
     setTimers(t);
@@ -217,15 +222,31 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
   // ---------- render ----------
 
+  // hook-safe: runs before the early return, touches only the DOM
+  useEffect(() => {
+    if (!gridFilter) return;
+    const cards = [...document.querySelectorAll('.timer-card')];
+    const active = document.activeElement;
+    if (active && cards.includes(active)) return;
+    if (cards[0]) { setFocusId(Number(cards[0].dataset.timerId)); cards[0].focus(); }
+    else document.querySelector('.timer-board')?.focus();
+  }, [gridFilter]);
+
   if (!timers) return null;
   const idleAfter = (settings.idleNudgeHours ?? 3) * 3600;
   const hasGroups = groups.length > 0;
   const byGroupMode = grouping === 'group';
 
+  const norm = gridFilter.trim().toLowerCase();
+  const matchesFilter = (t) => !norm
+    || [t.name, t.cm_short_name, t.client_name, t.client_number, t.cm_number]
+      .some((v) => String(v || '').toLowerCase().includes(norm));
+  const shown = norm ? timers.filter(matchesFilter) : timers;
+
   let sections; // [{ key, group, label, list }] — group is non-null only in by-group mode
   if (grouping === 'client') {
     const byClient = new Map();
-    for (const t of timers) {
+    for (const t of shown) {
       const key = t.client_id ?? 'none';
       if (!byClient.has(key)) {
         byClient.set(key, { key: `client-${key}`, group: null, label: clientLabel(t) || 'No client', list: [] });
@@ -235,11 +256,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     sections = [...byClient.values()].sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
   } else if (grouping === 'flat') {
-    sections = [{ key: 'flat', group: null, label: null, list: timers }];
+    sections = [{ key: 'flat', group: null, label: null, list: shown }];
   } else {
     sections = [
-      ...groups.map((g) => ({ key: `group-${g.id}`, group: g, label: g.name, list: timers.filter((t) => t.group_id === g.id) })),
-      { key: 'ungrouped', group: null, label: null, list: timers.filter((t) => t.group_id == null) },
+      ...groups.map((g) => ({ key: `group-${g.id}`, group: g, label: g.name, list: shown.filter((t) => t.group_id === g.id) })),
+      { key: 'ungrouped', group: null, label: null, list: shown.filter((t) => t.group_id == null) },
     ];
   }
 
@@ -269,6 +290,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     const cur = list[idx];
     const done = () => { e.preventDefault(); e.stopPropagation(); };
 
+    if (e.key.length === 1 && e.key !== ' ' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      setGridFilter((f) => f + e.key); // printable keys build the filter (space = start/stop)
+      return done();
+    }
+    if (e.key === 'Backspace') { setGridFilter((f) => f.slice(0, -1)); return done(); }
+    if (e.key === 'Escape' && gridFilter) { setGridFilter(''); return done(); }
+    // Escape with no filter falls through (StopChips etc. listen on document)
+
     if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       const step = (e.shiftKey ? 0.2 : 0.1) * (e.key === 'ArrowUp' ? 1 : -1);
       guard(clockDelta(cur, step));
@@ -297,6 +326,13 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
           <button key=${v} class=${grouping === v ? 'on' : ''} title=${`Show timers: ${label.toLowerCase()}`}
             onClick=${() => setGrouping(v)}>${label}</button>`)}
       </div>
+      ${gridFilter ? html`
+        <span class="grid-filter" title="Type-to-filter — Esc clears">
+          <${Icon} name="search" size=${13} />
+          <span class="mono">${gridFilter}</span>
+          <span class="muted small">${shown.length}/${timers.length}</span>
+          <button class="btn btn-ghost btn-sm" title="Clear filter" onClick=${() => setGridFilter('')}>✕</button>
+        </span>` : null}
       <div class="spacer" style=${{ flex: 1 }}></div>
       <button class="btn btn-sm" title="Sort by CM name within groups" onClick=${() => guard(sortAZ())}>
         <${Icon} name="sortAZ" size=${16} /> A–Z
@@ -315,6 +351,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
     ${sections.map((sec) => {
       const { group, list } = sec;
+      if (norm && list.length === 0) return null; // filtering hides empty sections
       if (byGroupMode && !group && list.length === 0 && hasGroups) return null;
       const collapsed = byGroupMode && group && group.collapsed;
       const showHead = byGroupMode ? (group || hasGroups) : grouping === 'client';

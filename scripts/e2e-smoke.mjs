@@ -395,6 +395,22 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
 });
 
+await step('type-to-filter narrows the grid in place; Esc restores', async () => {
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.timer-card')]
+      .find((c) => c.textContent.includes('Acme research')).focus();
+  });
+  await page.keyboard.type('meridian', { delay: 20 });
+  await waitFor('.grid-filter');
+  await page.waitForFunction(() => {
+    const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
+    return names.length === 1 && names[0] === 'Harbor drafting'; // matched via CLIENT name
+  }, { timeout: 4000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.grid-filter')
+    && document.querySelectorAll('.timer-card').length >= 2, { timeout: 4000 });
+});
+
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');

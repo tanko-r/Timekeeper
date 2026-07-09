@@ -84,6 +84,13 @@ function KeyboardHelp({ onClose }) {
     ['Ctrl+Enter', 'Save and close the entry editor'],
     ['Esc', 'Close dialogs'],
     ['?', 'This help'],
+    ['Tab / click', 'Focus the timer grid'],
+    ['← → ↑ ↓', 'Move between timer cards'],
+    ['Enter or Space', 'Start–stop the focused timer'],
+    ['a–z, 0–9', 'Filter the grid in place (Esc clears)'],
+    ['Alt+↑ / Alt+↓', 'Nudge the focused timer ±0.1h (+Shift: ±0.2h)'],
+    ['Shift+Enter', 'Edit the focused timer'],
+    ['Ctrl+Enter (grid)', 'Open the focused timer’s entry'],
   ];
   return html`
     <div class="modal-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
