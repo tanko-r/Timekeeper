@@ -1,6 +1,7 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, createPortal, fmtHours, emitToast, Icon } from '/js/ui.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
+import { formatSuggestion } from '/js/lib/narrativesync.js';
 
 // Non-blocking stop affordance (spec §6): replaces the per-stop StopPopup
 // modal. The stop has ALREADY filed the draft entry when this appears — it
@@ -24,8 +25,8 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
     if (!offerChips) { setChips([]); return undefined; }
     let alive = true;
     api.get(`/api/matters/${timer.cm_id}/suggestions`)
-      .then((r) => { if (alive) setChips(dedupe(clean([timer.suggested_narrative, ...r.phrases.map((p) => p.text)]))); })
-      .catch(() => { if (alive) setChips(dedupe(clean([timer.suggested_narrative]))); });
+      .then((r) => { if (alive) setChips(dedupe(clean([timer.suggested_narrative, ...r.phrases.map((p) => p.text)]).map(formatSuggestion))); })
+      .catch(() => { if (alive) setChips(dedupe(clean([timer.suggested_narrative]).map(formatSuggestion))); });
     return () => { alive = false; };
   }, []); // eslint-disable-line
 

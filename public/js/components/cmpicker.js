@@ -120,6 +120,7 @@ function EditCmModal({ existing, onCreated, onClose }) {
   // offer it here when this row actually carries a client_id to PATCH.
   const hasClient = existing.client_id != null;
   const [clientName, setClientName] = useState(existing.client_name || '');
+  const [taskBilling, setTaskBilling] = useState(existing.client_task_billing ?? 1);
   const [billable, setBillable] = useState(!!existing.billable);
   const [favorite, setFavorite] = useState(!!existing.favorite);
   const [error, setError] = useState(null);
@@ -135,6 +136,9 @@ function EditCmModal({ existing, onCreated, onClose }) {
       const trimmedClientName = clientName.trim();
       if (hasClient && trimmedClientName !== (existing.client_name || '')) {
         await api.patch(`/api/clients/${existing.client_id}`, { name: trimmedClientName });
+      }
+      if (hasClient && (taskBilling ? 1 : 0) !== (existing.client_task_billing ?? 1)) {
+        await api.patch(`/api/clients/${existing.client_id}`, { task_billing: taskBilling ? 1 : 0 });
       }
       emitToast('CM updated');
       onCreated(cm);
@@ -155,6 +159,11 @@ function EditCmModal({ existing, onCreated, onClose }) {
             <input type="text" value=${clientName} placeholder="e.g. Meridian"
               onInput=${(e) => setClientName(e.target.value)} />
           <//>` : null}
+        ${hasClient ? html`
+          <label class="checkbox-row">
+            <input type="checkbox" checked=${taskBilling} onChange=${(e) => setTaskBilling(e.target.checked)} />
+            Task billing — narratives get per-task allocations like "(0.5)"
+          </label>` : null}
         <${Field} label="Short name" hint="Your own shorthand — searchable">
           <input type="text" value=${name} onInput=${(e) => setName(e.target.value)} />
         <//>

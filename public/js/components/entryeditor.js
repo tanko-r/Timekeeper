@@ -1,16 +1,38 @@
 import { api, streamNdjson } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useDebounced,
-  Modal, Field, fmtHours, todayStr, emitToast, previewNarrative,
+  Modal, Field, fmtHours, todayStr, emitToast, clientLabel, ContextMenu,
   ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
+import { containsTimeAmounts } from '/js/lib/timeamounts.js';
+import { generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion } from '/js/lib/narrativesync.js';
 
 const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
 const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
+const isSubstantiveTask = (t) => !!((t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0);
+
+// Same suggestion pipeline StopChips uses (spec: chips must match exactly —
+// fully-formed via formatSuggestion, deduped case-insensitively, max 3, never
+// carrying a baked-in time amount).
+function suggestChips(phrases) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of phrases || []) {
+    if (containsTimeAmounts(raw)) continue;
+    const text = formatSuggestion(raw);
+    if (!text) continue;
+    const k = text.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(text);
+    if (out.length === 3) break;
+  }
+  return out;
+}
 
 // Entry editor. The entry TOTAL is primary (typed or from a timer); task lines
 // divide it. spec: {id} | {template:{date?,cm?}} | {copyFrom:id}
@@ -21,11 +43,11 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [gate, setGate] = useState(null);
   const [audit, setAudit] = useState(null);
   const [taskCodes, setTaskCodes] = useState([]);
+  const [codeOpenIdx, setCodeOpenIdx] = useState(null); // task-line index with its "+ code" select open
   const [ai, setAi] = useState(null);
-  const [brief, setBrief] = useState('');
-  const [aiSplit, setAiSplit] = useState(true);
+  const [aiMenu, setAiMenu] = useState(null); // {x, y} — the AI dropdown's position
+  const [aiSplit, setAiSplit] = useState(false); // "split into tasks" — off by default (spec 3.3)
   const [aiBusy, setAiBusy] = useState(false);
-  const [aiDone, setAiDone] = useState(false); // a narrate run finished → show rewrite controls
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
@@ -72,6 +94,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             cm: spec.template.cm || null,
             billable: spec.template.cm ? !!spec.template.cm.billable : true,
             narrative: '',
+            auto: true, // once ≥2 substantive lines exist, default to the live-AUTO box
             total: 0,
             tasks: [blankLine()],
             status: 'draft',
@@ -91,6 +114,10 @@ export function EntryEditor({ spec, settings, onClose }) {
       cm: e.cm,
       billable: !!e.billable,
       narrative: e.narrative,
+      // Mirrors today's semantics exactly: an entry that WAS auto (≥2
+      // substantive lines) opens with the live-AUTO box on; a plain entry
+      // opens manual. From there the toggle is the user's to flip.
+      auto: !!e.narrative_auto,
       total: e.total_override != null ? e.total_override : e.total,
       tasks: e.tasks.length ? e.tasks.map((t) => ({ ...t })) : [blankLine()],
       status: e.status,
@@ -98,14 +125,41 @@ export function EntryEditor({ spec, settings, onClose }) {
     };
   }
 
-  const substantive = (local?.tasks || []).filter(
-    (t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0);
-  const isAuto = substantive.length >= 2;
-  const autoNarrative = isAuto ? previewNarrative(local.tasks, increment) : null;
+  const substantiveIdx = (local?.tasks || []).map((t, i) => i).filter((i) => isSubstantiveTask(local.tasks[i]));
+  const substantiveLines = substantiveIdx.map((i) => local.tasks[i]);
+  const taskBilling = local?.cm?.client_task_billing ?? 1;
+  const generated = generateNarrative(substantiveLines, { increment, taskBilling });
+  const autoAvailable = generated !== null;
+  const autoOn = autoAvailable && !!local?.auto;
+  const autoText = autoOn ? generated : null;
   const sum = tenth((local?.tasks || []).reduce((a, t) => a + (Number(t.duration) || 0), 0));
   const total = tenth(local?.total || 0);
   const remaining = tenth(total - sum);
   const finalized = local?.status === 'finalized';
+  const seedText = autoOn ? (autoText || '') : (local?.narrative || '').trim();
+  const suggestionChips = !autoOn && !String(local?.narrative || '').trim() ? suggestChips(phrases) : [];
+
+  // Edit-through parser for the AUTO box (spec: two-way binding). Parse OK →
+  // fold fragments/durations back into local.tasks in a single batch (only
+  // the segments that actually changed, to dodge a feedback loop with the
+  // controlled textarea re-deriving its value from the same tasks). Parse
+  // null (a structural break — deleted paren, merged/added segment) → the
+  // box detaches into a plain manual narrative, keeping exactly what's typed.
+  function applyAutoEdit(text) {
+    const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling });
+    if (!parsed) { update({ narrative: text, auto: false }); return; }
+    let changed = false;
+    const tasks = local.tasks.slice();
+    substantiveIdx.forEach((origIdx, k) => {
+      const seg = parsed.segments[k];
+      const cur = tasks[origIdx];
+      const patch = {};
+      if (seg.fragment !== cur.fragment) patch.fragment = seg.fragment;
+      if (seg.duration != null && tenth(seg.duration) !== tenth(cur.duration)) patch.duration = tenth(seg.duration);
+      if (Object.keys(patch).length) { tasks[origIdx] = { ...cur, ...patch }; changed = true; }
+    });
+    if (changed) update({ tasks });
+  }
 
   // ---------- persistence (single-flight chain) ----------
 
@@ -138,7 +192,12 @@ export function EntryEditor({ spec, settings, onClose }) {
       setLocal((cur) => {
         if (!cur) return cur;
         const next = { ...cur };
-        if (saved.narrative_auto) next.narrative = saved.narrative;
+        // Only pull the server's (re-synced) narrative back in when the
+        // CLIENT is itself in AUTO mode — saved.narrative_auto is purely
+        // "≥2 substantive lines", oblivious to the user's manual-mode
+        // choice, so trusting it here would silently clobber a just-typed
+        // manual narrative on the very next autosave.
+        if (cur.auto && saved.narrative_auto) next.narrative = saved.narrative;
         return next;
       });
       return saved;
@@ -177,17 +236,28 @@ export function EntryEditor({ spec, settings, onClose }) {
   }, [queueSave]);
 
   const updateLine = useCallback((i, patch) => {
+    setLocal((cur) => ({ ...cur, tasks: cur.tasks.map((t, j) => (j === i ? { ...t, ...patch } : t)) }));
+    setGate(null);
+    queueSave();
+  }, [queueSave]);
+
+  // Hours auto-rebalance (spec 4c): the edited line takes the new value; the
+  // delta is absorbed by the OTHER lines (reverse order, floored at one
+  // increment) so the lines' sum holds steady — a single line degenerates to
+  // a plain take-the-new-value (and still writes through to the total, same
+  // as before).
+  const updateLineDuration = useCallback((i, value) => {
     setLocal((cur) => {
-      const tasks = cur.tasks.map((t, j) => (j === i ? { ...t, ...patch } : t));
+      const durations = cur.tasks.map((t) => Number(t.duration) || 0);
+      const rebalanced = rebalanceHours(durations, i, value, { total: cur.total, increment });
+      const tasks = cur.tasks.map((t, j) => ({ ...t, duration: rebalanced[j] }));
       const next = { ...cur, tasks };
-      if (tasks.length === 1 && patch.duration !== undefined) {
-        next.total = tenth(tasks[0].duration); // single line writes through
-      }
+      if (tasks.length === 1) next.total = tenth(tasks[0].duration);
       return next;
     });
     setGate(null);
     queueSave();
-  }, [queueSave]);
+  }, [queueSave, increment]);
 
   const addLine = useCallback(() => {
     setLocal((cur) => {
@@ -273,13 +343,15 @@ export function EntryEditor({ spec, settings, onClose }) {
     setAudit(await api.get(`/api/entries/${e.id}/audit`));
   }
 
-  async function aiExpand() {
+  // Structured task split — the only remaining /ai/expand caller, gated
+  // behind the "split into tasks" checkbox (default unchecked).
+  async function aiExpand(seed) {
     setAiBusy(true);
     try {
       const r = await api.post('/api/ai/expand', {
-        brief, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
+        brief: seed, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
       });
-      if (aiSplit && r.tasks.length > 0) {
+      if (r.tasks.length > 0) {
         const even = splitTenthsEvenly(total || sum, r.tasks.length);
         update({
           tasks: r.tasks.map((t, i) => ({
@@ -290,7 +362,6 @@ export function EntryEditor({ spec, settings, onClose }) {
       } else {
         update({ narrative: r.narrative });
       }
-      setBrief('');
     } catch (e) {
       emitToast(e.body?.message || e.message, { error: true });
     } finally {
@@ -299,14 +370,13 @@ export function EntryEditor({ spec, settings, onClose }) {
   }
 
   // Streamed narration (spec §6): tokens land in the narrative field live,
-  // replacing the blocking spinner. The "split into tasks" path keeps the
-  // JSON /ai/expand endpoint — a structured split can't stream. Each chunk
-  // goes through update(), so the normal debounced autosave applies.
-  // Starting a new run aborts any in-flight one (regenerate mid-stream), and
-  // unmount aborts too — otherwise the server never sees a disconnect and
-  // Ollama keeps generating for up to 180s. A superseded run's callbacks and
-  // state writes are ignored so it can't fight the run that replaced it.
-  async function aiNarrate(mode) {
+  // replacing the blocking spinner. Each chunk goes through update(), so the
+  // normal debounced autosave applies. Starting a new run aborts any
+  // in-flight one (regenerate mid-stream), and unmount aborts too —
+  // otherwise the server never sees a disconnect and Ollama keeps generating
+  // for up to 180s. A superseded run's callbacks and state writes are
+  // ignored so it can't fight the run that replaced it.
+  async function aiNarrate(mode, seed) {
     aiAbortRef.current?.abort();
     const ctrl = new AbortController();
     aiAbortRef.current = ctrl;
@@ -314,20 +384,50 @@ export function EntryEditor({ spec, settings, onClose }) {
     try {
       let acc = '';
       await streamNdjson('/api/ai/narrate', {
-        mode, brief, narrative: localRef.current?.narrative || '',
+        mode, brief: seed, narrative: seed,
       }, (m) => {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.error) throw new Error(m.message || m.error);
         if (m.token) { acc += m.token; update({ narrative: acc }); }
         if (m.done) update({ narrative: m.narrative });
       }, ctrl.signal);
-      setAiDone(true);
     } catch (e) {
       if (e.name !== 'AbortError') emitToast(e.body?.message || e.message, { error: true });
     } finally {
       if (aiAbortRef.current === ctrl) setAiBusy(false);
     }
   }
+
+  // Dropdown entry point (spec 3.3): Expand/Shorten/Rewrite all seed from the
+  // CURRENT narrative text. AI output is always manual text, so using it
+  // while AUTO is on first flips AUTO off and takes the generated text as
+  // the seed — one click, no dead end.
+  function runAi(kind) {
+    const seed = seedText;
+    if (!seed) return;
+    if (autoOn) update({ auto: false, narrative: seed });
+    if (kind === 'expand') { if (aiSplit) aiExpand(seed); else aiNarrate('draft', seed); return; }
+    if (kind === 'shorten') { aiNarrate('shorter', seed); return; }
+    aiNarrate('regenerate', seed);
+  }
+
+  const aiMenuItems = [
+    {
+      label: aiSplit ? 'Expand → split into tasks' : 'Expand',
+      icon: 'sparkles', disabled: !seedText || aiBusy,
+      onClick: () => runAi('expand'),
+    },
+    { label: 'Shorten', disabled: !seedText || aiBusy, onClick: () => runAi('shorten') },
+    { label: 'Rewrite', disabled: !seedText || aiBusy, onClick: () => runAi('rewrite') },
+    { hr: true },
+    {
+      custom: () => html`
+        <label class="checkbox-row small" style=${{ padding: '2px 10px 6px' }}>
+          <input type="checkbox" checked=${aiSplit} onChange=${(e) => setAiSplit(e.target.checked)} />
+          split into tasks
+        </label>`,
+    },
+  ];
 
   // ---------- render ----------
 
@@ -348,6 +448,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         <${Field} label="Client/Matter">
           <${CmPicker} value=${local.cm} autoFocus=${!local.cm}
             onChange=${(cm) => update({ cm, billable: !!cm.billable })} />
+          ${local.cm ? html`<span class="cm-client-label muted small">${clientLabel(local.cm)}</span>` : null}
         <//>
         <${Field} label="Total hours">
           <input type="number" min="0" step=${increment} class="mono total-input"
@@ -377,19 +478,28 @@ export function EntryEditor({ spec, settings, onClose }) {
       <div class="task-lines">
         ${local.tasks.map((t, i) => html`
           <div key=${i} class="task-line">
-            <select value=${t.task_code} disabled=${finalized}
-              onChange=${(e) => updateLine(i, { task_code: e.target.value })}>
-              <option value="">(task)</option>
-              ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
-              ${t.task_code && !taskCodes.some((c) => c.name === t.task_code)
-                ? html`<option value=${t.task_code}>${t.task_code}</option>` : null}
-            </select>
+            <div class="task-code-cell">
+              ${t.task_code ? html`
+                <span class="task-code-chip">
+                  <span>${t.task_code}</span>
+                  <button type="button" title="Remove task code" disabled=${finalized}
+                    onClick=${() => updateLine(i, { task_code: '' })}><${Icon} name="x" size=${10} /></button>
+                </span>` : (codeOpenIdx === i ? html`
+                <select autoFocus disabled=${finalized}
+                  onChange=${(e) => { updateLine(i, { task_code: e.target.value }); setCodeOpenIdx(null); }}
+                  onBlur=${() => setCodeOpenIdx(null)}>
+                  <option value="">(task)</option>
+                  ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
+                </select>` : html`
+                <button type="button" class="task-code-add" disabled=${finalized}
+                  onClick=${() => setCodeOpenIdx(i)}>+ code</button>`)}
+            </div>
             <input type="number" min="0" step=${increment} value=${t.duration || ''}
               placeholder="0.0" disabled=${finalized} class="mono"
-              onInput=${(e) => updateLine(i, { duration: e.target.value })} />
+              onInput=${(e) => updateLineDuration(i, e.target.value)} />
             <${GhostInput} value=${t.fragment} suggestions=${phrases} disabled=${finalized}
               expand=${expand} onSelectionChange=${onFieldSelect}
-              placeholder=${isAuto ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
+              placeholder=${autoAvailable ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
               onChange=${(v) => updateLine(i, { fragment: v })} />
             <div class="row" style=${{ flexWrap: 'nowrap', gap: '2px' }}>
               <div class="reorder">
@@ -413,42 +523,34 @@ export function EntryEditor({ spec, settings, onClose }) {
       </div>
 
       <div class="section-title"><h3 style=${{ margin: 0 }}>Narrative</h3>
-        ${isAuto ? html`<span class="muted small">generated from task lines — edit the fragments above (ghost suggestions appear in the fragment fields)</span>` : null}
+        ${autoAvailable ? html`
+          <button type="button" class=${'auto-toggle-chip' + (autoOn ? ' on' : '')} disabled=${finalized}
+            title=${autoOn ? 'Turn off — edit narrative freely' : 'Turn on — regenerate from task lines'}
+            onClick=${() => update({ auto: !local.auto })}>AUTO</button>` : null}
         <div class="spacer" style=${{ flex: 1 }}></div>
+        ${ai && ai.enabled && ai.reachable && !finalized ? html`
+          <button type="button" class="btn btn-sm" title="AI narrative assist" disabled=${!seedText || aiBusy}
+            onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); setAiMenu({ x: r.left, y: r.bottom + 4 }); }}>
+            <${Icon} name="sparkles" size=${14} /> ${aiBusy ? 'Working…' : 'AI'}
+          </button>` : null}
         <${SaveShortcutBar} selection=${selText} />
       </div>
+      ${!finalized && suggestionChips.length > 0 ? html`
+        <div class="editor-suggest-chips">
+          ${suggestionChips.map((t) => html`
+            <button key=${t} type="button" title=${t} onClick=${() => update({ narrative: t })}>${t}</button>`)}
+        </div>` : null}
       <div class="narrative-preview">
-        ${isAuto ? html`
+        ${autoOn ? html`
           <span class="auto-badge">AUTO</span>
-          <textarea readOnly value=${autoNarrative || ''}></textarea>` : html`
+          <textarea value=${autoText || ''} disabled=${finalized}
+            onInput=${(e) => applyAutoEdit(e.target.value)}></textarea>` : html`
           <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
             suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onChange=${(v) => update({ narrative: v })} />`}
       </div>
-
-      ${ai && ai.enabled && ai.reachable && !finalized ? html`
-        <div class="ai-row">
-          <input type="text" value=${brief}
-            placeholder=${`Brief description — ${ai.model} ${aiSplit ? 'expands it…' : 'writes it live…'}`}
-            onInput=${(e) => setBrief(e.target.value)}
-            onKeyDown=${(e) => { if (e.key === 'Enter' && brief && !aiBusy) (aiSplit ? aiExpand() : aiNarrate('draft')); }} />
-          <label class="checkbox-row small">
-            <input type="checkbox" checked=${aiSplit} onChange=${(e) => setAiSplit(e.target.checked)} />
-            split into tasks
-          </label>
-          <button class="btn" disabled=${!brief || aiBusy} onClick=${() => (aiSplit ? aiExpand() : aiNarrate('draft'))}>
-            <${Icon} name="sparkles" size=${16} />
-            ${aiBusy ? (aiSplit ? 'Thinking…' : 'Streaming…') : (aiSplit ? 'Expand' : 'Write')}
-          </button>
-          ${aiDone && !aiBusy && !isAuto ? html`
-            <span class="row" style=${{ gap: '4px', flexWrap: 'nowrap' }}>
-              <button class="btn btn-sm" title="Try a different phrasing" disabled=${!brief}
-                onClick=${() => aiNarrate('regenerate')}>↻ Regenerate</button>
-              <button class="btn btn-sm" onClick=${() => aiNarrate('shorter')}>Shorter</button>
-              <button class="btn btn-sm" onClick=${() => aiNarrate('longer')}>Longer</button>
-            </span>` : null}
-        </div>` : null}
+      ${aiMenu ? html`<${ContextMenu} x=${aiMenu.x} y=${aiMenu.y} items=${aiMenuItems} onClose=${() => setAiMenu(null)} />` : null}
 
       <${ValidationList} findings=${validation} />
 

@@ -223,6 +223,13 @@ test('parseNarrativeEdit: tolerates a missing trailing period', () => {
   });
 });
 
+test('parseNarrativeEdit: a fragment\'s own inner parens can still fool the last-paren anchor into a bad split', () => {
+  // "Foo (bar (1.2))" has no trailing "(<fragment>) (<num>)" shape for a
+  // single segment — the last paren closes the OUTER group, not a bare
+  // number — so this must fail closed (null), not silently misparse.
+  assert.equal(parseNarrativeEdit('Foo (bar (1.2))', 1, { taskBilling: true }), null);
+});
+
 test('parseNarrativeEdit: empty/blank text returns null', () => {
   assert.equal(parseNarrativeEdit('', 2, { taskBilling: true }), null);
   assert.equal(parseNarrativeEdit('   ', 2, { taskBilling: true }), null);

@@ -107,12 +107,18 @@ await step('entry: total + task line + narrative autosave, allocation chip', asy
     set.call(total, '1.2');
     total.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  // task code is hidden behind a "+ code" affordance by default (no <select>
+  // until it's clicked) — click it, choose a code, and it collapses to a chip
+  if (await page.$('.modal-wide .task-line select')) throw new Error('task-code <select> must be hidden by default');
+  await page.click('.modal-wide .task-code-add');
+  await waitFor('.modal-wide .task-line select');
   await page.evaluate(() => {
     const modal = document.querySelector('.modal-wide');
     const select = modal.querySelector('.task-line select');
     select.value = 'Review';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
+  await waitFor('.modal-wide .task-code-chip');
   await page.type('.modal-wide textarea', 'Reviewed lease agreement and drafted renewal-terms summary for client.');
   await page.waitForFunction(
     () => document.querySelector('.saving-dot')?.textContent.includes('Saved'),
@@ -315,6 +321,84 @@ await step('shortcuts: save-from-selection, inline expansion, settings list', as
   await page.waitForFunction(() => document.body.textContent.includes('Text-expansion shortcuts')
     && document.body.textContent.includes('Interconnect Agreement'), { timeout: 4000 });
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+});
+
+await step('AUTO narrative: two-way edit-through, structural-break detach, client label', async () => {
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'Acme');
+  await waitFor('.modal-wide .task-line');
+
+  // client label visible (Acme's client was deliberately left unnamed → renders as the 6-digit number)
+  await page.waitForFunction(() =>
+    document.querySelector('.modal-wide .cm-client-label')?.textContent.includes('100001'), { timeout: 4000 });
+
+  // fill line 1's fragment + hours (task code already covered by the earlier +code step)
+  await page.evaluate(() => {
+    const line1 = document.querySelector('.modal-wide .task-line');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const frag = line1.querySelector('input[type="text"]');
+    set.call(frag, 'review lease terms');
+    frag.dispatchEvent(new Event('input', { bubbles: true }));
+    const hours = line1.querySelector('input[type="number"]');
+    set.call(hours, '1.2');
+    hours.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  // second substantive line → AUTO becomes available (≥2 substantive lines)
+  await clickText('.modal-wide button', 'Add task line');
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
+  await page.evaluate(() => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
+    const frag = line2.querySelector('input[type="text"]');
+    set.call(frag, 'draft renewal email');
+    frag.dispatchEvent(new Event('input', { bubbles: true }));
+    const hours = line2.querySelector('input[type="number"]');
+    set.call(hours, '0.5');
+    hours.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+
+  // AUTO box appears, formatted per line (line 1's hours rebalanced down to
+  // 0.7 by the hours auto-rebalance: line2 grew from 0→0.5, and the two
+  // lines' sum holds steady at 1.2 — the sum before this edit)
+  await waitFor('.modal-wide .auto-badge');
+  await page.waitForFunction(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    return ta && ta.value === 'Review lease terms (0.7); draft renewal email (0.5).';
+  }, { timeout: 4000 });
+
+  // edit-through: rewrite the second fragment inside the AUTO box → task line 2 updates
+  await page.evaluate(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    set.call(ta, 'Review lease terms (0.7); send renewal email to landlord (0.5).');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => {
+    const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
+    return line2.querySelector('input[type="text"]').value === 'send renewal email to landlord';
+  }, { timeout: 4000 });
+
+  // structural break: delete a parenthetical → AUTO turns off, typed text stands as manual
+  const detachedText = 'Review lease terms 0.7; send renewal email to landlord (0.5).';
+  await page.evaluate((text) => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    set.call(ta, text);
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  }, detachedText);
+  await page.waitForFunction(() => !document.querySelector('.modal-wide .auto-badge'), { timeout: 4000 });
+  const manualText = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (manualText !== detachedText) {
+    throw new Error(`manual text did not survive the detach: "${manualText}"`);
+  }
+
+  await shot('auto-narrative-sync');
+  await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
+  await clickText('.modal-wide button', 'Delete');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
 await step('picker: client→matter create + fuzzy client-name search', async () => {

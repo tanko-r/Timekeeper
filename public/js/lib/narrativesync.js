@@ -90,6 +90,13 @@ export function parseNarrativeEdit(text, lineCount, { taskBilling = true } = {})
 // can't be absorbed just changes the effective total — no error, no
 // redistribution gymnastics. Internally works in integer multiples of the
 // increment to dodge float drift.
+//
+// `total` is accepted-but-inert: the rule only ever preserves whatever the
+// lines summed to BEFORE this edit (see the delta-absorption loop below), so
+// it never reads `total`. Callers naturally have the entry's current total in
+// hand though, so the param stays part of the contract for a future stricter
+// mode (e.g. clamping the rebalance to an explicit total) without a
+// signature change.
 export function rebalanceHours(durations, changedIndex, newValue, { total, increment = 0.1 } = {}) { // eslint-disable-line no-unused-vars
   const scale = 10 ** decimalsOf(increment);
   const toUnits = (x) => Math.round(Number(x || 0) * scale);
