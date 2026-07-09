@@ -175,6 +175,12 @@ table.tk tr.client-row td {
   background: var(--surface-2); font-size: 12.5px; padding: 5px 10px;
 }
 .client-name-cell { display: inline-flex; align-items: center; gap: 6px; }
+.client-name-add {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+  border: 1px dashed var(--accent); border-radius: 6px; background: none;
+  color: var(--accent-strong); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.client-name-add:hover { background: var(--accent-soft); }
 
 /* ---------- timers (compact, grouped) ---------- */
 .icon { vertical-align: -3px; flex: none; }

@@ -298,7 +298,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     for (const t of shown) {
       const key = t.client_id ?? 'none';
       if (!byClient.has(key)) {
-        byClient.set(key, { key: `client-${key}`, group: null, label: clientLabel(t) || 'No client', list: [] });
+        // A section labeled by the bare number (client_name blank, but a
+        // number exists) means nobody has named this client yet.
+        byClient.set(key, {
+          key: `client-${key}`, group: null, label: clientLabel(t) || 'No client',
+          unnamedClient: !t.client_name && !!t.client_number, list: [],
+        });
       }
       byClient.get(key).list.push(t);
     }
@@ -470,6 +475,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                     <${Icon} name="trash" size=${14} /></button>
                 </span>` : sec.label != null ? html`
                 <span class="group-name">${sec.label}</span>
+                ${sec.unnamedClient ? html`
+                  <span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
                 <span class="muted small">${list.length}</span>` : html`
                 <span class="group-name muted">Ungrouped</span>
                 <span class="muted small">${list.length}</span>`}

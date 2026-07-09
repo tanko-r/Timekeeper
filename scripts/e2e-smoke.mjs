@@ -306,9 +306,16 @@ await step('groups: create, assign via menu, collapse; A-Z present', async () =>
 
 await step('grouping selector: by client / flat / persists across reload', async () => {
   await clickText('.seg button', 'By client');
-  // Acme's client is unnamed → its section is labeled by the 6-digit number
+  // Acme's client is unnamed → its section is labeled by the 6-digit number,
+  // with a "· unnamed" hint alongside the group-name span (not inside it).
   await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
     .some((el) => el.textContent.trim() === '100001'), { timeout: 4000 });
+  const unnamedHint = await page.evaluate(() => {
+    const head = [...document.querySelectorAll('.group-head')]
+      .find((h) => h.querySelector('.group-name')?.textContent.trim() === '100001');
+    return head?.textContent.includes('unnamed');
+  });
+  if (!unnamedHint) throw new Error('by-client head missing the "unnamed" hint for an unnamed client');
   await clickText('.seg button', 'Flat');
   await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
     && document.querySelectorAll('.timer-card').length >= 1, { timeout: 4000 });
@@ -324,9 +331,11 @@ await step('grouping selector: by client / flat / persists across reload', async
 await step('client rename: inline on CMs view, reflected in by-client grouping', async () => {
   await page.goto(`${base}/#/cms`, { waitUntil: 'networkidle0' });
   await waitFor('.client-row');
+  // client is still unnamed → the affordance is the dashed "+ Name this
+  // client" button (B1), not a plain pencil.
   await page.evaluate(() => {
     const row = [...document.querySelectorAll('.client-row')].find((r) => r.textContent.includes('100001'));
-    row.querySelector('button[title="Name client"]').click();
+    row.querySelector('.client-name-add').click();
   });
   await type('.client-row input', 'Acme Holdings');
   await page.keyboard.press('Enter');
@@ -337,6 +346,48 @@ await step('client rename: inline on CMs view, reflected in by-client grouping',
   await clickText('.seg button', 'By client');
   await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
     .some((el) => el.textContent.trim() === 'Acme Holdings'), { timeout: 4000 });
+  await clickText('.seg button', 'By group'); // restore for later steps
+});
+
+await step('client name editable from the matter Edit modal, reflected in C&M row + by-client head', async () => {
+  await page.goto(`${base}/#/cms`, { waitUntil: 'networkidle0' });
+  await waitFor('.client-row');
+  // open the matter's Edit modal (not the client-row inline affordance)
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('table.tk tbody tr')];
+    const row = rows.find((r) => r.textContent.includes('Acme lease dispute'));
+    row.querySelector('button[title="Edit"]').click();
+  });
+  await page.waitForFunction(() => [...document.querySelectorAll('.modal .field-label')]
+    .some((el) => el.textContent.trim() === 'Client name'), { timeout: 4000 });
+  // pre-filled from existing.client_name, hinted with the client number
+  const { initial, hint } = await page.evaluate(() => {
+    const f = [...document.querySelectorAll('.modal .field')]
+      .find((x) => x.querySelector('.field-label')?.textContent.trim() === 'Client name');
+    return { initial: f.querySelector('input').value, hint: f.querySelector('.field-hint')?.textContent || '' };
+  });
+  if (initial !== 'Acme Holdings') throw new Error(`client-name field not pre-filled: ${initial}`);
+  if (!hint.includes('100001')) throw new Error(`client-name hint missing client number: ${hint}`);
+  await page.evaluate(() => {
+    const f = [...document.querySelectorAll('.modal .field')]
+      .find((x) => x.querySelector('.field-label')?.textContent.trim() === 'Client name');
+    const input = f.querySelector('input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(input, 'Acme Holdings LLC');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await clickText('.modal button', 'Save');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('.client-row')]
+    .some((r) => r.textContent.includes('Acme Holdings LLC')), { timeout: 4000 });
+
+  // by-client head picks up the rename after a reload (real /api/timers refetch)
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await clickText('.seg button', 'By client');
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-card');
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === 'Acme Holdings LLC'), { timeout: 4000 });
   await clickText('.seg button', 'By group'); // restore for later steps
 });
 

@@ -116,6 +116,10 @@ export function NewCmModal(props) {
 function EditCmModal({ existing, onCreated, onClose }) {
   const [num, setNum] = useState(existing.cm_number);
   const [name, setName] = useState(existing.short_name);
+  // Client name lives on the shared clients row, not the matter — only
+  // offer it here when this row actually carries a client_id to PATCH.
+  const hasClient = existing.client_id != null;
+  const [clientName, setClientName] = useState(existing.client_name || '');
   const [billable, setBillable] = useState(!!existing.billable);
   const [favorite, setFavorite] = useState(!!existing.favorite);
   const [error, setError] = useState(null);
@@ -128,6 +132,10 @@ function EditCmModal({ existing, onCreated, onClose }) {
     try {
       const body = { cm_number: num, short_name: name, billable: billable ? 1 : 0, favorite: favorite ? 1 : 0 };
       const cm = await api.patch(`/api/cms/${existing.id}`, body);
+      const trimmedClientName = clientName.trim();
+      if (hasClient && trimmedClientName !== (existing.client_name || '')) {
+        await api.patch(`/api/clients/${existing.client_id}`, { name: trimmedClientName });
+      }
       emitToast('CM updated');
       onCreated(cm);
     } catch (err) {
@@ -142,6 +150,11 @@ function EditCmModal({ existing, onCreated, onClose }) {
           <input type="text" value=${num} maxLength=${13}
             onInput=${(e) => setNum(e.target.value.replace(/[^\d-]/g, ''))} />
         <//>
+        ${hasClient ? html`
+          <${Field} label="Client name" hint=${`Shared by every matter under client ${existing.client_number}`}>
+            <input type="text" value=${clientName} placeholder="e.g. Meridian"
+              onInput=${(e) => setClientName(e.target.value)} />
+          <//>` : null}
         <${Field} label="Short name" hint="Your own shorthand — searchable">
           <input type="text" value=${name} onInput=${(e) => setName(e.target.value)} />
         <//>

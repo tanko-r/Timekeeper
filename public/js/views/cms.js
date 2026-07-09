@@ -84,7 +84,7 @@ export function CmsView({ refreshKey, bumpRefresh }) {
               <${React.Fragment} key=${g.client_id ?? g.matters[0].id}>
                 <tr class="client-row">
                   <td></td>
-                  <td class="mono">${g.client_number || '—'}</td>
+                  <td class="mono"><span class="muted small">Client</span> ${g.client_number || '—'}</td>
                   <td colSpan="5"><${ClientNameCell} group=${g} onSaved=${() => { reload(); bumpRefresh(); }} /></td>
                 </tr>
                 ${g.matters.map((cm) => html`
@@ -149,12 +149,19 @@ function ClientNameCell({ group, onSaved }) {
         onBlur=${save}
         onKeyDown=${(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }} />`;
   }
+  if (!group.client_id) {
+    return html`<span class="client-name-cell muted small">(no client)</span>`;
+  }
   return html`
     <span class="client-name-cell">
-      <strong>${clientLabel(group) || '(no client)'}</strong>
-      ${!group.client_name ? html`<span class="muted small">— unnamed</span>` : null}
-      <button class="btn btn-ghost btn-sm" title="Name client" disabled=${!group.client_id}
-        onClick=${() => { setText(group.client_name || ''); setEditing(true); }}>
-        <${Icon} name="edit" size=${14} /></button>
+      ${group.client_name ? html`
+        <strong>${group.client_name}</strong>
+        <button class="btn btn-ghost btn-sm" title="Edit client name"
+          onClick=${() => { setText(group.client_name || ''); setEditing(true); }}>
+          <${Icon} name="edit" size=${14} /></button>` : html`
+        <button type="button" class="client-name-add" title="Name this client"
+          onClick=${() => { setText(''); setEditing(true); }}>
+          + Name this client
+        </button>`}
     </span>`;
 }
