@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { getSetting, setSetting } from './db.js';
 import { todayLocal } from './lib/dates.js';
 import { applyRollovers } from './routes/timers.js';
+import { rebuildMatterPeople } from './routes/entries.js';
 
 const UNDO_WINDOW_DAYS = 7;
 
@@ -21,6 +22,19 @@ export function runJobs({ db, config, clock }) {
     } catch (e) {
       console.error('nightly backup failed:', e.message);
     }
+  }
+
+  // One-time (per upgrade) roster backfill: matter_people arrived with the
+  // memory-layer migration, but SQL migrations can't run the JS name
+  // extractor — so the first tick derives the roster from all existing
+  // entries. Re-read jobs_state at write time: the backup block above may
+  // have just updated it.
+  if (!state.peopleBackfillDone) {
+    const matterIds = db.prepare(
+      'SELECT DISTINCT cm_id FROM entries WHERE deleted_at IS NULL').all();
+    for (const { cm_id } of matterIds) rebuildMatterPeople(db, cm_id);
+    setSetting(db, 'jobs_state',
+      { ...(getSetting(db, 'jobs_state') || {}), peopleBackfillDone: true });
   }
 
   const purgeBefore = new Date(clock().getTime() - UNDO_WINDOW_DAYS * 86400_000).toISOString();

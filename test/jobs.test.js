@@ -75,3 +75,22 @@ test('expired sessions pruned', () => {
     assert.deepEqual(db.prepare('SELECT token_hash FROM sessions').all().map((r) => r.token_hash), ['live']);
   } finally { cleanup(); }
 });
+
+test('first jobs tick backfills matter_people from existing entries', () => {
+  const { db, config, cleanup } = setup();
+  try {
+    // rows written before the memory layer existed → no roster yet
+    db.prepare(`INSERT INTO entries (date, cm_id, narrative, billable, status, source)
+      VALUES ('2026-07-01', 1, 'Telephone conference with B. Novak regarding access road.', 1, 'draft', 'manual')`).run();
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM matter_people').get().c, 0);
+
+    runJobs({ db, config, clock: at('2026-07-06T08:00:00-07:00') });
+    assert.deepEqual(
+      db.prepare('SELECT matter_id, name, count, last_seen_at FROM matter_people').all(),
+      [{ matter_id: 1, name: 'B. Novak', count: 1, last_seen_at: '2026-07-01' }]);
+
+    // second tick is a no-op (flag set), not a duplicate or reset
+    runJobs({ db, config, clock: at('2026-07-06T09:00:00-07:00') });
+    assert.equal(db.prepare('SELECT COUNT(*) c FROM matter_people').get().c, 1);
+  } finally { cleanup(); }
+});
