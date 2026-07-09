@@ -82,6 +82,38 @@ test('picker: favorites first, then recent, then alpha; searches number and name
   assert.deepEqual(byName.map((c) => c.id), [apple.id]);
 }));
 
+test('picker: one unified fuzzy search over client and matter fields', () => withServer(async (t) => {
+  await t.fetchJson('POST', '/api/cms', { cm_number: '100004-000001', short_name: 'Harbor Lease' });
+  await t.fetchJson('POST', '/api/cms', { cm_number: '100004-000002', short_name: 'Summit Development' });
+  await t.fetchJson('POST', '/api/cms', { cm_number: '100001-000012', short_name: 'Acme lease' });
+  const client = (await t.fetchJson('GET', '/api/clients')).body.find((c) => c.client_number === '100004');
+  await t.fetchJson('PATCH', `/api/clients/${client.id}`, { name: 'Meridian' });
+
+  // "meri harbor" → client name + matter name, one result
+  const fuzzy = (await t.fetchJson('GET', '/api/cms/picker?q=meri%20harbor')).body;
+  assert.deepEqual(fuzzy.map((m) => m.short_name), ['Harbor Lease']);
+
+  // client name alone matches all of that client's matters
+  const byClient = (await t.fetchJson('GET', '/api/cms/picker?q=meridian')).body;
+  assert.equal(byClient.length, 2);
+
+  // 6-digit client number matches its matters
+  const byClientNum = (await t.fetchJson('GET', '/api/cms/picker?q=100004')).body;
+  assert.equal(byClientNum.length, 2);
+}));
+
+test('POST /api/cms client_name names a blank client but never overwrites', () => withServer(async (t) => {
+  const a = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '512001-000001', short_name: 'First', client_name: 'Brightwater',
+  })).body;
+  assert.equal(a.client_name, 'Brightwater');
+
+  const b = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '512001-000002', short_name: 'Second', client_name: 'WRONG',
+  })).body;
+  assert.equal(b.client_name, 'Brightwater'); // existing name kept
+}));
+
 test('cannot hard-delete a CM with entries; unreferenced CM deletes', () => withServer(async (t) => {
   const cm = (await t.fetchJson('POST', '/api/cms', { cm_number: '222222-000001', short_name: 'Used' })).body;
   t.db.prepare(

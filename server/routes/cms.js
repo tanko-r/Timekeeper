@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { validateCmNumber } from '../lib/validation.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
+import { rankMatters } from '../lib/matterSearch.js';
 
 const CM_COLS = `matters.id, matters.cm_number, matters.short_name, matters.billable,
   matters.status, matters.favorite, matters.last_used_at, matters.created_at, matters.updated_at,
@@ -22,16 +23,13 @@ export function cmsRouter({ db, clock }) {
 
   const getCm = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.id=?`);
 
+  // Fuzzy picker: load active matters (with their client fields) and rank in
+  // JS via the pure lib — single-user scale, so O(n) per keystroke is fine.
+  const pickerStmt = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.status='active'`);
+
   r.get('/picker', (req, res) => {
     const q = String(req.query.q || '').trim();
-    const like = `%${q}%`;
-    const rows = db.prepare(`
-      SELECT ${CM_COLS} ${CM_FROM}
-      WHERE matters.status='active' AND (? = '' OR matters.cm_number LIKE ? OR matters.short_name LIKE ? COLLATE NOCASE)
-      ORDER BY matters.favorite DESC, matters.last_used_at IS NULL, matters.last_used_at DESC, matters.short_name COLLATE NOCASE
-      LIMIT 25
-    `).all(q, like, like);
-    res.json(rows);
+    res.json(rankMatters(q, pickerStmt.all()));
   });
 
   r.get('/', (req, res) => {
@@ -46,13 +44,18 @@ export function cmsRouter({ db, clock }) {
   });
 
   r.post('/', (req, res) => {
-    const { cm_number, short_name = '', billable = 1, favorite = 0 } = req.body || {};
+    const { cm_number, short_name = '', billable = 1, favorite = 0, client_name } = req.body || {};
     if (!validateCmNumber(cm_number)) {
       return res.status(400).json({ error: 'CM number must match format 123456-123456.' });
     }
     try {
       const { clientNumber, matterNumber } = splitCmNumber(cm_number);
       const clientId = ensureClient(db, clientNumber, now());
+      if (client_name !== undefined && String(client_name).trim() !== '') {
+        // Name a still-blank client at creation time; never overwrite a real name.
+        db.prepare("UPDATE clients SET name=?, updated_at=? WHERE id=? AND name=''")
+          .run(String(client_name).trim(), now(), clientId);
+      }
       const info = db.prepare(
         'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, clientId, matterNumber, now(), now());
