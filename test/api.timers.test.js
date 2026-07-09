@@ -356,6 +356,27 @@ test('start pre-computes a suggested narrative from the phrasebook', () =>
     assert.equal(patched.suggested_narrative, null);
   }));
 
+test('start skips a top-ranked phrase carrying time amounts, suggests the next clean phrase', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    // A stored free-text narrative with baked-in parentheticals ranks as a
+    // phrasebook phrase just like any other — occurring twice outranks the
+    // single clean phrase below, so it would be phrases[0] if left unfiltered.
+    for (const date of ['2026-07-03', '2026-07-04']) {
+      await t.fetchJson('POST', '/api/entries', {
+        date, cm_id: cm.id,
+        narrative: 'Analyzed development agreement (0.5); drafted revised agreement (0.3).',
+      });
+    }
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-05', cm_id: cm.id,
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: 'revise lease legal description' }],
+    });
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].suggested_narrative, 'revise lease legal description');
+  }));
+
 test('start on a cold matter leaves the suggestion empty (and no LLM call when disabled)', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Cold', cm_id: cm.id })).body;

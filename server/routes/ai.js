@@ -3,6 +3,7 @@ import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
+import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
 // Brief description in → professional narrative + optional task split out.
@@ -47,7 +48,7 @@ function systemPrompt(codes, custom) {
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
 export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.`;
+  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.`;
   let user;
   if (mode === 'shorter') {
     user = `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`;
@@ -91,6 +92,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   const text = String((data.message && data.message.content) || '')
     .trim().replace(/^["']|["']$/g, '').slice(0, 300);
   if (!text || text.includes('{')) return; // refuse JSON-ish garbage
+  if (containsTimeAmounts(text)) return; // refuse invented durations — keep the phrasebook suggestion
   db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1').run(text, timerId);
 }
 

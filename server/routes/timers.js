@@ -10,6 +10,7 @@ import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { matterSuggestions } from './matters.js';
 import { refineSuggestedNarrative } from './ai.js';
+import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
 // Round-2 timer model: the clock accumulates for the whole day across
 // start/stops. Each stop syncs the day total into ONE linked draft entry.
@@ -281,10 +282,14 @@ export function timersRouter({ db, clock }) {
         .run(new Date(startMs).toISOString(), timer.id);
       // Pre-compute the likely narrative NOW so it's ready before stop (spec
       // §6): deterministic phrasebook top hit synchronously; the optional
-      // local-LLM pass refines it in the background and never blocks.
+      // local-LLM pass refines it in the background and never blocks. Skip
+      // any top-ranked phrase that carries a baked-in time amount (e.g. an
+      // old free-text narrative like "Drafted agreement (0.5)...") — time is
+      // unknown at start (often zero) and must never be invented.
       const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock()));
+      const cleanPhrase = sugg && sugg.phrases.find((p) => !containsTimeAmounts(p.text));
       db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=?')
-        .run(sugg && sugg.phrases[0] ? sugg.phrases[0].text : null, timer.id);
+        .run(cleanPhrase ? cleanPhrase.text : null, timer.id);
       refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});
     }
 

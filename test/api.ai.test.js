@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { startTestServer } from './helpers.js';
 import { setSetting, getSetting } from '../server/db.js';
+import { containsTimeAmounts } from '../server/lib/timeAmounts.js';
 
 // Stub Ollama server; records the last /api/chat request body.
 function startStubOllama(chatBody) {
@@ -47,6 +48,21 @@ const GOOD_CHAT = JSON.stringify({
     { task_code: 'Review', fragment: 'review lease agreement', share: 0.6 },
     { task_code: 'Draft', fragment: 'draft amendment re renewal terms', share: 0.4 },
   ],
+});
+
+test('containsTimeAmounts: flags parenthetical/worded amounts, spares plain prose (incl. years)', () => {
+  // reject: these must be flagged (suggested narratives may not carry them)
+  assert.equal(containsTimeAmounts('Reviewed lease (0.5); drafted amendment (1.2).'), true);
+  assert.equal(containsTimeAmounts('Analyzed development agreement (0.2); draft revised agreement (0.5).'), true);
+  assert.equal(containsTimeAmounts('Billed 2 hours for the review.'), true);
+  assert.equal(containsTimeAmounts('Spent 1.5 hrs drafting the motion.'), true);
+  assert.equal(containsTimeAmounts('Worked 3h on the escrow instructions.'), true);
+  // accept: plain prose, including a bare year or unrelated numbers, must NOT be flagged
+  assert.equal(containsTimeAmounts('Reviewed and revised lease legal description; correspondence with counsel.'), false);
+  assert.equal(containsTimeAmounts('Negotiated the 2026 lease renewal with the county.'), false);
+  assert.equal(containsTimeAmounts('Reviewed Section 8 housing regulations with opposing counsel.'), false);
+  assert.equal(containsTimeAmounts(''), false);
+  assert.equal(containsTimeAmounts(null), false);
 });
 
 test('ai status reports reachability and local models', async () => {
@@ -139,6 +155,38 @@ test('timer start refines the suggested narrative via the local model (async, no
       val = t.db.prepare('SELECT suggested_narrative FROM timers WHERE id=?').get(timer.id).suggested_narrative;
     }
     assert.equal(val, 'Reviewed and revised lease legal description; correspondence with counsel.');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('timer start refine REJECTS an LLM narrative carrying invented time amounts, keeping the phrasebook suggestion', async () => {
+  const stub = await startStubOllama(
+    'Analyzed and revised development agreement (0.5); drafted amendments regarding escrow (0.3).');
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const cm = (await t.fetchJson('POST', '/api/cms', { cm_number: '100001-000013', short_name: 'Acme dev' })).body;
+    // seed one prior entry so the phrasebook has a clean hit
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-06-01', cm_id: cm.id,
+      tasks: [{ task_code: 'Draft', duration: 0.5, fragment: 'draft development agreement' }],
+    });
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Dev', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`); // returns before the LLM does
+    const synced = t.db.prepare('SELECT suggested_narrative FROM timers WHERE id=?').get(timer.id).suggested_narrative;
+    assert.equal(synced, 'draft development agreement', 'synchronous phrasebook pick lands immediately');
+
+    // Give the fire-and-forget background refine ample time to hit the stub,
+    // parse a time-amount-laden reply, and reject it.
+    let sawChat = false;
+    for (let i = 0; i < 40 && !sawChat; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      sawChat = !!stub.state.lastChat;
+    }
+    assert.ok(sawChat, 'background refine did call the stub');
+    await new Promise((r) => setTimeout(r, 200)); // let the (already-resolved) UPDATE guard run
+    const after = t.db.prepare('SELECT suggested_narrative FROM timers WHERE id=?').get(timer.id).suggested_narrative;
+    assert.equal(after, 'draft development agreement',
+      'polluted LLM output must never overwrite the phrasebook suggestion');
   } finally { await t.close(); await stub.close(); }
 });
 
