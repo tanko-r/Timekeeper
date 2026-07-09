@@ -123,9 +123,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     return () => window.removeEventListener('tk:toggle-last-timer', onToggle);
   }, [timers, start, stop]);
 
-  // `/` (dashboard route) opens the search bar.
+  // `/` (dashboard route) opens the search bar — or, when it's already open
+  // and focus has wandered off (e.g. the user clicked a card without pressing
+  // Escape), refocuses the input directly. The direct focus matters:
+  // setSearchOpen(true) on an already-open bar is a state-unchanged no-op —
+  // no re-render, so the focus effect below never reruns.
   useEffect(() => {
-    const onSearch = () => setSearchOpen(true);
+    const onSearch = () => {
+      if (searchInputRef.current) searchInputRef.current.focus();
+      else setSearchOpen(true);
+    };
     window.addEventListener('tk:timer-search', onSearch);
     return () => window.removeEventListener('tk:timer-search', onSearch);
   }, []);
