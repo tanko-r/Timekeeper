@@ -137,6 +137,16 @@ await step('dashboard shows the entry and meter', async () => {
   await waitFor('.meter-bar');
 });
 
+await step('persistent today footer: live total + close-the-day button', async () => {
+  await waitFor('.today-footer');
+  await page.waitForFunction(
+    () => /\d+(\.\d+)?h/.test(document.querySelector('.today-footer .tf-total')?.textContent || ''),
+    { timeout: 4000 });
+  const hasCloseBtn = await page.evaluate(() =>
+    [...document.querySelectorAll('.today-footer button')].some((b) => b.textContent.includes('Close the day')));
+  if (!hasCloseBtn) throw new Error('today footer missing the "Close the day" button');
+});
+
 await step('create timer; a sub-2s stop reverts as if nothing happened', async () => {
   await page.click('.timer-new');
   await type('.modal input[placeholder="e.g. Acme — research"]', 'Acme research');

@@ -87,6 +87,7 @@ function KeyboardHelp({ onClose }) {
   const rows = [
     ['n', 'New time entry'],
     ['t', 'Start / stop the last-used timer'],
+    ['c', 'Close the day (dashboard)'],
     ['/', 'Search — timers on the dashboard, everything elsewhere'],
     ['g then d / c / s / e', 'Go to Dashboard / Calendar / Stats / Export'],
     ['[ and ]', 'Previous / next day (day view)'],
@@ -211,6 +212,9 @@ function App() {
         if (showHelp) return; // don't open the palette under the help overlay
         e.preventDefault();
         setQuickCapture(true);
+      } else if (e.key === 'c' && route.path === 'dashboard') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('tk:close-day'));
       } else if (e.key === '?') {
         setShowHelp(true);
       }

@@ -1,15 +1,24 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
+  html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
 import { EntryList } from '/js/components/entrylist.js';
+import { TodayFooter } from '/js/components/todayfooter.js';
 import { nav } from '/js/app.js';
 
 export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const { loading, data, error, reload } = useAsync(() => api.get('/api/dashboard'), [refreshKey]);
   const [warnGate, setWarnGate] = useState(null);
+  // Consumed by Task 6 (close-out flow); this task only opens it — nothing
+  // renders for it yet.
+  const [closeOut, setCloseOut] = useState(false);
+  useEffect(() => {
+    const onCloseDay = () => setCloseOut(true);
+    window.addEventListener('tk:close-day', onCloseDay);
+    return () => window.removeEventListener('tk:close-day', onCloseDay);
+  }, []);
 
   if (error) return html`<${ErrorBox} error=${error} />`;
   if (loading && !data) return html`<${Spinner} />`;
@@ -55,6 +64,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   }
 
   return html`
+    <div class="dashboard-view">
     <div class="page-head">
       <h1>${fmtDateLong(d.date)}</h1>
       <div class="spacer"></div>
@@ -102,5 +112,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         message=${warnGate.message}
         onConfirm=${() => finalizeToday(true)}
         onClose=${() => setWarnGate(null)} />` : null}
+    </div>
+
+    <${TodayFooter} today=${d.today} timers=${d.timers} onCloseDay=${() => setCloseOut(true)} />
   `;
 }
