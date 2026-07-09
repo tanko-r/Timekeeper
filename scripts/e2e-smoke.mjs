@@ -77,19 +77,20 @@ await step('app shell renders (dashboard, SVG icons)', async () => {
   await waitFor('.timer-new');
 });
 
-await step('create CM through picker inside the editor (portal modals)', async () => {
+await step('create client+matter through picker (client→matter path, prefilled)', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');
   await type('.modal .cmpicker input', '100001-000012');
   await clickText('.cmpicker-item .name', 'New client/matter');
-  await page.waitForFunction(() => document.querySelectorAll('.modal').length >= 2, { timeout: 4000 });
-  await page.evaluate(() => {
-    const modal = [...document.querySelectorAll('.modal')].pop();
-    const inputs = modal.querySelectorAll('input[type="text"]');
-    inputs[1].focus();
-  });
-  await page.keyboard.type('Acme lease dispute', { delay: 5 });
-  await clickText('.modal button', 'Create');
+  await waitFor('[data-nc-matter]');
+  // typed CM number pre-splits into client + matter numbers
+  const cpre = await page.$eval('[data-nc-client]', (el) => el.value);
+  if (cpre !== '100001') throw new Error(`client prefill wrong: ${cpre}`);
+  const mpre = await page.$eval('[data-nc-matter]', (el) => el.value);
+  if (mpre !== '000012') throw new Error(`matter prefill wrong: ${mpre}`);
+  // deliberately leave the client UNNAMED (blank names must render as the number)
+  await type('[data-nc-name]', 'Acme lease dispute');
+  await clickText('.modal button', 'Create matter');
   await sleep(400);
 });
 
@@ -184,6 +185,27 @@ await step('timer clock is editable in place', async () => {
   await page.waitForFunction(
     () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
     { timeout: 4000 });
+});
+
+await step('picker: client→matter create + fuzzy client-name search', async () => {
+  await clickText('button', 'New timer');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'New client/matter');
+  await waitFor('[data-nc-client]');
+  await type('[data-nc-client]', '100004');
+  await type('[data-nc-client-name]', 'Meridian'); // appears for new clients
+  await type('[data-nc-matter]', '000001');
+  await type('[data-nc-name]', 'Harbor Lease');
+  await clickText('.modal button', 'Create matter');
+  // back in the timer modal with the matter picked — reopen and fuzzy-search
+  await waitFor('.modal .cmpicker button[title="Change CM"]');
+  await page.click('.modal .cmpicker button[title="Change CM"]');
+  await type('.modal .cmpicker input', 'meri harbor');
+  await page.waitForFunction(() => [...document.querySelectorAll('.cmpicker-item')]
+    .some((el) => el.textContent.includes('Meridian') && el.textContent.includes('Harbor Lease')),
+  { timeout: 4000 });
+  await clickText('.modal button', 'Cancel'); // no timer created
 });
 
 await step('groups: create, assign via menu, collapse; A-Z present', async () => {

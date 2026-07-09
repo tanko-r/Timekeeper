@@ -56,6 +56,18 @@ export function fmtStamp(iso) {
   });
 }
 
+// Display label for anything carrying client fields: prefer the client's
+// name, fall back to the 6-digit client number (migrated clients start with
+// blank names). Accepts matter/timer payloads ({ client_name, client_number })
+// and /api/clients rows ({ name, client_number }). NOTE: when a `client_name`
+// key exists it wins even when blank — never falls through to an unrelated
+// `name` field (e.g. a timer's button name).
+export function clientLabel(x) {
+  if (!x) return '';
+  const name = x.client_name !== undefined ? x.client_name : x.name;
+  return name || x.client_number || '';
+}
+
 // Client mirror of the server's narrative generator, for live preview between autosaves.
 export function previewNarrative(tasks, increment = 0.1) {
   const clean = (t) => String(t || '').trim().replace(/[.;\s]+$/, '');
