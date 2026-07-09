@@ -174,7 +174,7 @@ table.tk tr.clickable { cursor: pointer; }
 
 /* ---------- timers (compact, grouped) ---------- */
 .icon { vertical-align: -3px; flex: none; }
-.timer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.timer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; }
 .timer-section { margin-bottom: 4px; }
 .group-head {
   display: flex; align-items: center; gap: 4px; margin: 10px 0 6px; min-height: 28px;
@@ -183,40 +183,34 @@ table.tk tr.clickable { cursor: pointer; }
 .group-tools { visibility: hidden; display: flex; gap: 0; }
 .group-head:hover .group-tools { visibility: visible; }
 .timer-card {
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 9px 6px;
-  background: var(--surface-1); display: flex; flex-direction: column; gap: 2px;
-  position: relative; cursor: grab; min-width: 0;
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px;
+  background: var(--surface-1); display: flex; align-items: center; gap: 6px;
+  position: relative; cursor: grab; min-width: 0; min-height: 32px;
 }
 .timer-card:active { cursor: grabbing; }
 .timer-card.running { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.timer-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .timer-name {
-  font-weight: 650; font-size: 13px; flex: 1; overflow: hidden;
+  font-weight: 650; font-size: 13px; flex: 2 1 70px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.timer-more { visibility: hidden; padding: 1px 4px; }
-.timer-card:hover .timer-more { visibility: visible; }
 .timer-cm {
-  font-size: 11px; color: var(--text-muted); overflow: hidden;
+  font-size: 11px; color: var(--text-muted); flex: 1 1 60px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.timer-clock-row { display: flex; align-items: center; gap: 1px; margin-top: 2px; }
+.timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
+.idle-nudge { color: var(--status-serious); }
 .timer-clock {
-  font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums;
+  font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
   border: 0; background: none; color: inherit; cursor: text; padding: 0 4px;
-  border-radius: 5px;
+  border-radius: 5px; flex: none;
 }
 .timer-clock:hover { background: var(--surface-2); }
 .timer-card.running .timer-clock { color: var(--accent); }
 .clock-input {
-  width: 62px; font-size: 18px; font-weight: 700; padding: 1px 6px; text-align: center;
+  width: 48px; font-size: 14px; font-weight: 700; padding: 1px 4px; text-align: center; flex: none;
 }
-.nudge { padding: 1px 3px; }
-.timer-sub {
-  display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.idle-nudge { color: var(--status-serious); display: inline-flex; }
+.timer-more { visibility: hidden; padding: 1px 4px; flex: none; }
+.timer-card:hover .timer-more { visibility: visible; }
 .timer-new {
   border: 1.5px dashed var(--border); border-radius: var(--radius); display: flex;
   align-items: center; justify-content: center; gap: 6px; color: var(--text-muted); cursor: pointer;

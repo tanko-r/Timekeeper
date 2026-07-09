@@ -150,8 +150,8 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
   await sleep(500);
   const clock = await page.$eval('.timer-clock', (el) => el.textContent.trim());
   if (clock !== '0.0') throw new Error(`expected 0.0 tenths after misclick, got ${clock}`);
-  const sub = await page.$eval('.timer-sub .mono', (el) => el.textContent.trim());
-  if (sub !== '00:00') throw new Error(`misclick must fully revert, got ${sub}`);
+  const title = await page.$eval('.timer-clock', (el) => el.title);
+  if (!title.startsWith('00:00')) throw new Error(`misclick must fully revert, got ${title}`);
 });
 
 await step('context menu: backdated start (10m ago) → stop → narrative popup', async () => {

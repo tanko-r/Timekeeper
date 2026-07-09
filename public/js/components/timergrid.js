@@ -323,46 +323,35 @@ function TimerCard({ timer, secs, idleAfter, roundMode, onStart, onStop, onDelta
   return html`
     <div class=${'timer-card' + (timer.running ? ' running' : '')}
       draggable="true"
+      title=${`${timer.name} — ${fmtClock(secs)} elapsed`}
       onDragStart=${(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
       onDragOver=${(e) => { e.preventDefault(); e.stopPropagation(); }}
       onDrop=${(e) => { e.preventDefault(); e.stopPropagation(); onDropOn(); }}
       onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
-      <div class="timer-top">
-        <span class="timer-name" title=${timer.name}>${timer.name}</span>
-        <button class="btn btn-ghost btn-sm timer-more" title="Timer menu"
-          onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(r.left, r.bottom + 2); }}>
-          <${Icon} name="more" size=${15} />
-        </button>
-      </div>
-      <div class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
+      <span class="timer-name" title=${timer.name}>${timer.name}</span>
+      <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
         ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
-      </div>
-      <div class="timer-clock-row">
-        <button class="btn btn-ghost btn-sm nudge" title="−0.1h" onClick=${() => onDelta(-0.1)}>
-          <${Icon} name="minus" size=${13} /></button>
-        ${editingClock ? html`
-          <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
-            onInput=${(e) => setClockText(e.target.value)}
-            onBlur=${commitClock}
-            onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
-          <button class="timer-clock mono" title="Click to edit (decimal hours)"
-            onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
-            ${fmtTenths(secs, roundMode)}
-          </button>`}
-        <button class="btn btn-ghost btn-sm nudge" title="+0.1h" onClick=${() => onDelta(0.1)}>
-          <${Icon} name="plus" size=${13} /></button>
-        <div class="spacer" style=${{ flex: 1 }}></div>
-        ${timer.running
-          ? html`<button class="btn btn-primary btn-sm" title="Stop & file time" onClick=${onStop}>
-              <${Icon} name="stop" size=${15} /></button>`
-          : html`<button class="btn btn-sm" title="Start" onClick=${onStart}>
-              <${Icon} name="play" size=${15} /></button>`}
-      </div>
-      <div class="timer-sub">
-        <span class="mono">${fmtClock(secs)}</span>
-        ${timer.linked_entry_id ? html`<span title="Linked to today’s entry"><${Icon} name="check" size=${12} /> filed</span>` : null}
-        ${idle ? html`<span class="idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
-      </div>
+      </span>
+      ${timer.linked_entry_id ? html`<span class="timer-flag" title="Linked to today’s entry"><${Icon} name="check" size=${12} /></span>` : null}
+      ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
+      ${editingClock ? html`
+        <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
+          onInput=${(e) => setClockText(e.target.value)}
+          onBlur=${commitClock}
+          onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
+        <button class="timer-clock mono" title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
+          onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
+          ${fmtTenths(secs, roundMode)}
+        </button>`}
+      ${timer.running
+        ? html`<button class="btn btn-primary btn-sm" title="Stop & file time" onClick=${onStop}>
+            <${Icon} name="stop" size=${15} /></button>`
+        : html`<button class="btn btn-sm" title="Start" onClick=${onStart}>
+            <${Icon} name="play" size=${15} /></button>`}
+      <button class="btn btn-ghost btn-sm timer-more" title="Timer menu"
+        onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(r.left, r.bottom + 2); }}>
+        <${Icon} name="more" size=${15} />
+      </button>
     </div>`;
 }
 
