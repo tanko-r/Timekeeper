@@ -10,6 +10,7 @@ import { SettingsView } from '/js/views/settings.js';
 import { CmsView } from '/js/views/cms.js';
 import { ExportView } from '/js/views/exportview.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
+import { QuickCapture } from '/js/components/quickcapture.js';
 
 const { createRoot } = window.ReactDOM;
 
@@ -91,6 +92,7 @@ function KeyboardHelp({ onClose }) {
     ['[ and ]', 'Previous / next day (day view)'],
     ['Ctrl+Enter', 'Save and close the entry editor'],
     ['Esc', 'Close dialogs'],
+    ['q', 'Quick capture — bill from a sentence'],
     ['?', 'This help'],
     ['Tab / click', 'Focus the timer grid'],
     ['← → ↑ ↓', 'Move between timer cards'],
@@ -121,6 +123,7 @@ function App() {
   const [route, setRoute] = useState(parseHash());
   const [editor, setEditor] = useState(null); // {id} | {template:{...}} | null
   const [showHelp, setShowHelp] = useState(false);
+  const [quickCapture, setQuickCapture] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const reloadAuth = useCallback(async () => {
@@ -200,13 +203,17 @@ function App() {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:toggle-last-timer'));
         if (route.path !== 'dashboard') nav('#/');
+      } else if (e.key === 'q') {
+        if (showHelp || quickCapture) return; // don't stack overlays, don't open twice
+        e.preventDefault();
+        setQuickCapture(true);
       } else if (e.key === '?') {
         setShowHelp(true);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [editor, openEditor, route.path]);
+  }, [editor, openEditor, route.path, showHelp, quickCapture]);
 
   if (!authState) return html`<${Spinner} />`;
   if (authState.error) return html`<div class="login-wrap"><div class="card login-card">
@@ -248,6 +255,7 @@ function App() {
     <${ToastHost} />
     ${editor ? html`<${EntryEditor} spec=${editor} settings=${settings} onClose=${closeEditor} />` : null}
     ${showHelp ? html`<${KeyboardHelp} onClose=${() => setShowHelp(false)} />` : null}
+    ${quickCapture ? html`<${QuickCapture} onClose=${() => setQuickCapture(false)} onFiled=${bumpRefresh} />` : null}
   `;
 }
 

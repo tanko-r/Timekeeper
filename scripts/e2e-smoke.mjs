@@ -180,6 +180,32 @@ await step('backdated start (10m ago) → stop → non-blocking chips; picking o
   if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);
 });
 
+await step('quick-capture palette (q): "call re acme .3" parses clean and files', async () => {
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  const d = new Date();
+  const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const before = await (await fetch(`${base}/api/entries?date=${today}`)).json();
+
+  await page.keyboard.press('q');
+  await waitFor('.qc-card input');
+  await page.type('.qc-card input', 'call re acme .3', { delay: 20 });
+  await page.waitForFunction(() => !document.querySelector('.qc-chip.miss')
+    && !!document.querySelector('button.qc-chip.on'), { timeout: 4000 });
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.body.textContent.includes('Filed'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.qc-card'), { timeout: 4000 });
+
+  const after = await (await fetch(`${base}/api/entries?date=${today}`)).json();
+  if (after.length !== before.length + 1) {
+    throw new Error(`quick-capture did not file exactly one entry: before=${before.length} after=${after.length}`);
+  }
+  const filed = after.find((e) => !before.some((b) => b.id === e.id));
+  if (!filed) throw new Error('could not identify the filed quick-capture entry');
+  // clean up so the day's data matches what later steps expect
+  const del = await fetch(`${base}/api/entries/${filed.id}`, { method: 'DELETE' });
+  if (!del.ok) throw new Error(`quick-capture cleanup delete failed: ${del.status}`);
+});
+
 await step('timer clock is editable in place', async () => {
   await page.click('.timer-clock');
   await waitFor('.clock-input');

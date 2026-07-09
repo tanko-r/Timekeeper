@@ -500,6 +500,30 @@ kbd {
 }
 .stop-chips-foot { display: flex; justify-content: flex-end; }
 
+/* ---------- quick capture (bill from a sentence) ---------- */
+.qc-backdrop {
+  position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,.25);
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 18vh;
+}
+.qc-card {
+  width: 560px; max-width: calc(100vw - 36px);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 12px 14px;
+}
+.qc-row { display: flex; align-items: center; gap: 8px; }
+.qc-row input { flex: 1; font-size: 15px; }
+.qc-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.qc-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.qc-chip {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+  border-radius: 999px; padding: 2px 10px; font-size: 12.5px; cursor: default;
+}
+button.qc-chip { cursor: pointer; }
+button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.qc-chip.miss { border-style: dashed; color: var(--status-warning); border-color: var(--status-warning); }
+.qc-narrative { margin-top: 8px; font-size: 13.5px; }
+.qc-foot { display: flex; align-items: center; margin-top: 10px; gap: 8px; }
+
 /* ---------- CSV timer import ---------- */
 .import-map {
   display: grid;
