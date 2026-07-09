@@ -1,6 +1,7 @@
 // Shared UI toolkit: htm binding, hooks, formatting, and small widgets.
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
+import { generateNarrative } from '/js/lib/narrativesync.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
@@ -68,18 +69,13 @@ export function clientLabel(x) {
   return name || x.client_number || '';
 }
 
-// Client mirror of the server's narrative generator, for live preview between autosaves.
-export function previewNarrative(tasks, increment = 0.1) {
-  const clean = (t) => String(t || '').trim().replace(/[.;\s]+$/, '');
-  const subst = (tasks || [])
-    .map((l) => ({ text: clean(l.fragment) || clean(l.task_code), duration: Number(l.duration) || 0 }))
-    .filter((l) => l.text || l.duration > 0);
-  if (subst.length < 2) return null;
-  return subst.map((l, i) => {
-    let text = l.text || 'Time';
-    if (i === 0) text = text.charAt(0).toUpperCase() + text.slice(1);
-    return `${text} (${fmtHours(l.duration, increment)})`;
-  }).join('; ') + '.';
+// Client mirror of the server's narrative generator, for live preview between
+// autosaves. Delegates to the zero-import lib (public/js/lib/narrativesync.js)
+// that also backs the entry editor's edit-through parsing and rebalancing.
+// taskBilling mirrors server buildNarrative's default (server/lib/narrative.js):
+// true unless the matter's client is flagged block-billing.
+export function previewNarrative(tasks, increment = 0.1, taskBilling = true) {
+  return generateNarrative(tasks, { increment, taskBilling });
 }
 
 // ---------- hooks ----------
