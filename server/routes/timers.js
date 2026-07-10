@@ -81,6 +81,23 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
   return { entryId, relinked, previousTotal };
 }
 
+// A start-created entry that never got real content (no time, no narrative,
+// no user-touched task lines) is noise — remove it where the user's action
+// means "that start didn't count": misclick grace and "fresh". NEVER called
+// from the midnight reset — entries always survive the day boundary.
+function deleteIfUntouched(db, entryId, nowIso) {
+  if (!entryId) return false;
+  const e = db.prepare(`SELECT id FROM entries WHERE id=? AND deleted_at IS NULL
+    AND status='draft' AND ever_finalized=0 AND narrative=''
+    AND COALESCE(total_override, 0) = 0`).get(entryId);
+  if (!e) return false;
+  const touched = db.prepare(`SELECT COUNT(*) c FROM entry_tasks
+    WHERE entry_id=? AND (COALESCE(duration, 0) != 0 OR COALESCE(fragment, '') != '')`).get(entryId).c;
+  if (touched > 0) return false;
+  db.prepare('UPDATE entries SET deleted_at=?, updated_at=? WHERE id=?').run(nowIso, nowIso, entryId);
+  return true;
+}
+
 // Lazy midnight reset — safe to call on every request; no-op when up to date.
 export function applyRollovers(db, clock) {
   const today = todayLocal(clock());
@@ -106,9 +123,18 @@ export function applyRollovers(db, clock) {
     } else if (r.bankSeconds > 0) {
       console.log(`timer ${timer.id} (${timer.name}): dropped ${r.bankSeconds}s below minimum increment at midnight reset`);
     }
+    // The midnight reset NEVER deletes: whatever entry the timer was linked
+    // to is preserved as-is (David, 2026-07-10) — it only banks and unlinks.
     db.prepare(
       'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_reset_date=?, linked_entry_id=NULL WHERE id=?'
     ).run(timer.running ? r.restartIso : null, today, timer.id);
+    if (timer.running) {
+      // running through midnight: the new day's entry exists from its first
+      // moment, same as a fresh start
+      const freshTimer = db.prepare(`SELECT ${TIMER_COLS} FROM timers WHERE id=?`).get(timer.id);
+      const hoursToday = secondsToHours(elapsedSeconds(freshTimer, clock().getTime()), rounding);
+      syncToEntry(db, freshTimer, hoursToday, today, nowIso);
+    }
   }
 }
 
@@ -259,13 +285,20 @@ export function timersRouter({ db, clock }) {
     // Quick-timer completion (stop → assign → narrate): giving a PAUSED
     // timer a matter files its held clock right now instead of waiting for
     // the next stop; the entry rides along in the response so the client
-    // can open the narrative editor. A running timer waits — its clock
-    // isn't settled yet.
+    // can open the narrative editor. A RUNNING timer links its entry
+    // immediately too (feedback 2026-07-10) — the total settles at stop.
     let entry = null;
     const fresh = getTimer.get(timer.id);
-    if (cmChanged && fresh.cm_id && !fresh.running) {
+    if (cmChanged && fresh.cm_id) {
       const hours = secondsToHours(elapsedSeconds(fresh, clock().getTime()), roundingCfg(db));
-      if (hours >= minIncrement(db) - 1e-9 && hours > 0) {
+      if (fresh.running) {
+        // Running: the entry exists the moment the matter is known — the
+        // snapshot total settles at the next stop.
+        const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
+        entry = loadEntry(db, synced.entryId);
+      } else if (hours >= minIncrement(db) - 1e-9 && hours > 0) {
+        // Paused: files the settled held time (stop → assign → narrate);
+        // below-increment still holds without filing.
         const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
         entry = loadEntry(db, synced.entryId);
       }
@@ -298,7 +331,10 @@ export function timersRouter({ db, clock }) {
     // nothing accumulates, nothing files, the last-stop anchor doesn't move.
     if (timer.running && timer.last_started_at
       && clock().getTime() - Date.parse(timer.last_started_at) <= 2000) {
-      db.prepare('UPDATE timers SET running=0, last_started_at=NULL WHERE id=?').run(timer.id);
+      // "nothing happened" includes the entry the misclicked start created
+      const removedEmpty = deleteIfUntouched(db, timer.linked_entry_id, now());
+      db.prepare(`UPDATE timers SET running=0, last_started_at=NULL${removedEmpty ? ', linked_entry_id=NULL' : ''} WHERE id=?`)
+        .run(timer.id);
       return {
         entry: null, hours: 0, discarded: true,
         seconds: timer.accumulated_seconds,
@@ -385,7 +421,22 @@ export function timersRouter({ db, clock }) {
       }
     }
 
-    const out = { timer: withElapsed(getTimer.get(timer.id)) };
+    // Feedback 2026-07-10: the entry exists from the moment the timer starts,
+    // so Today's entries always shows what's accruing. Created at the current
+    // clock value — 0.0 for a fresh timer; the first stop lifts it.
+    let entry = null;
+    let relink = null;
+    if (startMs != null && timer.cm_id) {
+      const freshTimer = getTimer.get(timer.id);
+      const hours = secondsToHours(elapsedSeconds(freshTimer, clock().getTime()), roundingCfg(db));
+      const synced = syncToEntry(db, freshTimer, hours, todayLocal(clock()), now());
+      entry = loadEntry(db, synced.entryId);
+      // The old linked entry may have been finalized/deleted meanwhile — the
+      // relink (with its double-count risk) now surfaces at start, not stop.
+      if (synced.relinked) relink = { relinked: true, previousTotal: synced.previousTotal ?? undefined };
+    }
+
+    const out = { timer: withElapsed(getTimer.get(timer.id)), entry, ...(relink || {}) };
     if (stopped.length > 0) out.stopped = stopped;
     res.json(out);
   });
@@ -404,10 +455,19 @@ export function timersRouter({ db, clock }) {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    // an untouched empty entry isn't "kept" — it never had anything to keep
+    deleteIfUntouched(db, timer.linked_entry_id, now());
     db.prepare(
       'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
     ).run(timer.running ? now() : null, timer.id);
-    res.json({ timer: withElapsed(getTimer.get(timer.id)) });
+    // invariant: a RUNNING matter timer always has a linked entry
+    let entry = null;
+    const freshTimer = getTimer.get(timer.id);
+    if (freshTimer.running && freshTimer.cm_id) {
+      const synced = syncToEntry(db, freshTimer, 0, todayLocal(clock()), now());
+      entry = loadEntry(db, synced.entryId);
+    }
+    res.json({ timer: withElapsed(getTimer.get(timer.id)), entry });
   });
 
   // Edit the clock: {hours} sets it, {deltaHours} nudges it. Tenths only.

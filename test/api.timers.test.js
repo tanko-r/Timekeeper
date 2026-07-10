@@ -209,14 +209,17 @@ test('linked entry finalized meanwhile → stop rolls into a new entry automatic
     });
     await t.fetchJson('POST', `/api/entries/${stop1.entry.id}/finalize`);
 
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const start2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    // entries are created/relinked at START now — the double-count flag
+    // surfaces there so the UI can offer the clock deduction right away
+    assert.equal(start2.relinked, true);
+    assert.equal(start2.previousTotal, 0.5);
+    assert.notEqual(start2.entry.id, stop1.entry.id, 'finalized entry is never touched');
     clock.advance(1800); // clock now 1.0 total
     const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.notEqual(stop2.entry.id, stop1.entry.id, 'finalized entry is never touched');
+    assert.equal(stop2.entry.id, start2.entry.id, 'stop settles the relinked entry');
     assert.equal(stop2.entry.status, 'draft');
-    // the finalized entry keeps its 0.5; the new entry carries the full clock —
-    // the stop response flags the situation so the UI can offer a fresh reset
-    assert.equal(stop2.relinked, true);
+    assert.equal(stop2.entry.total, 1.0);
   }));
 
 test('midnight rollover: final sync to yesterday via linked entry, clock zeroed and unlinked', () =>
@@ -237,10 +240,15 @@ test('midnight rollover: final sync to yesterday via linked entry, clock zeroed 
     assert.equal(yesterday.length, 1);
     assert.equal(yesterday[0].id, stop1.entry.id);
     assert.equal(yesterday[0].total, 1.5);
-    // today: clock restarted from midnight, still running, unlinked
+    // today: clock restarted from midnight, still running, linked to a NEW
+    // entry for the new day (running timers keep the entry-exists invariant)
     assert.equal(list[0].running, 1);
     assert.equal(list[0].elapsed_seconds, 9 * 3600);
-    assert.equal(list[0].linked_entry_id, null);
+    assert.ok(list[0].linked_entry_id, 'new day gets its own linked entry');
+    assert.notEqual(list[0].linked_entry_id, stop1.entry.id);
+    const today = (await t.fetchJson('GET', '/api/entries?date=2026-07-07')).body;
+    assert.equal(today.length, 1);
+    assert.equal(today[0].id, list[0].linked_entry_id);
   }));
 
 test('timer groups: CRUD, assignment, per-group ordering, collapse, delete ungroups', () =>
@@ -363,15 +371,18 @@ test('quick timer: assigning a matter to a PAUSED timer files the held time imme
     assert.equal(entries.length, 1);
   }));
 
-test('quick timer: assigning a matter while RUNNING does not file yet (next stop does)', () =>
+test('quick timer: assigning a matter while RUNNING creates the entry immediately', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(3600);
     const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.equal(r.entry ?? null, null, 'still running — the clock is not settled');
+    assert.ok(r.entry, 'entry exists as soon as the running timer has a matter');
+    assert.equal(r.entry.total, 1.0, 'created at the current snapshot');
+    assert.equal(r.linked_entry_id, r.entry.id);
     clock.advance(1800);
     const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.id, r.entry.id, 'stop settles the SAME entry');
     assert.equal(stop.entry.total, 1.5);
   }));
 
@@ -541,4 +552,104 @@ test('start on a cold matter leaves the suggestion empty (and no LLM call when d
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     const list = (await t.fetchJson('GET', '/api/timers')).body;
     assert.equal(list[0].suggested_narrative, null);
+  }));
+
+test('start creates the linked entry immediately (0.0h draft, visible on the dashboard)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Acme research', cm_id: cm.id, task_code: 'Research',
+    })).body;
+
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.ok(started.entry, 'start returns the created entry');
+    assert.equal(started.entry.total, 0);
+    assert.equal(started.entry.status, 'draft');
+    assert.equal(started.timer.linked_entry_id, started.entry.id);
+
+    const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.entries.length, 1, 'Today’s entries shows it while running');
+
+    clock.advance(1200); // 20 min
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.id, started.entry.id, 'stop settles the SAME entry');
+    assert.equal(stop.entry.total, 0.4);
+
+    // a re-start later the same day does not spawn a second entry
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const dash2 = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash2.entries.length, 1);
+  }));
+
+test('misclick after a fresh start removes the just-created empty entry', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Acme research', cm_id: cm.id,
+    })).body;
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.ok(started.entry);
+    clock.advance(1);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.discarded, true);
+    const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.entries.length, 0, 'as if nothing happened — no 0.0h litter');
+    const after = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(after.linked_entry_id, null);
+  }));
+
+test('fresh removes an untouched empty entry and re-links a running timer to a new one', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Acme research', cm_id: cm.id,
+    })).body;
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    clock.advance(1); // still running, nothing settled
+    const fresh = (await t.fetchJson('POST', `/api/timers/${timer.id}/fresh`)).body;
+    assert.ok(fresh.entry, 'running matter timer keeps the invariant: linked entry exists');
+    assert.notEqual(fresh.entry.id, started.entry.id);
+    const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.entries.length, 1, 'old empty entry deleted, exactly one remains');
+  }));
+
+test('midnight rollover: a running timer starts the new day with its own linked entry', () =>
+  withServer('2026-07-06T23:50:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Late night', cm_id: cm.id,
+    })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.set('2026-07-07T00:05:00-07:00');
+    const rolled = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id); // GET triggers rollover
+    const yesterday = t.db.prepare("SELECT * FROM entries WHERE date='2026-07-06' AND deleted_at IS NULL").all();
+    assert.equal(yesterday.length, 1);
+    assert.equal(yesterday[0].total_override, 0.2, '10 min banked to the accrual day (rounds up)');
+    const today = t.db.prepare("SELECT * FROM entries WHERE date='2026-07-07' AND deleted_at IS NULL").all();
+    assert.equal(today.length, 1, 'the new day has its own entry from the first moment');
+    assert.equal(rolled.linked_entry_id, today[0].id);
+    assert.notEqual(today[0].id, yesterday[0].id);
+  }));
+
+test('midnight reset preserves linked entries of paused timers — even when nothing banks', () =>
+  withServer('2026-07-06T22:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Evening work', cm_id: cm.id,
+    })).body;
+    // paused timer with a settled entry
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1200);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    // second timer: filed 0.2h, then clock zeroed → at midnight its bank is 0
+    // (the else-branch that must NOT touch the linked entry)
+    const t2 = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Zeroed out', cm_id: cm.id,
+    })).body;
+    await t.fetchJson('POST', `/api/timers/${t2.id}/start`);
+    clock.advance(600);
+    await t.fetchJson('POST', `/api/timers/${t2.id}/stop`);
+    await t.fetchJson('PUT', `/api/timers/${t2.id}/clock`, { hours: 0 });
+
+    clock.set('2026-07-07T00:10:00-07:00');
+    await t.fetchJson('GET', '/api/timers'); // triggers rollover
+    const kept = t.db.prepare("SELECT * FROM entries WHERE date='2026-07-06' AND deleted_at IS NULL").all();
+    assert.equal(kept.length, 2, 'midnight deletes nothing — both entries preserved');
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    for (const x of list) assert.equal(x.linked_entry_id, null, 'paused timers unlink for the new day');
   }));
