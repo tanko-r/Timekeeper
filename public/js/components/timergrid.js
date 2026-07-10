@@ -705,7 +705,7 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
           onInput=${(e) => setClockText(e.target.value)}
           onBlur=${commitClock}
           onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
-        <span class="timer-clock-stack">
+        <span class="timer-clock-pair">
           <span class="timer-clock-raw mono">${fmtClock(secs)}</span>
           <button class="timer-clock mono" tabIndex=${-1} title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
             onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>

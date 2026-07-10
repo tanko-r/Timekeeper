@@ -1,5 +1,6 @@
 import { api } from '/js/api.js';
 import { html, React, useState, useEffect, useCallback, Spinner, Icon } from '/js/ui.js';
+import { runningTitle, IDLE_ICON, RUNNING_ICON } from '/js/lib/titlebar.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
 import { DayView } from '/js/views/day.js';
@@ -156,6 +157,37 @@ function App() {
 
   // Refresh views when the editor closes with changes or timers write entries.
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
+
+  // Running-timer presence in the OS chrome: the tab title (which is also the
+  // installed PWA's taskbar hover preview) carries the live clock + timer
+  // name, and the favicon gains a red recording dot. App-level (not
+  // TimerGrid) so it stays live on every view; a light 5s poll plus a 1s
+  // title tick, re-kicked by refreshKey so timer actions show up promptly.
+  useEffect(() => {
+    if (!settings) return undefined; // not logged in — leave the chrome alone
+    let timers = null;
+    let fetchedAt = 0;
+    let alive = true;
+    const poll = () => api.get('/api/timers')
+      .then((t) => { if (alive) { timers = t; fetchedAt = Date.now(); } })
+      .catch(() => {});
+    poll();
+    const p = setInterval(poll, 5000);
+    const apply = () => {
+      const { title, running } = runningTitle(timers, Date.now(), fetchedAt);
+      if (document.title !== title) document.title = title;
+      const link = document.querySelector('link[rel="icon"]');
+      const want = running ? RUNNING_ICON : IDLE_ICON;
+      if (link && link.getAttribute('href') !== want) link.setAttribute('href', want);
+    };
+    const t = setInterval(apply, 1000);
+    return () => {
+      alive = false;
+      clearInterval(p);
+      clearInterval(t);
+      document.title = 'Timekeeper';
+    };
+  }, [settings, refreshKey]);
 
   const openEditor = useCallback((spec) => setEditor(spec), []);
   const closeEditor = useCallback((changed) => {

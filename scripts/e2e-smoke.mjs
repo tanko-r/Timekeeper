@@ -296,13 +296,13 @@ await step('timer clock is editable in place', async () => {
   await page.waitForFunction(
     () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
     { timeout: 4000 });
-  // compact card stacks the raw clock (display-only) above the editable
-  // tenths: 1.4h = 1:24:00 on top, 1.4 below
+  // compact card shows the raw clock (display-only) beside the editable
+  // tenths: 1.4h = 1:24:00 and 1.4
   await page.waitForFunction(() => {
-    const stack = document.querySelector('.timer-clock-stack');
-    return stack
-      && stack.querySelector('.timer-clock-raw')?.textContent.trim() === '1:24:00'
-      && stack.querySelector('.timer-clock')?.textContent.trim() === '1.4';
+    const pair = document.querySelector('.timer-clock-pair');
+    return pair
+      && pair.querySelector('.timer-clock-raw')?.textContent.trim() === '1:24:00'
+      && pair.querySelector('.timer-clock')?.textContent.trim() === '1.4';
   }, { timeout: 4000 });
 });
 
@@ -356,6 +356,13 @@ await step('quick timer: one click starts a no-matter timer; stop holds the time
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
     .some((c) => c.textContent.includes('Quick timer') && c.classList.contains('running')
       && c.querySelector('.timer-cm-unassigned')), { timeout: 4000 });
+  // running state reaches the OS chrome: tab title carries ▶ clock + name
+  // (5s poll + 1s tick), favicon swaps to the recording-dot variant
+  await page.waitForFunction(() => document.title.startsWith('▶')
+    && document.title.includes('Quick timer'), { timeout: 10000 });
+  const favRunning = await page.evaluate(() =>
+    document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'));
+  if (!favRunning) throw new Error('favicon did not switch to the running variant');
   await sleep(2200); // past the misclick grace so the stop is a real hold
   await page.evaluate(() => {
     const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('Quick timer'));
@@ -363,6 +370,11 @@ await step('quick timer: one click starts a no-matter timer; stop holds the time
   });
   await page.waitForFunction(() => document.body.textContent.includes('Time held'), { timeout: 4000 });
   if (await page.$('.stop-chips')) throw new Error('unassigned stop must not offer chips (nothing filed)');
+  // stopped → title and favicon revert
+  await page.waitForFunction(() => document.title === 'Timekeeper', { timeout: 10000 });
+  const favIdle = await page.evaluate(() =>
+    !document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'));
+  if (!favIdle) throw new Error('favicon did not revert after stop');
   // cleanup: remove the scratch quick timer so later steps see one timer
   const timers = await (await fetch(`${base}/api/timers`)).json();
   for (const t of timers.filter((x) => x.name === 'Quick timer')) {
