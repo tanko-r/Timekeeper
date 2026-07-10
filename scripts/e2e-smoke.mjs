@@ -296,6 +296,14 @@ await step('timer clock is editable in place', async () => {
   await page.waitForFunction(
     () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
     { timeout: 4000 });
+  // compact card stacks the raw clock (display-only) above the editable
+  // tenths: 1.4h = 1:24:00 on top, 1.4 below
+  await page.waitForFunction(() => {
+    const stack = document.querySelector('.timer-clock-stack');
+    return stack
+      && stack.querySelector('.timer-clock-raw')?.textContent.trim() === '1:24:00'
+      && stack.querySelector('.timer-clock')?.textContent.trim() === '1.4';
+  }, { timeout: 4000 });
 });
 
 await step('exclusive timers: starting a second timer stops & files the first (chips pop, one running)', async () => {

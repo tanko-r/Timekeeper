@@ -228,7 +228,7 @@ table.tk tr.client-row td {
 .timer-card {
   border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px;
   background: var(--surface-1); display: flex; align-items: center; gap: 6px;
-  position: relative; cursor: grab; min-width: 0; min-height: 32px;
+  position: relative; cursor: grab; min-width: 0; min-height: 40px;
 }
 .timer-card:active { cursor: grabbing; }
 .timer-card.running { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
@@ -242,13 +242,23 @@ table.tk tr.client-row td {
 }
 .timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
 .idle-nudge { color: var(--status-serious); }
+/* clock stack: raw HH:MM:SS on top (display-only), decimal tenths below —
+   the tenths stay the bigger, clickable value since that's what gets filed */
+.timer-clock-stack {
+  display: flex; flex-direction: column; align-items: center; flex: none;
+  line-height: 1.15;
+}
+.timer-clock-raw {
+  font-size: 10px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
 .timer-clock {
   font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
   border: 0; background: none; color: inherit; cursor: text; padding: 0 4px;
-  border-radius: 5px; flex: none;
+  border-radius: 5px; flex: none; line-height: 1.15;
 }
 .timer-clock:hover { background: var(--surface-2); }
 .timer-card.running .timer-clock { color: var(--accent); }
+.timer-card.running .timer-clock-raw { color: var(--accent); opacity: 0.75; }
 .timer-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .timer-board:focus { outline: none; }
 /* worked-today (spec §4): theme-aware via the status token; the 3px edge +

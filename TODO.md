@@ -3,27 +3,6 @@
 Ideas captured but not yet designed or planned. Pull one into a proper
 spec/plan (see `docs/superpowers/`) before implementing.
 
-## 4. Compact card: show clock time AND tenths, stacked
-
-In the compact timer card, show **both** the running clock (`HH:MM:SS` /
-`MM:SS`) and the decimal tenths, **stacked vertically — clock on top,
-tenths below**. Enlarge the card slightly to fit the two-line stack.
-
-Today the card shows only the tenths (`fmtTenths`) as the clickable
-`.timer-clock` button; the raw clock (`fmtClock`) lives only in the
-`title` tooltip (`public/js/components/timergrid.js:342-345`).
-
-Relevant: `TimerCard` (`timergrid.js:312-356`); CSS `.timer-clock`
-(`app.css:202-208`) and `.timer-card` `min-height: 32px` (`app.css:188`).
-
-Open questions:
-- Keep the **tenths** as the editable/clickable control (click → edit
-  decimal hours); the clock stays display-only above it. Confirm.
-- Emphasis/size: tenths is the value that gets filed — keep it the larger/
-  bolder of the two, with the clock smaller above? Or equal weight?
-- Bump `.timer-card` min-height (~32px → ~40px) and retune the row so the
-  name/CM still align against the taller clock stack without wrapping.
-
 ## Quick wins (non-pipeline polish, from the 2026-07-08 audit)
 
 Parked per the flow-redesign spec (§11) — these mostly touch views David
