@@ -37,7 +37,6 @@ promoted into the redesign instead of parked.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
-- [ ] 2026-07-10 10:18 — Remove the matter name from timer buttons.  Should be only caption (or matter name if no caption set), clocktime, tenths, button and menu when hovered.  For timers not associated with a matter, there should be a UI element to show that, such as a grayout or hash.  I'm open to suggestions. (feedback/2026-07-10T10-18-15.png · #/)
 
 ## Ideas:
 

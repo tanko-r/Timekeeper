@@ -378,7 +378,7 @@ await step('quick timer: start → stop → assign modal → narrative editor', 
   await clickText('button', 'Quick');
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
     .some((c) => c.textContent.includes('Quick timer') && c.classList.contains('running')
-      && c.querySelector('.timer-cm-unassigned')), { timeout: 4000 });
+      && c.classList.contains('unassigned')), { timeout: 4000 });
   // running state reaches the OS chrome: tab title carries ▶ clock + name
   // (5s poll + 1s tick), favicon swaps to the recording-dot variant
   await page.waitForFunction(() => document.title.startsWith('▶')
@@ -1004,7 +1004,7 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
   // repeat `/` while the bar is already open: click a card (focus leaves the
   // input; the bar stays up because the filter is set), press `/` again — it
   // must refocus the input rather than no-op on unchanged searchOpen state.
-  await page.click('.timer-card .timer-cm'); // safe spot — name/clock/start are all interactive now
+  await page.click('.timer-card .timer-clock-raw'); // safe spot — name/tenths/start are all interactive
   await page.waitForFunction(() =>
     document.activeElement !== document.querySelector('.timer-search'), { timeout: 4000 });
   await page.keyboard.press('/');

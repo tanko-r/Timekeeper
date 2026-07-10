@@ -724,13 +724,19 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
     if (v && v !== timer.name) onRename(v);
   }
 
+  // 2026-07-10 10:18 feedback: the card shows only the caption — the matter
+  // (and task code) live in the tooltip; unassigned = hatched, not labeled
+  const cardTitle = timer.cm_id
+    ? `${timer.name} — ${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''} — ${fmtClock(secs)} elapsed`
+    : `${timer.name} — no matter yet (stops hold the time; Edit timer to assign one) — ${fmtClock(secs)} elapsed`;
+
   return html`
-    <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '')}
+    <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '') + (timer.cm_id ? '' : ' unassigned')}
       tabIndex=${tabbable ? 0 : -1}
       data-timer-id=${timer.id}
       onFocus=${() => onFocusCard && onFocusCard()}
       draggable=${canDrag ? 'true' : 'false'}
-      title=${`${timer.name} — ${fmtClock(secs)} elapsed`}
+      title=${cardTitle}
       onDragStart=${(e) => { if (!canDrag) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
       onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); }}
       onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
@@ -742,13 +748,6 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
           onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setEditingName(false); }} />` : html`
         <button class="timer-name" tabIndex=${-1} title=${`${timer.name} — click to rename`}
           onClick=${() => { setNameText(timer.name); setEditingName(true); }}>${timer.name}</button>`}
-      ${timer.cm_id ? html`
-        <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
-          ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
-        </span>` : html`
-        <span class="timer-cm timer-cm-unassigned" title="No matter yet — stops hold the time; Edit timer to assign one">
-          no matter yet
-        </span>`}
       ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
       ${editingClock ? html`
         <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
