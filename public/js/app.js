@@ -13,6 +13,7 @@ import { ExportView } from '/js/views/exportview.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
+import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 const { createRoot } = window.ReactDOM;
 
@@ -301,6 +302,12 @@ function App() {
             onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
             <${Icon} name=${icon} size=${18} /> ${label}
           </button>`)}
+        ${pipSupported() ? html`
+          <button class="navlink" title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
+            onClick=${() => toggleTimerPip().catch((e) =>
+              window.dispatchEvent(new CustomEvent('tk:toast', { detail: { message: String(e.message || e), error: true } })))}>
+            <${Icon} name="copy" size=${18} /> Float timer
+          </button>` : null}
         <div class="foot">Press <kbd>?</kbd> for shortcuts</div>
       </nav>
       <main class="main">${view()}</main>
