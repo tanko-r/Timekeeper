@@ -52,9 +52,12 @@
 
 <h1>WebGPU in-browser LLM spike</h1>
 <p class="muted small">
-  Loads a small instruction model straight into this browser tab via
+  Loads a small instruction model straight into this browser tab — either via
   <a href="https://github.com/mlc-ai/web-llm" target="_blank" rel="noopener">WebLLM</a>
-  (no server round-trip once loaded) and runs it side-by-side against the
+  (Llama/Qwen, MLC's compiled q4f16 builds) or, for Gemma 4 E2B/E4B specifically,
+  via <a href="https://huggingface.co/docs/transformers.js" target="_blank" rel="noopener">transformers.js</a>
+  running the official ONNX build on WebGPU (WebLLM's mlc-llm compiler doesn't
+  support the Gemma 4 architecture yet) — and runs it side-by-side against the
   app's existing server-side Ollama narration endpoint on the exact same
   prompts, so you can judge speed and quality directly.
 </p>
@@ -66,12 +69,20 @@
     <span class="muted small">First load of a model pulls ~1-2GB of weights from Hugging Face/MLC CDN and caches them in the browser (IndexedDB/Cache Storage) — subsequent loads are fast and offline-capable.</span>
   </div>
   <div class="row" style="margin-top:10px;">
+    <div class="field" style="min-width:260px;">
+      <label class="field-label" for="engine-select">Browser engine</label>
+      <select id="engine-select">
+        <option value="webllm">WebLLM (mlc-ai)</option>
+        <option value="transformers">transformers.js — Gemma 4 (WebGPU/ONNX)</option>
+      </select>
+    </div>
     <div class="field" style="min-width:280px;">
       <label class="field-label" for="model-select">Model</label>
       <select id="model-select" disabled><option>loading model list…</option></select>
     </div>
     <button id="load-btn" class="btn btn-primary" disabled style="margin-top:18px;">Load model</button>
   </div>
+  <div class="muted small" id="engine-note" style="margin-top:8px;"></div>
   <div class="progress-bar"><i id="progress-fill"></i></div>
   <div id="status-log" class="status-log">Starting up…</div>
 </div>
@@ -92,10 +103,10 @@
 
 <div class="cols">
   <div class="card">
-    <h2>WebLLM (in-browser)</h2>
+    <h2>In-browser (WebGPU)</h2>
     <div class="row">
       <button id="run-webllm" class="btn btn-primary" disabled>Run in browser</button>
-      <span class="muted small">mode: <b id="webllm-mode-label">Expand</b></span>
+      <span class="muted small">engine: <b id="active-engine-label">WebLLM</b> · mode: <b id="webllm-mode-label">Expand</b></span>
     </div>
     <div id="webllm-out" class="out-panel" style="margin-top:10px;"></div>
     <div class="stat-row">
@@ -111,6 +122,7 @@
       <button id="run-ollama" class="btn" disabled>Run same prompt via server Ollama</button>
       <span class="muted small">mode: <b id="ollama-mode-label">Expand</b></span>
     </div>
+    <div class="muted small" id="ollama-status" style="margin-top:6px;">checking /api/ai/status…</div>
     <div id="ollama-out" class="out-panel" style="margin-top:10px;"></div>
     <div class="stat-row">
       <span>time-to-first-token: <b id="ollama-ttft">–</b></span>
@@ -132,7 +144,8 @@
 </div>
 
 <script type="module">
-import { streamNdjson, ApiError } from '/js/api.js';
+import { api, streamNdjson, ApiError } from '/js/api.js';
+import { ollamaEnableState } from '/js/spike-ollama-status.js';
 
 // ---------------------------------------------------------------------
 // Prompt construction — copied verbatim from server/routes/ai.js so this
@@ -220,8 +233,80 @@ const REQUESTED_MODELS = [
   'Qwen2.5-1.5B-Instruct-q4f16_1-MLC',
 ];
 
+// Gemma 4 E2B/E4B via transformers.js + onnxruntime-web (WebGPU). Verified
+// July 2026: WebLLM's mlc-llm compiler does NOT support the gemma4
+// architecture yet (github.com/mlc-ai/web-llm/issues/810,
+// github.com/mlc-ai/mlc-llm/issues/3477 — "Unknown model type: gemma4",
+// only an unmerged draft PR exists). Google's official ONNX export
+// (onnx-community/gemma-4-{E2B,E4B}-it-ONNX) is NOT gated on Hugging Face —
+// same-origin /models/ proxying (see gliner/pwa) isn't needed; the browser
+// fetches weights directly from HF's CDN and caches them, same as WebLLM
+// does for its own models. Sizes below are the q4f16 download == roughly
+// the WebGPU VRAM footprint for all four ONNX components (decoder + token
+// embeddings + vision + audio encoders — the model card's `from_pretrained`
+// loads all of them even for text-only use).
+const TRANSFORMERS_MODELS = [
+  { id: 'onnx-community/gemma-4-E2B-it-ONNX', label: 'Gemma-4-E2B-it (q4f16) — ~3.2GB VRAM/download' },
+  { id: 'onnx-community/gemma-4-E4B-it-ONNX', label: 'Gemma-4-E4B-it (q4f16) — ~4.9GB VRAM/download' },
+];
+
 let webllm = null;
-let engine = null;
+let webllmEngine = null;
+let webllmPickerIds = [];
+
+let transformersLib = null;
+let tfModel = null;
+let tfProcessor = null;
+
+function currentEngineKind() { return $('#engine-select').value; }
+
+function resetLoadedModels() {
+  webllmEngine = null;
+  tfModel = null;
+  tfProcessor = null;
+  $('#run-webllm').disabled = true;
+}
+
+function fillModelPicker() {
+  const select = $('#model-select');
+  const note = $('#engine-note');
+  select.innerHTML = '';
+  if (currentEngineKind() === 'transformers') {
+    for (const m of TRANSFORMERS_MODELS) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = m.label;
+      select.appendChild(opt);
+    }
+    select.disabled = false;
+    note.textContent = 'transformers.js downloads the model straight from Hugging Face (not gated — no local /models/ files needed) and runs it on WebGPU via onnxruntime-web. First load pulls the full multimodal weight set even though this page only sends text.';
+    log(`Model picker: transformers.js — ${TRANSFORMERS_MODELS.map((m) => m.id).join(', ')}`);
+  } else {
+    if (!webllmPickerIds.length) {
+      const opt = document.createElement('option');
+      opt.textContent = 'no target or Gemma models available — see log / full list above';
+      select.appendChild(opt);
+      select.disabled = true;
+      note.textContent = '';
+      return;
+    }
+    for (const id of webllmPickerIds) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id === REQUESTED_MODELS[0] ? `${id} (default)` : id;
+      select.appendChild(opt);
+    }
+    select.disabled = false;
+    note.textContent = 'WebLLM (mlc-ai) — MLC-compiled q4f16 builds, no Gemma 4 support yet (see comment in source).';
+  }
+  if ('gpu' in navigator) $('#load-btn').disabled = false;
+}
+
+$('#engine-select').addEventListener('change', () => {
+  resetLoadedModels();
+  $('#active-engine-label').textContent = currentEngineKind() === 'transformers' ? 'transformers.js' : 'WebLLM';
+  fillModelPicker();
+});
 
 async function initWebGpuAndModelList() {
   const gpuBadge = $('#gpu-badge');
@@ -240,6 +325,7 @@ async function initWebGpuAndModelList() {
     webllm = await import('https://esm.run/@mlc-ai/web-llm');
   } catch (e) {
     log(`Failed to load WebLLM module: ${e.message}`);
+    fillModelPicker();
     return;
   }
   log('WebLLM module loaded.');
@@ -254,51 +340,66 @@ async function initWebGpuAndModelList() {
     log(`Not found in this WebLLM build's prebuiltAppConfig (renamed/removed upstream?): ${missing.join(', ')}`);
   }
 
-  // Surface every Gemma build MLC actually ships (David asked about Gemma —
-  // ids change across WebLLM releases, so match rather than hardcode).
+  // Surface every Gemma build MLC actually ships (ids change across WebLLM
+  // releases, so match rather than hardcode) — as of this writing that's
+  // still Gemma 2/3 builds only; see the TRANSFORMERS_MODELS comment above
+  // for why Gemma 4 isn't in this list.
   const gemmaIds = allIds.filter((id) => /gemma/i.test(id) && !available.includes(id));
   log(gemmaIds.length
     ? `Gemma builds in prebuiltAppConfig: ${gemmaIds.join(', ')}`
     : 'No Gemma builds found in prebuiltAppConfig.');
 
-  const picker = [...available, ...gemmaIds];
-  const select = $('#model-select');
-  select.innerHTML = '';
-  if (!picker.length) {
-    const opt = document.createElement('option');
-    opt.textContent = 'no target or Gemma models available — see log / full list above';
-    select.appendChild(opt);
-    log('Nothing to offer in the picker — choose a replacement from the full list above and edit REQUESTED_MODELS in this file.');
-    return;
+  webllmPickerIds = [...available, ...gemmaIds];
+  log(`WebLLM picker: ${available.length}/${REQUESTED_MODELS.length} requested + ${gemmaIds.length} Gemma builds.`);
+  fillModelPicker();
+}
+
+async function loadWebllmModel(modelId) {
+  if (!webllm) { log('WebLLM module is not loaded (see earlier error).'); return; }
+  log(`Creating MLCEngine for ${modelId} (first time: expect a ~1-2GB download; cached after that)…`);
+  webllmEngine = await webllm.CreateMLCEngine(modelId, {
+    initProgressCallback: (p) => {
+      const pct = Math.round((p.progress || 0) * 100);
+      $('#progress-fill').style.width = `${pct}%`;
+      log(p.text || `progress ${pct}%`);
+    },
+  });
+  log(`Model ${modelId} ready.`);
+}
+
+async function loadTransformersModel(modelId) {
+  if (!transformersLib) {
+    log('Loading transformers.js module from https://esm.run/@huggingface/transformers …');
+    transformersLib = await import('https://esm.run/@huggingface/transformers');
+    log('transformers.js module loaded.');
   }
-  for (const id of picker) {
-    const opt = document.createElement('option');
-    opt.value = id;
-    opt.textContent = id === REQUESTED_MODELS[0] && allIds.includes(REQUESTED_MODELS[0])
-      ? `${id} (default)` : id;
-    select.appendChild(opt);
-  }
-  select.disabled = false;
-  if ('gpu' in navigator) $('#load-btn').disabled = false;
-  log(`Picker filled: ${available.length}/${REQUESTED_MODELS.length} requested + ${gemmaIds.length} Gemma builds.`);
+  const { AutoProcessor, Gemma4ForConditionalGeneration } = transformersLib;
+  log(`Loading ${modelId} (first time: several GB download of all ONNX components — decoder, embeddings, vision + audio encoders — cached in the browser after)…`);
+  const progress_callback = (info) => {
+    if (info.status === 'progress' && info.total) {
+      const pct = Math.round(((info.loaded || 0) / info.total) * 100);
+      $('#progress-fill').style.width = `${pct}%`;
+      log(`${info.file || 'download'}: ${pct}%`);
+    } else if (info.status) {
+      log(`${info.status}${info.file ? ' — ' + info.file : ''}`);
+    }
+  };
+  tfProcessor = await AutoProcessor.from_pretrained(modelId, { progress_callback });
+  tfModel = await Gemma4ForConditionalGeneration.from_pretrained(modelId, {
+    dtype: 'q4f16', device: 'webgpu', progress_callback,
+  });
+  log(`Model ${modelId} ready.`);
 }
 
 $('#load-btn').addEventListener('click', async () => {
   const modelId = $('#model-select').value;
-  if (!modelId || !webllm) return;
+  if (!modelId) return;
   $('#load-btn').disabled = true;
   $('#load-btn').textContent = 'Loading…';
   $('#progress-fill').style.width = '0%';
-  log(`Creating MLCEngine for ${modelId} (first time: expect a ~1-2GB download; cached after that)…`);
   try {
-    engine = await webllm.CreateMLCEngine(modelId, {
-      initProgressCallback: (p) => {
-        const pct = Math.round((p.progress || 0) * 100);
-        $('#progress-fill').style.width = `${pct}%`;
-        log(p.text || `progress ${pct}%`);
-      },
-    });
-    log(`Model ${modelId} ready.`);
+    if (currentEngineKind() === 'transformers') await loadTransformersModel(modelId);
+    else await loadWebllmModel(modelId);
     $('#run-webllm').disabled = false;
   } catch (e) {
     log(`Model load failed: ${e.message}`);
@@ -309,30 +410,48 @@ $('#load-btn').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------------
-// 2. WebLLM run: stream tokens, measure TTFT + tokens/sec ourselves
-// (chunk-count based — WebLLM's OpenAI-shaped stream emits one delta per
-// decode step, so counting deltas is a reasonable proxy for token count
-// without depending on a specific usage-stats API shape/version).
+// 2. In-browser run: stream tokens, measure TTFT + tokens/sec ourselves.
+// Two engines share this one panel/output/stat-row — WebLLM's OpenAI-shaped
+// stream emits one delta per decode step; transformers.js's TextStreamer
+// callback fires once per decoded chunk. Both counted the same way, so
+// tok/s is comparable across engines even though the counting unit isn't
+// identically defined token-for-token.
 // ---------------------------------------------------------------------
-$('#run-webllm').addEventListener('click', async () => {
-  if (!engine) return;
-  const mode = currentMode;
-  const input = $('#brief').value.trim();
-  if (!input) return;
-  const messages = buildNarrateMessages(mode, input);
+function runStart() {
   const out = $('#webllm-out');
   out.textContent = '';
   $('#webllm-ttft').textContent = '–';
   $('#webllm-tps').textContent = '–';
   $('#webllm-total').textContent = 'running…';
   $('#run-webllm').disabled = true;
+  return out;
+}
+
+function runFinish({ engineLabel, mode, t0, ttft, chunkCount, full }) {
+  const totalMs = performance.now() - t0;
+  $('#webllm-total').textContent = `${(totalMs / 1000).toFixed(1)}s`;
+  addHistoryRow({
+    engine: engineLabel, mode,
+    ttft: ttft ? `${ttft.toFixed(0)}ms` : '–',
+    tps: $('#webllm-tps').textContent, total: `${(totalMs / 1000).toFixed(1)}s`,
+    input: $('#brief').value.trim(), output: full,
+  });
+}
+
+async function runWebllm() {
+  if (!webllmEngine) return;
+  const mode = currentMode;
+  const input = $('#brief').value.trim();
+  if (!input) return;
+  const messages = buildNarrateMessages(mode, input);
+  const out = runStart();
 
   const t0 = performance.now();
   let ttft = null;
   let chunkCount = 0;
   let full = '';
   try {
-    const stream = await engine.chat.completions.create({ messages, stream: true, temperature: 0.3 });
+    const stream = await webllmEngine.chat.completions.create({ messages, stream: true, temperature: 0.3 });
     for await (const chunk of stream) {
       const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta && chunk.choices[0].delta.content;
       if (delta) {
@@ -348,27 +467,112 @@ $('#run-webllm').addEventListener('click', async () => {
         if (elapsedSinceFirst > 0) $('#webllm-tps').textContent = (chunkCount / elapsedSinceFirst).toFixed(1);
       }
     }
-    const totalMs = performance.now() - t0;
-    $('#webllm-total').textContent = `${(totalMs / 1000).toFixed(1)}s`;
-    addHistoryRow({
-      engine: `WebLLM (${$('#model-select').value})`, mode,
-      ttft: ttft ? `${ttft.toFixed(0)}ms` : '–',
-      tps: $('#webllm-tps').textContent, total: `${(totalMs / 1000).toFixed(1)}s`,
-      input, output: full,
-    });
+    runFinish({ engineLabel: `WebLLM (${$('#model-select').value})`, mode, t0, ttft, chunkCount, full });
   } catch (e) {
     out.textContent = `Error: ${e.message}`;
     $('#webllm-total').textContent = 'error';
   } finally {
     $('#run-webllm').disabled = false;
   }
+}
+
+// Gemma 4 via transformers.js: build the same buildNarrateMessages()
+// contract, reshaped into Gemma 4's part-list content format (the model
+// card's documented shape — content: [{type:'text', text: ...}]). No
+// <|think|> token in the system prompt, so thinking mode stays off (fast,
+// matches the other two panels). temperature/top_p/top_k are pinned to
+// 0.3/0.95/64 — the model card's own best-practice default is temperature
+// 1.0, but 0.3 matches what the WebLLM and Ollama panels use so all three
+// are judged on a comparable (low-variance, billing-narrative-appropriate)
+// setting rather than Gemma 4's generic recommendation.
+async function runTransformers() {
+  if (!tfModel || !tfProcessor) return;
+  const mode = currentMode;
+  const input = $('#brief').value.trim();
+  if (!input) return;
+  const messages = buildNarrateMessages(mode, input).map((m) => ({
+    role: m.role,
+    content: [{ type: 'text', text: m.content }],
+  }));
+  const out = runStart();
+
+  const t0 = performance.now();
+  let ttft = null;
+  let chunkCount = 0;
+  let full = '';
+  try {
+    const prompt = tfProcessor.apply_chat_template(messages, { enable_thinking: false, add_generation_prompt: true });
+    const inputs = await tfProcessor(prompt, undefined, undefined, { add_special_tokens: false });
+    const { TextStreamer } = transformersLib;
+    const streamer = new TextStreamer(tfProcessor.tokenizer, {
+      skip_prompt: true,
+      skip_special_tokens: true,
+      callback_function: (text) => {
+        if (!text) return;
+        if (ttft === null) {
+          ttft = performance.now() - t0;
+          $('#webllm-ttft').textContent = `${ttft.toFixed(0)}ms`;
+        }
+        chunkCount += 1;
+        full += text;
+        out.textContent = full;
+        out.scrollTop = out.scrollHeight;
+        const elapsedSinceFirst = (performance.now() - t0 - ttft) / 1000;
+        if (elapsedSinceFirst > 0) $('#webllm-tps').textContent = (chunkCount / elapsedSinceFirst).toFixed(1);
+      },
+    });
+    await tfModel.generate({
+      ...inputs,
+      max_new_tokens: 300,
+      do_sample: true,
+      temperature: 0.3,
+      top_p: 0.95,
+      top_k: 64,
+      streamer,
+    });
+    runFinish({ engineLabel: `transformers.js (${$('#model-select').value})`, mode, t0, ttft, chunkCount, full });
+  } catch (e) {
+    out.textContent = `Error: ${e.message}`;
+    $('#webllm-total').textContent = 'error';
+  } finally {
+    $('#run-webllm').disabled = false;
+  }
+}
+
+$('#run-webllm').addEventListener('click', () => {
+  if (currentEngineKind() === 'transformers') return runTransformers();
+  return runWebllm();
 });
 
 // ---------------------------------------------------------------------
 // 3. Ollama run via the app's existing streaming endpoint — same prompt,
 // same mode. streamNdjson mirrors the reader used everywhere else in the
 // app (public/js/api.js), so this exercises the real code path.
+//
+// The "Run via server Ollama" button is independent of the WebLLM panel —
+// it must enable purely off GET /api/ai/status (same call Settings → AI
+// makes), not off whether a browser model has loaded. Mirrors the
+// enabled-state logic in public/js/views/settings.js (`status.reachable`).
 // ---------------------------------------------------------------------
+async function initAiStatus() {
+  const statusEl = $('#ollama-status');
+  let status;
+  try {
+    status = await api.get('/api/ai/status');
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      statusEl.textContent = 'Not logged in — sign in to the app in this browser, then reload this page.';
+    } else {
+      statusEl.textContent = `Could not reach /api/ai/status: ${e.message}`;
+    }
+    $('#run-ollama').disabled = true;
+    return;
+  }
+  const { enabled, reason } = ollamaEnableState(status);
+  statusEl.textContent = reason;
+  $('#run-ollama').disabled = !enabled;
+}
+
 $('#run-ollama').addEventListener('click', async () => {
   const mode = currentMode;
   const input = $('#brief').value.trim();
@@ -427,6 +631,7 @@ $('#run-ollama').addEventListener('click', async () => {
 });
 
 initWebGpuAndModelList();
+initAiStatus();
 </script>
 </body>
 </html>
