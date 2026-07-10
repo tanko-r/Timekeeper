@@ -297,6 +297,83 @@ test('duplicate timer copies binding, zero clock', () =>
     assert.equal(dup.running, 0);
   }));
 
+// Quick timers: no client/matter — just time and an optional caption. The
+// clock runs normally; stops HOLD the time (nothing files, nothing is lost)
+// until a matter is assigned, and midnight carries the clock forward instead
+// of banking it nowhere.
+test('quick timer: created without cm or name, runs, stop holds the clock without filing', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const r = await t.fetchJson('POST', '/api/timers', {});
+    assert.equal(r.status, 201);
+    assert.equal(r.body.cm_id, null);
+    assert.equal(r.body.name, 'Quick timer');
+    const timer = r.body;
+
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry, null);
+    assert.equal(stop.unassigned, true);
+    assert.equal(stop.seconds, 3600);
+
+    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.running, 0);
+    assert.equal(row.elapsed_seconds, 3600, 'time held on the clock');
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 0, 'nothing filed without a matter');
+  }));
+
+test('quick timer: caption only (no cm) is honored', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t) => {
+    const r = await t.fetchJson('POST', '/api/timers', { name: 'Mystery call' });
+    assert.equal(r.status, 201);
+    assert.equal(r.body.name, 'Mystery call');
+    assert.equal(r.body.cm_id, null);
+  }));
+
+test('quick timer: assigning a matter later files the held time on the next stop', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600); // 1.0h held
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(patched.cm_id, cm.id);
+
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800); // +0.5h
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.ok(stop.entry, 'held time files once a matter exists');
+    assert.equal(stop.entry.total, 1.5);
+  }));
+
+test('quick timer: un-assigning the matter is allowed and unlinks the entry', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: null })).body;
+    assert.equal(patched.cm_id, null);
+    assert.equal(patched.linked_entry_id, null, 'old entry is no longer this timer’s home');
+  }));
+
+test('quick timer: midnight carries unassigned time forward instead of dropping it', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2 * 3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    clock.set('2026-07-07T10:00:00-07:00'); // next day
+    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.elapsed_seconds, 7200, 'clock survives the rollover');
+    assert.equal(row.last_reset_date, '2026-07-07', 'rollover bookkeeping still advances');
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 0, 'nothing banked to an entry');
+  }));
+
 // Exclusive timers: one running timer at a time. Starting a timer stops-and-
 // files any other running timer server-side (atomic against races/multi-tab)
 // and reports what it stopped so the client can surface the narrative chips.

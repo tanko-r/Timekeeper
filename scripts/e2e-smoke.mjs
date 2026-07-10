@@ -351,6 +351,28 @@ await step('exclusive timers: starting a second timer stops & files the first (c
   await waitFor('.timer-card');
 });
 
+await step('quick timer: one click starts a no-matter timer; stop holds the time', async () => {
+  await clickText('button', 'Quick');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+    .some((c) => c.textContent.includes('Quick timer') && c.classList.contains('running')
+      && c.querySelector('.timer-cm-unassigned')), { timeout: 4000 });
+  await sleep(2200); // past the misclick grace so the stop is a real hold
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('Quick timer'));
+    card.querySelector('button[title="Stop & file time"]').click();
+  });
+  await page.waitForFunction(() => document.body.textContent.includes('Time held'), { timeout: 4000 });
+  if (await page.$('.stop-chips')) throw new Error('unassigned stop must not offer chips (nothing filed)');
+  // cleanup: remove the scratch quick timer so later steps see one timer
+  const timers = await (await fetch(`${base}/api/timers`)).json();
+  for (const t of timers.filter((x) => x.name === 'Quick timer')) {
+    const del = await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`quick timer cleanup failed: ${del.status}`);
+  }
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-card');
+});
+
 await step('ghost-text: phrasebook completion in the entry editor, Tab accepts', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');

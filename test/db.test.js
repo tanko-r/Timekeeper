@@ -212,10 +212,12 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
   // fake a db from just before this migration: undo everything added by the
-  // last five migrations (matter_people, phase-3's shortcuts, phase-3's
-  // timers column, entry-editor-rework's clients.task_billing column, and
-  // Task 4's entries.narrative_manual column) and roll user_version back by
-  // five (positional — no hardcoded version numbers)
+  // last six migrations (matter_people, phase-3's shortcuts, phase-3's
+  // timers column, entry-editor-rework's clients.task_billing column, Task
+  // 4's entries.narrative_manual column, and the quick-timer timers rebuild
+  // — which needs no undo SQL: replaying the rebuild is schema-idempotent,
+  // its only effect is making cm_id nullable) and roll user_version back by
+  // six (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
     ALTER TABLE entries DROP COLUMN narrative_manual;
@@ -224,7 +226,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 5}`);
+  db1.pragma(`user_version = ${v - 6}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -237,6 +239,8 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     .some((c) => c.name === 'task_billing'));
   assert.ok(db2.prepare('PRAGMA table_info(entries)').all()
     .some((c) => c.name === 'narrative_manual'));
+  assert.equal(db2.prepare('PRAGMA table_info(timers)').all()
+    .find((c) => c.name === 'cm_id').notnull, 0, 'quick-timer rebuild made cm_id nullable');
   db2.close();
   cleanup();
 });

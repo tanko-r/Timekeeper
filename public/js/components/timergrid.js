@@ -128,6 +128,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       if (s.entry) {
         setStopPopup({ timer: s.timer, result: s });
         onEntryChanged();
+      } else if (s.unassigned) {
+        emitToast(`⏸ ${s.timer.name} paused — assign a matter to file its time.`);
       } else if (!s.discarded) {
         emitToast(`⏸ ${s.timer.name} paused — nothing to file yet (${fmtClock(s.seconds)}).`);
       }
@@ -152,6 +154,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       onEntryChanged();
     } else if (result.discarded) {
       emitToast('Misclick (under 2s) — nothing recorded.');
+    } else if (result.unassigned) {
+      emitToast(`⏸ Time held (${fmtClock(result.seconds)}) — assign a matter (Edit timer) to file it.`);
     } else {
       emitToast(`Nothing to file yet — clock keeps counting (${fmtClock(result.seconds)}).`);
     }
@@ -534,6 +538,13 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       <button class="btn btn-sm" title="Batch-create timers from a CSV" onClick=${() => setImporting(true)}>
         <${Icon} name="download" size=${16} /> Import
       </button>
+      <button class="btn btn-sm" title="Quick timer — starts now with no matter; assign one later"
+        onClick=${() => guard((async () => {
+          const t = await api.post('/api/timers', {});
+          await start(t);
+        })())}>
+        <${Icon} name="timer" size=${16} /> Quick
+      </button>
       <button class="btn btn-sm btn-primary" onClick=${() => setEditing('new')}>
         <${Icon} name="plus" size=${16} /> New timer
       </button>
@@ -681,9 +692,13 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
       onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
       onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
       <span class="timer-name" title=${timer.name}>${timer.name}</span>
-      <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
-        ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
-      </span>
+      ${timer.cm_id ? html`
+        <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
+          ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
+        </span>` : html`
+        <span class="timer-cm timer-cm-unassigned" title="No matter yet — stops hold the time; Edit timer to assign one">
+          no matter yet
+        </span>`}
       ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
       ${editingClock ? html`
         <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
@@ -713,7 +728,8 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
 
 function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
   const [name, setName] = useState(timer ? timer.name : '');
-  const [cm, setCm] = useState(timer ? { id: timer.cm_id, cm_number: timer.cm_number, short_name: timer.cm_short_name } : null);
+  const [cm, setCm] = useState(timer && timer.cm_id
+    ? { id: timer.cm_id, cm_number: timer.cm_number, short_name: timer.cm_short_name } : null);
   const [taskCode, setTaskCode] = useState(timer ? (timer.task_code || '') : '');
   const [groupId, setGroupId] = useState(timer ? (timer.group_id ?? '') : '');
   const [error, setError] = useState(null);
@@ -721,7 +737,7 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
   async function save() {
     try {
       const body = {
-        name, cm_id: cm.id, task_code: taskCode || null,
+        name, cm_id: cm ? cm.id : null, task_code: taskCode || null,
         group_id: groupId === '' ? null : Number(groupId),
       };
       if (timer) await api.patch(`/api/timers/${timer.id}`, body);
@@ -736,9 +752,9 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
         <${Field} label="Button name">
           <input type="text" value=${name} autoFocus placeholder="e.g. Acme — research"
             onInput=${(e) => setName(e.target.value)}
-            onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim() && cm) save(); }} />
+            onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim()) save(); }} />
         <//>
-        <${Field} label="Client/Matter">
+        <${Field} label="Client/Matter (optional — stops hold the time until assigned)">
           <${CmPicker} value=${cm} onChange=${(v) => { setCm(v); if (!name) setName(v.short_name); }} />
         <//>
         <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -758,7 +774,7 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
         ${error ? html`<div class="error-box">${error}</div>` : null}
         <div class="row-end">
           <button type="button" class="btn" onClick=${onClose}>Cancel</button>
-          <button class="btn btn-primary" disabled=${!name.trim() || !cm} onClick=${save}>
+          <button class="btn btn-primary" disabled=${!name.trim()} onClick=${save}>
             ${timer ? 'Save' : 'Create'}</button>
         </div>
       </div>

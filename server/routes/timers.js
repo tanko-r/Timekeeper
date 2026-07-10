@@ -91,6 +91,15 @@ export function applyRollovers(db, clock) {
   const nowIso = clock().toISOString();
   for (const timer of stale) {
     const r = rollover(timer, today);
+    if (!timer.cm_id) {
+      // Unassigned quick timer: nowhere to bank — carry the clock forward
+      // across midnight so the held time survives until a matter is
+      // assigned (it then files, dated the day of the next stop).
+      db.prepare(
+        'UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_reset_date=? WHERE id=?'
+      ).run(r.bankSeconds, timer.running ? r.restartIso : null, today, timer.id);
+      continue;
+    }
     const hours = secondsToHours(r.bankSeconds, rounding);
     if (hours >= minInc - 1e-9 && hours > 0) {
       syncToEntry(db, timer, hours, r.bankDate, nowIso);
@@ -126,17 +135,24 @@ export function timersRouter({ db, clock }) {
 
   r.post('/', (req, res) => {
     const b = req.body || {};
-    const name = String(b.name || '').trim();
-    if (!name) return res.status(400).json({ error: 'Timer name required.' });
-    const cm = db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id);
-    if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
+    let name = String(b.name || '').trim();
+    // Quick timers: no client/matter — just time and an optional caption.
+    // A matter can be assigned later (PATCH); until then stops hold the
+    // clock instead of filing.
+    let cm = null;
+    if (b.cm_id != null) {
+      cm = db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id);
+      if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
+      if (!name) return res.status(400).json({ error: 'Timer name required.' });
+    }
+    if (!name) name = 'Quick timer';
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
       return res.status(400).json({ error: 'Unknown group.' });
     }
     const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
     const info = db.prepare(
       'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(name, cm.id, b.task_code ? String(b.task_code) : null,
+    ).run(name, cm ? cm.id : null, b.task_code ? String(b.task_code) : null,
       b.group_id ?? null, max + 1, todayLocal(clock()), now());
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
   });
@@ -221,7 +237,8 @@ export function timersRouter({ db, clock }) {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
     const b = req.body || {};
-    if (b.cm_id !== undefined && !db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id)) {
+    // cm_id: undefined = leave alone, null = un-assign (quick timer), id = validate
+    if (b.cm_id != null && !db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id)) {
       return res.status(400).json({ error: 'Unknown CM.' });
     }
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
@@ -229,7 +246,7 @@ export function timersRouter({ db, clock }) {
     }
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
-    const cmChanged = b.cm_id !== undefined && b.cm_id !== timer.cm_id;
+    const cmChanged = b.cm_id !== undefined && (b.cm_id ?? null) !== (timer.cm_id ?? null);
     db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
@@ -277,6 +294,13 @@ export function timersRouter({ db, clock }) {
     const seconds = elapsedSeconds(timer, clock().getTime());
     db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
       .run(seconds, now(), timer.id);
+
+    // Quick timer with no matter yet: nowhere to file — hold the whole
+    // clock until one is assigned (never lose the time, never invent an
+    // entry). The next stop after assignment files the full day total.
+    if (!timer.cm_id) {
+      return { entry: null, hours: 0, seconds, unassigned: true, timer: withElapsed(getTimer.get(timer.id)) };
+    }
 
     const hours = secondsToHours(seconds, roundingCfg(db));
     if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
@@ -337,11 +361,13 @@ export function timersRouter({ db, clock }) {
       // any top-ranked phrase that carries a baked-in time amount (e.g. an
       // old free-text narrative like "Drafted agreement (0.5)...") — time is
       // unknown at start (often zero) and must never be invented.
-      const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock()));
-      const cleanPhrase = sugg && sugg.phrases.find((p) => !containsTimeAmounts(p.text));
-      db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=?')
-        .run(cleanPhrase ? cleanPhrase.text : null, timer.id);
-      refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});
+      if (timer.cm_id) {
+        const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock()));
+        const cleanPhrase = sugg && sugg.phrases.find((p) => !containsTimeAmounts(p.text));
+        db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=?')
+          .run(cleanPhrase ? cleanPhrase.text : null, timer.id);
+        refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});
+      }
     }
 
     const out = { timer: withElapsed(getTimer.get(timer.id)) };

@@ -190,6 +190,38 @@ const MIGRATIONS = [
   `
   ALTER TABLE entries ADD COLUMN narrative_manual INTEGER NOT NULL DEFAULT 0;
   `,
+  // Quick timers (2026-07-09): a timer may exist without a client/matter —
+  // just time and an optional caption; a matter gets assigned later and the
+  // held time files on the next stop. SQLite can't drop NOT NULL in place,
+  // so rebuild the table with cm_id nullable (column set matches v1 + the
+  // ALTERs from v2/v5).
+  `
+  CREATE TABLE timers_new (
+    id                  INTEGER PRIMARY KEY,
+    name                TEXT NOT NULL,
+    cm_id               INTEGER REFERENCES matters(id),
+    task_code           TEXT,
+    sort_order          INTEGER NOT NULL DEFAULT 0,
+    running             INTEGER NOT NULL DEFAULT 0,
+    accumulated_seconds INTEGER NOT NULL DEFAULT 0,
+    last_started_at     TEXT,
+    last_reset_date     TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    group_id            INTEGER REFERENCES timer_groups(id),
+    linked_entry_id     INTEGER,
+    last_stopped_at     TEXT,
+    suggested_narrative TEXT
+  );
+  INSERT INTO timers_new (id, name, cm_id, task_code, sort_order, running,
+    accumulated_seconds, last_started_at, last_reset_date, created_at,
+    group_id, linked_entry_id, last_stopped_at, suggested_narrative)
+    SELECT id, name, cm_id, task_code, sort_order, running,
+      accumulated_seconds, last_started_at, last_reset_date, created_at,
+      group_id, linked_entry_id, last_stopped_at, suggested_narrative
+    FROM timers;
+  DROP TABLE timers;
+  ALTER TABLE timers_new RENAME TO timers;
+  `,
 ];
 
 const SEED_SETTINGS = {

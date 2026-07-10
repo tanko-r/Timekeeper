@@ -240,6 +240,7 @@ table.tk tr.client-row td {
   font-size: 11px; color: var(--text-muted); flex: 1 1 60px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+.timer-cm-unassigned { font-style: italic; opacity: 0.8; }
 .timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
 .idle-nudge { color: var(--status-serious); }
 /* clock stack: raw HH:MM:SS on top (display-only), decimal tenths below —
