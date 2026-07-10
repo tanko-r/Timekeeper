@@ -248,6 +248,17 @@ table.tk tr.client-row td {
   text-overflow: ellipsis; white-space: nowrap;
 }
 .timer-cm-unassigned { font-style: italic; opacity: 0.8; }
+
+/* Alt+drag UI-feedback capture */
+.feedback-select {
+  position: fixed; z-index: 400; pointer-events: none;
+  border: 2px solid #e11d48; background: rgba(225, 29, 72, 0.08);
+  border-radius: 3px;
+}
+.feedback-shot {
+  max-width: 100%; max-height: 300px; object-fit: contain; display: block;
+  margin: 0 auto 10px; border: 1px solid var(--border); border-radius: 6px;
+}
 .timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
 .idle-nudge { color: var(--status-serious); }
 /* clock pair: raw HH:MM:SS (display-only) beside the decimal tenths — same

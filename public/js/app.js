@@ -12,6 +12,7 @@ import { CmsView } from '/js/views/cms.js';
 import { ExportView } from '/js/views/exportview.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
+import { FeedbackCapture } from '/js/components/feedback.js';
 
 const { createRoot } = window.ReactDOM;
 
@@ -305,6 +306,7 @@ function App() {
       <main class="main">${view()}</main>
     </div>
     <${ToastHost} />
+    <${FeedbackCapture} />
     ${editor ? html`<${EntryEditor} spec=${editor} settings=${settings} onClose=${closeEditor} />` : null}
     ${showHelp ? html`<${KeyboardHelp} onClose=${() => setShowHelp(false)} />` : null}
     ${quickCapture ? html`<${QuickCapture} onClose=${() => setQuickCapture(false)} onFiled=${bumpRefresh} />` : null}

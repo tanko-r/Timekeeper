@@ -16,12 +16,16 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { authRouter, authGuard, originCheck } from './auth.js';
 import { backupRouter } from './routes/backup.js';
 import { aiRouter } from './routes/ai.js';
+import { feedbackRouter } from './routes/feedback.js';
 
 // App factory. deps = { db, config, clock } — clock injectable for tests.
 export function createApp(deps) {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 'loopback');
+  // Screenshot data URLs on the feedback route need more headroom than the
+  // global cap; this parser claims that body first, so the 2mb one skips it.
+  app.use('/api/feedback', express.json({ limit: '12mb' }));
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -44,6 +48,7 @@ export function createApp(deps) {
   app.use('/api', dashboardRouter(deps));
   app.use('/api', backupRouter(deps));
   app.use('/api', aiRouter(deps));
+  app.use('/api/feedback', feedbackRouter(deps));
 
   // JSON 404 for unknown API routes (registered after real routes are mounted).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));

@@ -1,7 +1,7 @@
 // End-to-end smoke test: boots the real server on a scratch database, drives
 // the SPA in headless Chromium, and fails on any console/page error.
 // Usage: node scripts/e2e-smoke.mjs [--screenshots DIR]
-import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import puppeteer from 'puppeteer-core';
@@ -29,7 +29,10 @@ const problems = [];
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/chromium',
   headless: 'new',
-  args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  // auto-accept-this-tab-capture: getDisplayMedia({preferCurrentTab}) resolves
+  // without the share-tab picker, so the Alt+drag feedback step exercises the
+  // real screenshot path.
+  args: ['--no-sandbox', '--disable-dev-shm-usage', '--auto-accept-this-tab-capture'],
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 900 });
@@ -1035,6 +1038,32 @@ await step('dark mode applies', async () => {
 
 // Last data-mutating step (per plan): finalizes and exports today's drafts,
 // so it runs after everything else that reads today's entry/timer state.
+await step('alt+drag feedback: select region → note box → TODO entry filed', async () => {
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await waitFor('.timer-board');
+  // Synthetic Alt+drag; the launch flag auto-accepts the tab capture, so
+  // this exercises the REAL screenshot path end to end.
+  await page.evaluate(() => {
+    const opts = (x, y) => ({ bubbles: true, cancelable: true, clientX: x, clientY: y, altKey: true, button: 0 });
+    document.querySelector('.main').dispatchEvent(new MouseEvent('mousedown', opts(200, 200)));
+    document.dispatchEvent(new MouseEvent('mousemove', opts(420, 330)));
+    document.dispatchEvent(new MouseEvent('mouseup', opts(420, 330)));
+  });
+  await waitFor('.feedback-note');
+  const hasShot = await page.evaluate(() => !!document.querySelector('.feedback-shot'));
+  if (!hasShot) throw new Error('annotated screenshot preview missing from the note box');
+  await page.type('.feedback-note', 'E2E: tighten this area', { delay: 5 });
+  await clickText('.modal button', 'Save feedback');
+  await page.waitForFunction(() => document.body.textContent.includes('Feedback filed'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.feedback-note'), { timeout: 4000 });
+  const todo = readFileSync(join(dir, 'TODO.md'), 'utf8');
+  if (!todo.includes('## UI feedback (screenshots)')) throw new Error('feedback section missing from TODO.md');
+  if (!todo.includes('E2E: tighten this area')) throw new Error('feedback note not appended to TODO.md');
+  const shots = readdirSync(join(dir, 'feedback'));
+  if (shots.length !== 1 || !shots[0].endsWith('.png')) throw new Error(`expected one saved png, got ${JSON.stringify(shots)}`);
+  if (!todo.includes(`feedback/${shots[0]}`)) throw new Error('TODO entry does not reference the saved screenshot');
+});
+
 await step('one-sweep close-out: card stack finalizes & exports the day (c)', async () => {
   const cms = await (await fetch(`${base}/api/cms`)).json();
   const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];

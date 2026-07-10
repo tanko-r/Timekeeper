@@ -33,6 +33,15 @@ daily entry; exports CSV for manual keying into the firm's billing system.
   cached shell indefinitely (cache-first service worker; no build step means
   nothing else signals an update).
 
+## UI feedback screenshots (Alt+drag)
+
+Holding **Alt and dragging** in the running app captures an annotated
+screenshot into `feedback/` (gitignored) and appends a checkbox item under
+`## UI feedback (screenshots)` in TODO.md referencing it. When addressing one
+of these items: make the fix, check off / remove the TODO line, and **delete
+the referenced screenshot file** — `feedback/` should only ever hold
+not-yet-addressed items.
+
 ## Design docs
 
 - Spec: `docs/superpowers/specs/2026-07-06-timekeeper-design.md` (includes the
