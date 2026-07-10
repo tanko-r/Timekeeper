@@ -173,12 +173,24 @@ function App() {
       .catch(() => {});
     poll();
     const p = setInterval(poll, 5000);
+    let badged = null;
     const apply = () => {
       const { title, running } = runningTitle(timers, Date.now(), fetchedAt);
       if (document.title !== title) document.title = title;
       const link = document.querySelector('link[rel="icon"]');
       const want = running ? RUNNING_ICON : IDLE_ICON;
-      if (link && link.getAttribute('href') !== want) link.setAttribute('href', want);
+      if (link && link.getAttribute('href') !== want) {
+        // replace the node, not just href — some browsers ignore in-place swaps
+        const fresh = link.cloneNode();
+        fresh.setAttribute('href', want);
+        link.replaceWith(fresh);
+      }
+      // The installed PWA's taskbar icon is fixed by the manifest — the
+      // OS-supported running signal there is an app badge on the icon.
+      if (navigator.setAppBadge && badged !== running) {
+        badged = running;
+        (running ? navigator.setAppBadge() : navigator.clearAppBadge()).catch(() => {});
+      }
     };
     const t = setInterval(apply, 1000);
     return () => {

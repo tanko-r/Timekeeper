@@ -27,8 +27,10 @@ export function runningTitle(timers, nowMs, fetchedAtMs, base = 'Timekeeper') {
 }
 
 // Favicons as data URIs: the idle one mirrors index.html's ⏱; the running
-// one adds a red recording dot. Kept together so they can't drift apart.
+// one is a red disc with a white play triangle — a whole-icon color change,
+// because a small badge dot is invisible at 16px tab size. Kept together so
+// they can't drift apart.
 export const IDLE_ICON =
   "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>";
 export const RUNNING_ICON =
-  "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text><circle cx='78' cy='78' r='20' fill='%23e11d48' stroke='white' stroke-width='6'/></svg>";
+  "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23e11d48'/><polygon points='38,28 80,50 38,72' fill='white'/></svg>";
