@@ -227,3 +227,17 @@ test('settings: read and per-key deep merge', () => withServer(async (t) => {
   assert.equal(after.ai.enabled, false);
   assert.equal(after.tim.u2, 'GEN01');
 }));
+
+test('client_name locks to the number at creation — a later matter never renames the client', () => withServer(async (t) => {
+  const first = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '555001-000001', short_name: 'First matter', client_name: 'Initech',
+  });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.client_name, 'Initech');
+
+  const second = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '555001-000002', short_name: 'Second matter', client_name: 'Wrong Name LLC',
+  });
+  assert.equal(second.status, 201);
+  assert.equal(second.body.client_name, 'Initech', 'existing client name kept — matters never rename');
+}));
