@@ -255,7 +255,22 @@ export function timersRouter({ db, clock }) {
       cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
       timer.id);
-    res.json(withElapsed(getTimer.get(timer.id)));
+
+    // Quick-timer completion (stop → assign → narrate): giving a PAUSED
+    // timer a matter files its held clock right now instead of waiting for
+    // the next stop; the entry rides along in the response so the client
+    // can open the narrative editor. A running timer waits — its clock
+    // isn't settled yet.
+    let entry = null;
+    const fresh = getTimer.get(timer.id);
+    if (cmChanged && fresh.cm_id && !fresh.running) {
+      const hours = secondsToHours(elapsedSeconds(fresh, clock().getTime()), roundingCfg(db));
+      if (hours >= minIncrement(db) - 1e-9 && hours > 0) {
+        const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
+        entry = loadEntry(db, synced.entryId);
+      }
+    }
+    res.json({ ...withElapsed(getTimer.get(timer.id)), entry });
   });
 
   r.delete('/:id', (req, res) => {

@@ -155,7 +155,10 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     } else if (result.discarded) {
       emitToast('Misclick (under 2s) — nothing recorded.');
     } else if (result.unassigned) {
-      emitToast(`⏸ Time held (${fmtClock(result.seconds)}) — assign a matter (Edit timer) to file it.`);
+      // Stop of a no-matter timer: open the timer modal so the matter gets
+      // assigned right now — saving files the held time and the entry
+      // editor follows for the narrative (see the editing onDone below).
+      setEditing(result.timer);
     } else {
       emitToast(`Nothing to file yet — clock keeps counting (${fmtClock(result.seconds)}).`);
     }
@@ -608,6 +611,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                 roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
                 onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
                 onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
+                onRename=${(name) => guard(api.patch(`/api/timers/${t.id}`, { name }).then(reload))}
                 onMenu=${(x, y) => setMenu({ x, y, timer: t })}
                 onDragStart=${() => { dragId.current = t.id; }}
                 onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
@@ -636,7 +640,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
     ${editing ? html`
       <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes} groups=${groups}
-        onDone=${async () => { setEditing(null); await reload(); }}
+        onDone=${async (saved) => {
+          setEditing(null);
+          await reload();
+          // assigning a matter to a paused timer just filed its held time —
+          // flow straight into the narrative editor
+          if (saved && saved.entry) {
+            onEntryChanged();
+            openEditor({ id: saved.entry.id });
+          }
+        }}
         onClose=${() => setEditing(null)} />` : null}
 
     ${groupModal ? html`
@@ -665,9 +678,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onMenu, onDragStart, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
+  const [editingName, setEditingName] = useState(false);
+  const [nameText, setNameText] = useState('');
   const idle = timer.running && secs > idleAfter;
 
   // Worked-today highlight (spec §4): accumulated time today (elapsed > 0 or
@@ -678,6 +693,12 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
     setEditingClock(false);
     const h = Number(clockText);
     if (Number.isFinite(h) && h >= 0) onSet(Math.round(h * 10) / 10);
+  }
+
+  function commitName() {
+    setEditingName(false);
+    const v = nameText.trim();
+    if (v && v !== timer.name) onRename(v);
   }
 
   return html`
@@ -691,7 +712,13 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
       onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); }}
       onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
       onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
-      <span class="timer-name" title=${timer.name}>${timer.name}</span>
+      ${editingName ? html`
+        <input class="name-input" autoFocus value=${nameText}
+          onInput=${(e) => setNameText(e.target.value)}
+          onBlur=${commitName}
+          onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setEditingName(false); }} />` : html`
+        <button class="timer-name" tabIndex=${-1} title=${`${timer.name} — click to rename`}
+          onClick=${() => { setNameText(timer.name); setEditingName(true); }}>${timer.name}</button>`}
       ${timer.cm_id ? html`
         <span class="timer-cm" title=${`${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''}`}>
           ${timer.cm_short_name}${timer.task_code ? ` · ${timer.task_code}` : ''}
@@ -740,9 +767,10 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
         name, cm_id: cm ? cm.id : null, task_code: taskCode || null,
         group_id: groupId === '' ? null : Number(groupId),
       };
-      if (timer) await api.patch(`/api/timers/${timer.id}`, body);
-      else await api.post('/api/timers', body);
-      onDone();
+      const saved = timer
+        ? await api.patch(`/api/timers/${timer.id}`, body)
+        : await api.post('/api/timers', body);
+      onDone(saved);
     } catch (err) { setError(err.message); }
   }
 

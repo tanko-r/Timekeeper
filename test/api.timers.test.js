@@ -348,6 +348,43 @@ test('quick timer: assigning a matter later files the held time on the next stop
     assert.equal(stop.entry.total, 1.5);
   }));
 
+test('quick timer: assigning a matter to a PAUSED timer files the held time immediately', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600); // 1.0h held
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.ok(r.entry, 'held time files on assignment, not on the next stop');
+    assert.equal(r.entry.total, 1.0);
+    assert.equal(r.linked_entry_id, r.entry.id);
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 1);
+  }));
+
+test('quick timer: assigning a matter while RUNNING does not file yet (next stop does)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(r.entry ?? null, null, 'still running — the clock is not settled');
+    clock.advance(1800);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.total, 1.5);
+  }));
+
+test('quick timer: assignment below the minimum increment holds without filing', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    // 2 tenths of a minute — under 0.1h even after rounding? 100s rounds UP
+    // to 0.1h, so use a clock edit to zero instead: just don't run it at all.
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(r.entry ?? null, null, 'zero clock — nothing to file');
+    assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 0);
+  }));
+
 test('quick timer: un-assigning the matter is allowed and unlinks the entry', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;

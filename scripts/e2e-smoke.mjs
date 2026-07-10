@@ -351,7 +351,8 @@ await step('exclusive timers: starting a second timer stops & files the first (c
   await waitFor('.timer-card');
 });
 
-await step('quick timer: one click starts a no-matter timer; stop holds the time', async () => {
+await step('quick timer: start → stop → assign modal → narrative editor', async () => {
+  const entriesBefore = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
   await clickText('button', 'Quick');
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
     .some((c) => c.textContent.includes('Quick timer') && c.classList.contains('running')
@@ -368,14 +369,30 @@ await step('quick timer: one click starts a no-matter timer; stop holds the time
     const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('Quick timer'));
     card.querySelector('button[title="Stop & file time"]').click();
   });
-  await page.waitForFunction(() => document.body.textContent.includes('Time held'), { timeout: 4000 });
+  // stop of a no-matter timer opens the TIMER modal (assign the matter now)
+  await waitFor('.modal .cmpicker input');
   if (await page.$('.stop-chips')) throw new Error('unassigned stop must not offer chips (nothing filed)');
-  // stopped → title and favicon revert
+  // stopped → title and favicon revert (modal being open is irrelevant)
   await page.waitForFunction(() => document.title === 'Timekeeper', { timeout: 10000 });
   const favIdle = await page.evaluate(() =>
     !document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'));
   if (!favIdle) throw new Error('favicon did not revert after stop');
-  // cleanup: remove the scratch quick timer so later steps see one timer
+
+  // assigning a matter files the held time and flows into the entry editor
+  await page.click('.modal .cmpicker input');
+  await sleep(250);
+  await clickText('.cmpicker-item .name', 'Acme');
+  await clickText('.modal button', 'Save');
+  await waitFor('.modal-wide .narrative-preview textarea');
+  await clickText('.modal-wide button', 'Save & close');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+
+  // cleanup: the scratch entry the assignment filed + the quick timer itself
+  const entriesAfter = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
+  for (const e of entriesAfter.filter((x) => !entriesBefore.some((b) => b.id === x.id))) {
+    const del = await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`scratch entry cleanup failed: ${del.status}`);
+  }
   const timers = await (await fetch(`${base}/api/timers`)).json();
   for (const t of timers.filter((x) => x.name === 'Quick timer')) {
     const del = await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' });
@@ -383,6 +400,28 @@ await step('quick timer: one click starts a no-matter timer; stop holds the time
   }
   await page.reload({ waitUntil: 'networkidle0' });
   await waitFor('.timer-card');
+});
+
+await step('timer name is editable in place', async () => {
+  await page.click('.timer-card .timer-name');
+  await waitFor('.name-input');
+  const setName = (v) => page.evaluate((val) => {
+    const inp = document.querySelector('.name-input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(inp, val);
+    inp.dispatchEvent(new Event('input', { bubbles: true }));
+  }, v);
+  await setName('Acme research (renamed)');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-name')]
+    .some((el) => el.textContent === 'Acme research (renamed)'), { timeout: 4000 });
+  // rename back so later steps' name references hold
+  await page.click('.timer-card .timer-name');
+  await waitFor('.name-input');
+  await setName('Acme research');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-name')]
+    .some((el) => el.textContent === 'Acme research'), { timeout: 4000 });
 });
 
 await step('ghost-text: phrasebook completion in the entry editor, Tab accepts', async () => {
@@ -921,7 +960,7 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
   // repeat `/` while the bar is already open: click a card (focus leaves the
   // input; the bar stays up because the filter is set), press `/` again — it
   // must refocus the input rather than no-op on unchanged searchOpen state.
-  await page.click('.timer-card .timer-name'); // safe spot — not the clock/start buttons
+  await page.click('.timer-card .timer-cm'); // safe spot — name/clock/start are all interactive now
   await page.waitForFunction(() =>
     document.activeElement !== document.querySelector('.timer-search'), { timeout: 4000 });
   await page.keyboard.press('/');

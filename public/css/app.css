@@ -235,6 +235,13 @@ table.tk tr.client-row td {
 .timer-name {
   font-weight: 650; font-size: 13px; flex: 2 1 70px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
+  /* click-to-rename button dressed as text (mirrors .timer-clock) */
+  border: 0; background: none; color: inherit; padding: 0; text-align: left;
+  font-family: inherit; cursor: text; border-radius: 4px;
+}
+.timer-name:hover { background: var(--surface-2); }
+.name-input {
+  flex: 2 1 70px; min-width: 0; font-size: 13px; font-weight: 650; padding: 1px 4px;
 }
 .timer-cm {
   font-size: 11px; color: var(--text-muted); flex: 1 1 60px; min-width: 0; overflow: hidden;
