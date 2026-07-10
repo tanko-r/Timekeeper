@@ -16,12 +16,14 @@ function fmtClock(totalSeconds) {
 
 // Title for the current timer state. `fetchedAtMs` is when `timers` was
 // fetched; wall-clock time since then is added so the title ticks between
-// polls (same trick as TimerGrid's liveElapsed).
+// polls (same trick as TimerGrid's liveElapsed). While running, the title
+// is ONLY the clock + timer name — no app name, so the narrow tab / taskbar
+// preview spends every character on the timer (per David).
 export function runningTitle(timers, nowMs, fetchedAtMs, base = 'Timekeeper') {
   const t = (timers || []).find((x) => x.running);
   if (!t) return { title: base, running: false };
   const secs = Math.floor(t.elapsed_seconds + Math.max(0, (nowMs - fetchedAtMs) / 1000));
-  return { title: `▶ ${fmtClock(secs)} ${t.name} — ${base}`, running: true };
+  return { title: `▶ ${fmtClock(secs)} ${t.name}`, running: true };
 }
 
 // Favicons as data URIs: the idle one mirrors index.html's ⏱; the running
