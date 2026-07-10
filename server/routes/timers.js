@@ -259,6 +259,40 @@ export function timersRouter({ db, clock }) {
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
   });
 
+  // Stop the timer and file the day total into its linked entry. Shared by
+  // the stop route and the exclusive-start auto-stop so both behave the same.
+  function stopAndFile(timer) {
+    // Misclick grace: a running stretch of ≤2 seconds vanishes entirely —
+    // nothing accumulates, nothing files, the last-stop anchor doesn't move.
+    if (timer.running && timer.last_started_at
+      && clock().getTime() - Date.parse(timer.last_started_at) <= 2000) {
+      db.prepare('UPDATE timers SET running=0, last_started_at=NULL WHERE id=?').run(timer.id);
+      return {
+        entry: null, hours: 0, discarded: true,
+        seconds: timer.accumulated_seconds,
+        timer: withElapsed(getTimer.get(timer.id)),
+      };
+    }
+
+    const seconds = elapsedSeconds(timer, clock().getTime());
+    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
+      .run(seconds, now(), timer.id);
+
+    const hours = secondsToHours(seconds, roundingCfg(db));
+    if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
+      return { entry: null, hours: 0, seconds, timer: withElapsed(getTimer.get(timer.id)) };
+    }
+    const synced = syncToEntry(db, getTimer.get(timer.id), hours, todayLocal(clock()), now());
+    return {
+      entry: loadEntry(db, synced.entryId),
+      hours,
+      seconds,
+      relinked: synced.relinked || undefined,
+      previousTotal: synced.previousTotal ?? undefined,
+      timer: withElapsed(getTimer.get(timer.id)),
+    };
+  }
+
   r.post('/:id/start', (req, res) => {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
@@ -266,12 +300,13 @@ export function timersRouter({ db, clock }) {
     const b = req.body || {};
     const backdated = b.minutesAgo != null || b.atLastStop;
 
+    let startMs = null;
     if (timer.running) {
       if (backdated) {
         return res.status(409).json({ error: 'Timer is already running — pause it before a backdated start.' });
       }
     } else {
-      let startMs = clock().getTime();
+      startMs = clock().getTime();
       if (b.atLastStop && timer.last_stopped_at) {
         startMs = Date.parse(timer.last_stopped_at);
       } else if (b.minutesAgo != null) {
@@ -283,6 +318,17 @@ export function timersRouter({ db, clock }) {
       }
       // never reach behind today's midnight — yesterday is banked and closed
       startMs = Math.max(startMs, localMidnightMs(todayLocal(clock())));
+    }
+
+    // Exclusive timers: one running timer at a time. Stop-and-file every
+    // other running timer (same path as a manual stop) before this one
+    // starts — server-side, so it holds across tabs and races. A backdated
+    // start still stops the others at NOW; the resulting overlap is the
+    // user's explicit claim, same as before exclusivity.
+    const stopped = db.prepare(`SELECT ${TIMER_COLS} FROM timers WHERE running=1 AND id != ?`)
+      .all(timer.id).map((other) => stopAndFile(other));
+
+    if (startMs != null) {
       db.prepare('UPDATE timers SET running=1, last_started_at=? WHERE id=?')
         .run(new Date(startMs).toISOString(), timer.id);
       // Pre-compute the likely narrative NOW so it's ready before stop (spec
@@ -298,12 +344,8 @@ export function timersRouter({ db, clock }) {
       refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});
     }
 
-    const others = db.prepare(
-      'SELECT name FROM timers WHERE running=1 AND id != ?').all(timer.id).map((t) => t.name);
     const out = { timer: withElapsed(getTimer.get(timer.id)) };
-    if (others.length > 0) {
-      out.warning = `${others.join(', ')} ${others.length === 1 ? 'is' : 'are'} also running.`;
-    }
+    if (stopped.length > 0) out.stopped = stopped;
     res.json(out);
   });
 
@@ -313,36 +355,7 @@ export function timersRouter({ db, clock }) {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
-
-    // Misclick grace: a running stretch of ≤2 seconds vanishes entirely —
-    // nothing accumulates, nothing files, the last-stop anchor doesn't move.
-    if (timer.running && timer.last_started_at
-      && clock().getTime() - Date.parse(timer.last_started_at) <= 2000) {
-      db.prepare('UPDATE timers SET running=0, last_started_at=NULL WHERE id=?').run(timer.id);
-      return res.json({
-        entry: null, hours: 0, discarded: true,
-        seconds: timer.accumulated_seconds,
-        timer: withElapsed(getTimer.get(timer.id)),
-      });
-    }
-
-    const seconds = elapsedSeconds(timer, clock().getTime());
-    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
-      .run(seconds, now(), timer.id);
-
-    const hours = secondsToHours(seconds, roundingCfg(db));
-    if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
-      return res.json({ entry: null, hours: 0, seconds, timer: withElapsed(getTimer.get(timer.id)) });
-    }
-    const synced = syncToEntry(db, getTimer.get(timer.id), hours, todayLocal(clock()), now());
-    res.json({
-      entry: loadEntry(db, synced.entryId),
-      hours,
-      seconds,
-      relinked: synced.relinked || undefined,
-      previousTotal: synced.previousTotal ?? undefined,
-      timer: withElapsed(getTimer.get(timer.id)),
-    });
+    res.json(stopAndFile(timer));
   });
 
   // Zero the clock and unlink — the next stop files a brand-new entry.

@@ -86,7 +86,18 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const start = useCallback(async (timer, opts = {}) => {
     const r = await api.post(`/api/timers/${timer.id}/start`, opts);
     localStorage.setItem('tk:lastTimer', String(timer.id));
-    if (r.warning) emitToast(`⏱ ${r.warning}`);
+    // Exclusive timers: the server stop-and-filed whatever was running. Filed
+    // an entry → offer the narrative chips for it (same affordance as a
+    // manual stop, non-blocking — the new timer is already running). A sub-2s
+    // misclick stretch discards silently; an under-increment stop just pauses.
+    for (const s of r.stopped || []) {
+      if (s.entry) {
+        setStopPopup({ timer: s.timer, result: s });
+        onEntryChanged();
+      } else if (!s.discarded) {
+        emitToast(`⏸ ${s.timer.name} paused — nothing to file yet (${fmtClock(s.seconds)}).`);
+      }
+    }
     await reload();
     // Deliberately imperative one-shot DOM class, not React state: a single
     // confirmation pulse on the card that just started, self-removing after
@@ -96,7 +107,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       el.classList.add('just-started');
       setTimeout(() => el.classList.remove('just-started'), 350);
     }
-  }, [reload]);
+  }, [reload, onEntryChanged]);
 
   const stop = useCallback(async (timer) => {
     localStorage.setItem('tk:lastTimer', String(timer.id));

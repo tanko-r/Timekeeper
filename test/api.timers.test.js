@@ -297,14 +297,58 @@ test('duplicate timer copies binding, zero clock', () =>
     assert.equal(dup.running, 0);
   }));
 
-test('starting a second timer warns but does not block', () =>
-  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+// Exclusive timers: one running timer at a time. Starting a timer stops-and-
+// files any other running timer server-side (atomic against races/multi-tab)
+// and reports what it stopped so the client can surface the narrative chips.
+test('exclusive: starting a second timer auto-stops the first and files its time', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const a = (await t.fetchJson('POST', '/api/timers', { name: 'Timer A', cm_id: cm.id })).body;
     const b = (await t.fetchJson('POST', '/api/timers', { name: 'Timer B', cm_id: cm.id })).body;
-    const r1 = await t.fetchJson('POST', `/api/timers/${a.id}/start`);
-    assert.equal(r1.body.warning, undefined);
-    const r2 = await t.fetchJson('POST', `/api/timers/${b.id}/start`);
-    assert.match(r2.body.warning, /Timer A/);
+
+    const r1 = (await t.fetchJson('POST', `/api/timers/${a.id}/start`)).body;
+    assert.equal(r1.stopped, undefined, 'nothing running → nothing stopped');
+
+    clock.advance(1200); // 20 min on Timer A
+    const r2 = (await t.fetchJson('POST', `/api/timers/${b.id}/start`)).body;
+    assert.equal(r2.timer.running, 1, 'the new timer starts');
+    assert.equal(r2.stopped.length, 1);
+    const s = r2.stopped[0];
+    assert.equal(s.timer.id, a.id);
+    assert.equal(s.timer.running, 0);
+    assert.equal(s.hours, 0.4); // 1200s rounds up to 0.4
+    assert.equal(s.entry.total, 0.4, 'auto-stop files exactly like a manual stop');
+
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list.filter((x) => x.running).length, 1, 'only one timer running');
+    assert.equal(list.find((x) => x.id === a.id).elapsed_seconds, 1200);
+  }));
+
+test('exclusive: a sub-2s stretch on the auto-stopped timer is discarded, not filed', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const a = (await t.fetchJson('POST', '/api/timers', { name: 'Timer A', cm_id: cm.id })).body;
+    const b = (await t.fetchJson('POST', '/api/timers', { name: 'Timer B', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${a.id}/start`);
+    clock.advance(1); // misclick territory
+    const r = (await t.fetchJson('POST', `/api/timers/${b.id}/start`)).body;
+    assert.equal(r.stopped[0].discarded, true);
+    assert.equal(r.stopped[0].entry, null);
+    const rowA = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === a.id);
+    assert.equal(rowA.running, 0);
+    assert.equal(rowA.elapsed_seconds, 0, 'misclick stretch fully reverted');
+  }));
+
+test('exclusive: a backdated start also stops the running timer first', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const a = (await t.fetchJson('POST', '/api/timers', { name: 'Timer A', cm_id: cm.id })).body;
+    const b = (await t.fetchJson('POST', '/api/timers', { name: 'Timer B', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${a.id}/start`);
+    clock.advance(1800);
+    const r = (await t.fetchJson('POST', `/api/timers/${b.id}/start`, { minutesAgo: 10 })).body;
+    assert.equal(r.stopped[0].timer.id, a.id);
+    assert.equal(r.stopped[0].hours, 0.5);
+    const rowB = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === b.id);
+    assert.equal(rowB.running, 1);
+    assert.equal(rowB.elapsed_seconds, 600, 'backdated start honored');
   }));
 
 test('timer-created entries bump the CM picker recency', () =>

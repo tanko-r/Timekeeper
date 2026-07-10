@@ -298,6 +298,51 @@ await step('timer clock is editable in place', async () => {
     { timeout: 4000 });
 });
 
+await step('exclusive timers: starting a second timer stops & files the first (chips pop, one running)', async () => {
+  // scratch matter + two scratch timers, all cleaned up below so later steps
+  // see the same timers/entries they always did
+  const mkJson = (url, body) => fetch(`${base}${url}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+  const cm = await mkJson('/api/cms', { cm_number: '999001-000001', short_name: 'Exclusive scratch', billable: 1 });
+  const ta = await mkJson('/api/timers', { name: '__excl-A__', cm_id: cm.id });
+  const tb = await mkJson('/api/timers', { name: '__excl-B__', cm_id: cm.id });
+  await mkJson(`/api/timers/${ta.id}/start`, { minutesAgo: 10 }); // enough to file ≥0.1h on auto-stop
+  await page.reload({ waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+    .some((c) => c.textContent.includes('__excl-A__') && c.classList.contains('running')), { timeout: 4000 });
+
+  // clicking Start on B must stop A server-side and pop A's stop chips
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('__excl-B__'));
+    card.querySelector('button[title="Start"]').click();
+  });
+  await waitFor('.stop-chips');
+  const filedHead = await page.$eval('.stop-chips-head', (el) => el.textContent);
+  if (!filedHead.includes('Exclusive scratch')) throw new Error(`chips are not for the auto-stopped timer: "${filedHead}"`);
+  await page.waitForFunction(() => {
+    const running = [...document.querySelectorAll('.timer-card.running')];
+    return running.length === 1 && running[0].textContent.includes('__excl-B__');
+  }, { timeout: 4000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+
+  // cleanup: the filed scratch entry, both timers (leave the scratch matter —
+  // inert, and entries reference cms by id anyway)
+  const entries = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
+  for (const e of entries.filter((x) => x.cm && x.cm.cm_number === '999001-000001')) {
+    const del = await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`scratch entry cleanup failed: ${del.status}`);
+  }
+  for (const t of [ta, tb]) {
+    const del = await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`scratch timer cleanup failed: ${del.status}`);
+  }
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-card');
+});
+
 await step('ghost-text: phrasebook completion in the entry editor, Tab accepts', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');

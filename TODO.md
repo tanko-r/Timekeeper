@@ -3,28 +3,6 @@
 Ideas captured but not yet designed or planned. Pull one into a proper
 spec/plan (see `docs/superpowers/`) before implementing.
 
-## 2. Exclusive timers: starting one stops the running one
-
-When a timer is running, starting another timer should first **stop the
-current timer** (filing its time) and pop up the narrative modal for the
-one just stopped, then start the new one. I.e. one running timer at a
-time (matches how Intapp shows a single "Running" total).
-
-Relevant: `start`/`stop` in `public/js/components/timergrid.js:51-70`
-(the stop path already fires `setStopPopup` → `StopPopup`); server
-`POST /api/timers/:id/start` and `/stop` in `server/routes/timers.js`.
-
-Open questions:
-- Enforce single-running on the **server** (start auto-stops any other
-  running timer atomically) or on the **client** (stop-then-start)?
-  Server is safer against races and multi-tab.
-- Interaction with the flow-redesign spec (§6/§7), which wants stops to
-  file **silently** and defer narration to the close-out sweep. If that
-  lands, the auto-stop should follow the same silent-file + chip/close-out
-  path rather than the current per-stop modal. Reconcile before building.
-- Should the auto-stopped timer's narrative modal block starting the new
-  timer, or start immediately and let the narrative be filled after?
-
 ## 3. Browser notification for long-running timers
 
 Fire a **browser notification** (Notifications API) when a timer has been
