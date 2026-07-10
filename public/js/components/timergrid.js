@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtTenths, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
+  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
@@ -107,6 +107,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     }
   });
 
+  // "Assign matter" on the dashboard's ghost row opens this grid's edit modal.
+  useEffect(() => {
+    const onEditTimer = (e) => {
+      const t = (timers || []).find((x) => x.id === e.detail.id);
+      if (t) setEditing(t);
+    };
+    window.addEventListener('tk:edit-timer', onEditTimer);
+    return () => window.removeEventListener('tk:edit-timer', onEditTimer);
+  }, [timers]);
+
   // ---------- actions ----------
 
   const guard = (p) => p.catch((e) => emitToast(e.message, { error: true }));
@@ -133,6 +143,18 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       } else if (!s.discarded) {
         emitToast(`⏸ ${s.timer.name} paused — nothing to file yet (${fmtClock(s.seconds)}).`);
       }
+    }
+    // start creates the entry now — refresh Today's entries right away
+    if (r.entry) onEntryChanged();
+    // the old linked entry was finalized/deleted meanwhile; the new entry
+    // carries the whole day clock — offer the double-count deduction here
+    if (r.relinked) {
+      emitToast('Previous entry is locked — started a new one carrying the full day clock.',
+        r.previousTotal ? {
+          actionLabel: `Deduct ${fmtHours(r.previousTotal)}h`,
+          action: () => guard(api.put(`/api/timers/${timer.id}/clock`, { deltaHours: -r.previousTotal })
+            .then(() => { onEntryChanged(); return reload(); })),
+        } : undefined);
     }
     await reload();
     // Deliberately imperative one-shot DOM class, not React state: a single
@@ -643,11 +665,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         onDone=${async (saved) => {
           setEditing(null);
           await reload();
-          // assigning a matter to a paused timer just filed its held time —
-          // flow straight into the narrative editor
           if (saved && saved.entry) {
             onEntryChanged();
-            openEditor({ id: saved.entry.id });
+            // paused assign filed its settled held time — flow straight into
+            // the narrative editor; a RUNNING assign just linked the entry
+            // (total settles at stop), so let it ride
+            if (!saved.running) openEditor({ id: saved.entry.id });
           }
         }}
         onClose=${() => setEditing(null)} />` : null}

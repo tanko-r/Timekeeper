@@ -5,7 +5,7 @@ import {
 } from '/js/ui.js';
 
 // Card list of entries with inline actions. onChanged() after any mutation.
-export function EntryList({ entries, openEditor, onChanged, settings, showDate = false }) {
+export function EntryList({ entries, openEditor, onChanged, settings, showDate = false, runningIds = null }) {
   if (!entries || entries.length === 0) {
     return html`<div class="card muted">No entries.</div>`;
   }
@@ -54,7 +54,10 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
               <${StatusChip} entry=${e} />
               ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>
                 <${Icon} name="export" size=${12} /> exported</span>` : null}
-              ${e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
+              ${runningIds && runningIds.has(e.id) ? html`
+                <span class="chip chip-running" title="Timer running — the total settles at the next stop">
+                  <${Icon} name="timer" size=${12} /> running</span>`
+              : e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
             <p class="narrative">${e.narrative || html`<em class="muted">No narrative yet</em>`}</p>
             ${e.tasks.length > 1 ? html`

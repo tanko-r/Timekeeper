@@ -158,6 +158,13 @@ input.input-narrow { width: 90px; }
 }
 .chip-finalized { color: var(--status-good); border-color: color-mix(in srgb, var(--status-good) 40%, transparent); }
 .chip-exported { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* running-entry cue (feedback 2026-07-10): the entry exists from start */
+.chip-running {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  animation: tk-running-pulse 2s ease-in-out infinite;
+}
+@keyframes tk-running-pulse { 50% { opacity: 0.55; } }
+.entry-card.running-ghost { border-style: dashed; opacity: 0.9; }
 .star { cursor: pointer; color: var(--text-muted); background: none; border: 0; font-size: 16px; padding: 2px; }
 .star.on { color: var(--nonbillable); }
 

@@ -26,6 +26,12 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   if (loading && !data) return html`<${Spinner} />`;
   const d = data;
 
+  // entries whose timer is running right now get the pulsing "running" chip;
+  // running quick timers with no matter yet render as ghost rows below
+  const runningEntryIds = new Set((d.timers || [])
+    .filter((t) => t.running && t.linked_entry_id).map((t) => t.linked_entry_id));
+  const unassignedRunning = (d.timers || []).filter((t) => t.running && !t.cm_id);
+
   const alerts = d.alerts;
   const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0 || alerts.unexportedFinalized > 0;
 
@@ -110,7 +116,25 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         <h2>Today’s entries</h2>
         <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
       </div>
-      <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />
+      ${unassignedRunning.map((t) => html`
+        <div key=${'ghost-' + t.id} class="entry-card running-ghost">
+          <div class="body">
+            <div class="entry-meta">
+              <span class="chip chip-running"><${Icon} name="timer" size=${12} /> running</span>
+              <strong>${t.name}</strong>
+            </div>
+            <p class="narrative"><em class="muted">No matter yet — this time becomes an entry once one is assigned.</em></p>
+          </div>
+          <div style=${{ textAlign: 'right' }}>
+            <div class="hours muted">${fmtHours(Math.ceil((t.elapsed_seconds / 3600) * 10) / 10)}</div>
+            <button class="btn btn-sm"
+              onClick=${() => window.dispatchEvent(new CustomEvent('tk:edit-timer', { detail: { id: t.id } }))}>
+              Assign matter
+            </button>
+          </div>
+        </div>`)}
+      <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
+        settings=${settings} runningIds=${runningEntryIds} />
     </div>
 
     ${warnGate ? html`
