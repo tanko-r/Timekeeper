@@ -32,3 +32,16 @@ promoted into the redesign instead of parked.
   exported" for the range (`exportview.js`). Pipeline-relevant.
 - **QW7 — Column sorting.** Sort the Search / Export / Clients&Matters
   tables by date, hours, last-used (none sortable today).
+
+## UI feedback (screenshots)
+
+Captured in-app with Alt+drag. Address the item, then DELETE the
+referenced screenshot (see CLAUDE.md).
+- [ ] 2026-07-10 08:53 — Starting a timer should automatically create an entry. (feedback/2026-07-10T08-53-54.png · #/)
+- [ ] 2026-07-10 10:14 — There is no way to add a client manually.  I can add a new matter, but if the client is not already in the system, I can't add the matter.  Need to have this ability.  Adding the client should lock the client name and number together. (feedback/2026-07-10T10-14-57.png · #/cms)
+- [ ] 2026-07-10 10:18 — Remove the matter name from timer buttons.  Should be only caption (or matter name if no caption set), clocktime, tenths, button and menu when hovered.  For timers not associated with a matter, there should be a UI element to show that, such as a grayout or hash.  I'm open to suggestions. (feedback/2026-07-10T10-18-15.png · #/)
+
+## Ideas:
+
+Various thoughts from David in using the app:
+- **AOT Timer** A separate window in the PWA that just shows the active timer with caption while running so it can be always on top in very small format somehow.  NOt sure this is feasible.
