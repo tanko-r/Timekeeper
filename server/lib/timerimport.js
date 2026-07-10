@@ -20,8 +20,12 @@ export function detectMapping(headers) {
     }
     return -1;
   };
+  // Order matters: cm_number first so "Client/Matter" headers aren't taken
+  // for a client name, and client_name before matter_name so matter_name's
+  // broad 'name' needle can't steal a "Client Name" column.
   return {
     cm_number: find(['cmnumber', 'matternumber', 'clientmatter', 'cmno', 'cm']),
+    client_name: find(['clientname', 'client']),
     matter_name: find(['mattername', 'name', 'matterdescription', 'description', 'matter']),
     group: find(['group', 'practice', 'category', 'section']),
   };
@@ -31,7 +35,7 @@ export function detectMapping(headers) {
 // out of range for the header count becomes -1 (treated as "unmapped").
 export function normalizeMapping(mapping, headerCount) {
   const out = {};
-  for (const field of ['cm_number', 'matter_name', 'group']) {
+  for (const field of ['cm_number', 'client_name', 'matter_name', 'group']) {
     const i = Number(mapping && mapping[field]);
     out[field] = Number.isInteger(i) && i >= 0 && i < headerCount ? i : -1;
   }
@@ -59,11 +63,12 @@ export function planImport(rows, mapping, opts = {}) {
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
     const cm_number = at(row, mapping.cm_number);
+    const client_name = at(row, mapping.client_name);
     const matter_name = at(row, mapping.matter_name);
     const group = at(row, mapping.group);
 
     // Wholly empty rows are noise, not skips — drop them silently.
-    if (!cm_number && !matter_name && !group) continue;
+    if (!cm_number && !matter_name && !group && !client_name) continue;
 
     const billable = group && nonBillable.has(group.toLowerCase()) ? 0 : 1;
 
@@ -75,7 +80,7 @@ export function planImport(rows, mapping, opts = {}) {
     else if (seen.has(cm_number)) { action = 'skip'; reason = 'duplicate in file'; }
     else seen.add(cm_number);
 
-    plan.push({ rowNum: i + 1, cm_number, matter_name, group, billable, action, reason });
+    plan.push({ rowNum: i + 1, cm_number, client_name, matter_name, group, billable, action, reason });
   }
 
   const counts = {

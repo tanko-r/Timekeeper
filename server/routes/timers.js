@@ -184,9 +184,14 @@ export function timersRouter({ db, clock }) {
       const insTimer = db.prepare(
         'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, NULL, ?, ?, ?, ?)');
 
+      const nameClient = db.prepare(
+        "UPDATE clients SET name=?, updated_at=? WHERE id=? AND (name IS NULL OR name='')");
       for (const p of toCreate) {
         const parts = splitCmNumber(p.cm_number);
         const clientId = ensureClient(db, parts.clientNumber, nowIso);
+        // CSV client name fills a blank client; a client already named in the
+        // app keeps its name (imports never rename).
+        if (p.client_name) nameClient.run(p.client_name, nowIso, clientId);
         const cmId = insCm.run(p.cm_number, p.matter_name, p.billable, clientId, parts.matterNumber, nowIso, nowIso).lastInsertRowid;
         let groupId = null;
         if (p.group) {

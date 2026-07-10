@@ -20,7 +20,7 @@ test('import/preview detects columns and plans create vs skip', () =>
   withServer(async (t) => {
     const { status, body } = await t.fetchJson('POST', '/api/timers/import/preview', { csv: CSV });
     assert.equal(status, 200);
-    assert.deepEqual(body.mapping, { cm_number: 0, matter_name: 1, group: 2 });
+    assert.deepEqual(body.mapping, { cm_number: 0, client_name: -1, matter_name: 1, group: 2 });
     assert.equal(body.counts.create, 3);
     assert.equal(body.counts.skip, 2);
     const firm = body.plan.find((p) => p.cm_number === '100001-000101');
@@ -84,6 +84,28 @@ test('empty CSV is a 400', () =>
   withServer(async (t) => {
     const { status } = await t.fetchJson('POST', '/api/timers/import/preview', { csv: '' });
     assert.equal(status, 400);
+  }));
+
+test('import with a client-name column names the client, never clobbering an existing name', () =>
+  withServer(async (t) => {
+    const csv = [
+      'CM Number,Matter Name,Client Name,Group',
+      '100001-000400,Acme merger,Acme Holdings,Corporate',
+      '100001-000401,Acme lease,,Corporate',     // blank name on a known client — no-op
+      '100006-000001,Beta suit,Beta LLC,Litigation',
+    ].join('\r\n') + '\r\n';
+    const { status } = await t.fetchJson('POST', '/api/timers/import', { csv });
+    assert.equal(status, 201);
+    const clients = (await t.fetchJson('GET', '/api/clients')).body;
+    assert.equal(clients.find((c) => c.client_number === '100001').name, 'Acme Holdings');
+    assert.equal(clients.find((c) => c.client_number === '100006').name, 'Beta LLC');
+
+    // a later import spelling the client differently keeps the existing name
+    await t.fetchJson('POST', '/api/timers/import', {
+      csv: 'CM Number,Matter Name,Client Name\r\n100001-000402,Acme appeal,ACME HOLDINGS LLC\r\n',
+    });
+    const again = (await t.fetchJson('GET', '/api/clients')).body;
+    assert.equal(again.find((c) => c.client_number === '100001').name, 'Acme Holdings');
   }));
 
 test('timer import links imported matters to clients', () => withServer(async (t) => {
