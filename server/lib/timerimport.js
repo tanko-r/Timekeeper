@@ -20,12 +20,28 @@ export function detectMapping(headers) {
     }
     return -1;
   };
-  // Order matters: cm_number first so "Client/Matter" headers aren't taken
-  // for a client name, and client_name before matter_name so matter_name's
-  // broad 'name' needle can't steal a "Client Name" column.
+  // Order matters throughout: number columns before name columns so the
+  // name needles ('client', 'name') can't steal "Client Number" / "Matter
+  // Name" style headers, and client_name before matter_name so matter_name's
+  // broad 'name' needle can't take a "Client Name" column.
+  const client_number = find(['clientnumber', 'clientno', 'clientnum']);
+  // With an explicit client-number column, "Matter Number" is the matter's
+  // own number (the locked pairs model: client number+name, matter
+  // number+name). Without one, it usually means the combined CM — firms
+  // label 100001-000012 a "matter number" too.
+  let matter_number = -1;
+  let cm_number;
+  if (client_number >= 0) {
+    matter_number = find(['matternumber', 'matterno', 'matternum']);
+    cm_number = find(['cmnumber', 'clientmatter', 'cmno', 'cm']);
+  } else {
+    cm_number = find(['cmnumber', 'matternumber', 'clientmatter', 'cmno', 'cm']);
+  }
   return {
-    cm_number: find(['cmnumber', 'matternumber', 'clientmatter', 'cmno', 'cm']),
+    cm_number,
+    client_number,
     client_name: find(['clientname', 'client']),
+    matter_number,
     matter_name: find(['mattername', 'name', 'matterdescription', 'description', 'matter']),
     group: find(['group', 'practice', 'category', 'section']),
   };
@@ -35,7 +51,7 @@ export function detectMapping(headers) {
 // out of range for the header count becomes -1 (treated as "unmapped").
 export function normalizeMapping(mapping, headerCount) {
   const out = {};
-  for (const field of ['cm_number', 'client_name', 'matter_name', 'group']) {
+  for (const field of ['cm_number', 'client_number', 'client_name', 'matter_number', 'matter_name', 'group']) {
     const i = Number(mapping && mapping[field]);
     out[field] = Number.isInteger(i) && i >= 0 && i < headerCount ? i : -1;
   }
@@ -62,13 +78,24 @@ export function planImport(rows, mapping, opts = {}) {
 
   for (let i = 1; i < rows.length; i++) {
     const row = rows[i];
-    const cm_number = at(row, mapping.cm_number);
+    // Separate client+matter number columns (the locked pairs model) beat a
+    // combined CM column when both are mapped. Numeric parts are zero-padded
+    // to the canonical 6-6 shape; non-numeric garbage is left alone so it
+    // still fails CM_RE and surfaces as a skip.
+    const pad6 = (s) => (/^\d{1,6}$/.test(s) ? s.padStart(6, '0') : s);
+    const client_number = at(row, mapping.client_number);
+    const matter_number = at(row, mapping.matter_number);
+    let cm_number = at(row, mapping.cm_number);
+    if (client_number || matter_number) {
+      cm_number = `${pad6(client_number)}-${pad6(matter_number)}`;
+    }
     const client_name = at(row, mapping.client_name);
     const matter_name = at(row, mapping.matter_name);
     const group = at(row, mapping.group);
 
     // Wholly empty rows are noise, not skips — drop them silently.
-    if (!cm_number && !matter_name && !group && !client_name) continue;
+    if (!client_number && !matter_number && !at(row, mapping.cm_number)
+      && !matter_name && !group && !client_name) continue;
 
     const billable = group && nonBillable.has(group.toLowerCase()) ? 0 : 1;
 

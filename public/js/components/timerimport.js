@@ -9,9 +9,11 @@ import {
 // commit. The server re-plans on commit, so the preview is advisory only.
 
 const FIELDS = [
-  ['cm_number', 'CM Number'],
+  ['client_number', 'Client Number'],
   ['client_name', 'Client Name'],
+  ['matter_number', 'Matter Number'],
   ['matter_name', 'Matter Name'],
+  ['cm_number', 'CM Number (combined)'],
   ['group', 'Group'],
 ];
 
@@ -69,11 +71,12 @@ export function TimerImport({ onClose, onDone }) {
     <${Modal} title="Import timers from CSV" onClose=${onClose} wide=${true}>
       ${!preview && !busy ? html`
         <p class="muted" style=${{ marginTop: 0 }}>
-          Upload a CSV with columns for CM Number, Matter Name, and Group —
-          plus, optionally, Client Name (fills in clients that don't have a
-          name yet; never renames). New matters are created automatically;
-          matters already in the system are skipped. Groups named for the firm
-          are imported as non-billable.
+          Upload a CSV with Client Number, Client Name, Matter Number, Matter
+          Name, and Group columns (or a single combined CM Number like
+          100001-000012 instead of the two number columns). Client names fill
+          in clients that don't have a name yet — imports never rename. New
+          matters are created automatically; matters already in the system are
+          skipped. Groups named for the firm are imported as non-billable.
         </p>
         <input type="file" accept=".csv,text/csv"
           onChange=${(e) => onFile(e.target.files && e.target.files[0])} />
