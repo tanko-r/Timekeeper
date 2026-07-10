@@ -653,3 +653,28 @@ test('midnight reset preserves linked entries of paused timers — even when not
     const list = (await t.fetchJson('GET', '/api/timers')).body;
     for (const x of list) assert.equal(x.linked_entry_id, null, 'paused timers unlink for the new day');
   }));
+
+test('dashboard alerts skip entries whose timer is running; they surface on stop', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Acme research', cm_id: cm.id,
+    })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(60);
+    let dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.alerts.invalidDrafts.length, 0, 'work in progress is not "needs attention"');
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.alerts.invalidDrafts.length, 1, 'stopped: the empty narrative surfaces normally');
+  }));
+
+test('dashboard timers include unassigned quick timers (for the ghost row + footer)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t) => {
+    const quick = (await t.fetchJson('POST', '/api/timers', {})).body;
+    await t.fetchJson('POST', `/api/timers/${quick.id}/start`);
+    const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    const row = dash.timers.find((x) => x.id === quick.id);
+    assert.ok(row, 'quick timer present in dashboard payload');
+    assert.equal(row.cm_number, null);
+    assert.equal(row.running, 1);
+  }));

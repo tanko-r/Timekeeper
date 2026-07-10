@@ -25,14 +25,20 @@ export function dashboardRouter({ db, clock }) {
       if (e.billable) billable += e.total;
     }
 
-    // Any draft with validation findings needs attention before finalizing.
+    // Any draft with validation findings needs attention before finalizing —
+    // except one whose timer is running right now (a start-created entry has
+    // no narrative and 0.0h by definition; it alerts once the timer stops).
+    const runningLinked = new Set(db.prepare(
+      'SELECT linked_entry_id FROM timers WHERE running=1 AND linked_entry_id IS NOT NULL'
+    ).all().map((x) => x.linked_entry_id));
     const draftRows = db.prepare(
       "SELECT * FROM entries WHERE deleted_at IS NULL AND status='draft' AND date <= ?"
     ).all(today).map((row) => enrich(db, row));
-    const invalid = draftRows.filter((e) => e.validation.length > 0);
+    const invalid = draftRows.filter((e) => e.validation.length > 0 && !runningLinked.has(e.id));
 
+    // LEFT JOIN: unassigned quick timers ride along too (ghost row + footer)
     const timers = db.prepare(`SELECT timers.*, matters.cm_number, matters.short_name AS cm_short_name
-      FROM timers JOIN matters ON matters.id = timers.cm_id ORDER BY timers.sort_order, timers.id`).all()
+      FROM timers LEFT JOIN matters ON matters.id = timers.cm_id ORDER BY timers.sort_order, timers.id`).all()
       .map((t) => ({ ...t, elapsed_seconds: elapsedSeconds(t, clock().getTime()) }));
 
     res.json({
