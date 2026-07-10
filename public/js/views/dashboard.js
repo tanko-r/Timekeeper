@@ -101,13 +101,17 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <${TargetMeter} billable=${d.today.billable} nonbillable=${d.today.nonbillable} target=${d.today.target} />
     </div>
 
-    <${TimerGrid} settings=${settings} onEntryChanged=${bumpRefresh} openEditor=${openEditor} />
-
-    <div class="section-title">
-      <h2>Today’s entries</h2>
-      <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
+    <div class="panel">
+      <${TimerGrid} settings=${settings} onEntryChanged=${bumpRefresh} openEditor=${openEditor} />
     </div>
-    <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />
+
+    <div class="panel">
+      <div class="section-title">
+        <h2>Today’s entries</h2>
+        <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
+      </div>
+      <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh} settings=${settings} />
+    </div>
 
     ${warnGate ? html`
       <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"

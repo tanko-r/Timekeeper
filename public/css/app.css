@@ -519,6 +519,16 @@ kbd {
 }
 .section-title { display: flex; align-items: center; gap: 10px; margin: 22px 0 10px; }
 .section-title h2 { margin: 0; }
+/* dashboard panels: bounding boxes around the timer area and the day's
+   entries (visual cueing). Same treatment as .card; inner timer/entry cards
+   drop to the page tone so they still read as separate objects inside. */
+.panel {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px 16px;
+  box-shadow: var(--shadow); margin-top: 16px;
+}
+.panel > .section-title:first-child { margin-top: 0; }
+.panel .timer-card, .panel .entry-card { background: var(--surface-0); }
 .checkbox-row { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .checkbox-row input { width: auto; }
 .banned-chip { display: inline-flex; gap: 6px; align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 13px; margin: 2px; }
