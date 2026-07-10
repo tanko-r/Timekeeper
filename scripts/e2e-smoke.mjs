@@ -131,9 +131,28 @@ await step('create client+matter through picker (client→matter path, prefilled
   if (cpre !== '100001') throw new Error(`client prefill wrong: ${cpre}`);
   const mpre = await page.$eval('[data-nc-matter]', (el) => el.value);
   if (mpre !== '000012') throw new Error(`matter prefill wrong: ${mpre}`);
-  // deliberately leave the client UNNAMED (blank names must render as the number)
-  await type('[data-nc-name]', 'Acme lease dispute');
-  await clickText('.modal button', 'Create matter');
+  // Client name is REQUIRED for brand-new clients created via the modal
+  // (feedback 2026-07-10). This scenario needs 100001 to stay UNNAMED (later
+  // steps cover number-as-label and "+ Name this client", still reachable via
+  // CSV import) — so verify the prefill, cancel, and seed via the API instead.
+  await clickText('.modal button', 'Cancel');
+  const seed = await fetch(`${base}/api/cms`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cm_number: '100001-000012', short_name: 'Acme lease dispute', billable: 1 }),
+  });
+  if (seed.status !== 201) throw new Error(`API seed of 100001-000012 failed: ${seed.status}`);
+  // back in the still-open entry editor: pick the seeded matter via the picker
+  // (clear the leftover typed number through React's controlled-input path)
+  await page.evaluate(() => {
+    const input = document.querySelector('.modal .cmpicker input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(input, '');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.click('.modal .cmpicker input');
+  await page.type('.modal .cmpicker input', 'Acme lease', { delay: 5 });
+  await clickText('.cmpicker-item .name', 'Acme lease dispute');
   await sleep(400);
 });
 
@@ -613,6 +632,28 @@ await step('picker: client→matter create + fuzzy client-name search', async ()
   await page.waitForFunction(() => [...document.querySelectorAll('.cmpicker-item')]
     .some((el) => el.textContent.includes('Meridian') && el.textContent.includes('Harbor Lease')),
   { timeout: 4000 });
+  await clickText('.modal button', 'Cancel'); // no timer created
+});
+
+await step('picker: NEW CLIENT by name first (feedback 2026-07-10)', async () => {
+  await clickText('button', 'New timer');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'New client/matter');
+  await waitFor('[data-nc-client]');
+  await type('[data-nc-client]', 'Globex'); // a NAME, not a number — the old dead-end
+  // match the quoted variant so the stale outer "New client/matter" row can't be hit
+  await page.waitForFunction(() => [...document.querySelectorAll('.cmpicker-item .name')]
+    .some((el) => el.textContent.includes('New client “Globex”')), { timeout: 4000 });
+  await clickText('.cmpicker-item .name', 'New client “Globex”');
+  // name moved into the (now required) client-name field; number goes in the search box
+  const pre = await page.$eval('[data-nc-client-name]', (el) => el.value);
+  if (pre !== 'Globex') throw new Error(`client name not carried over: "${pre}"`);
+  await type('[data-nc-client]', '414141');
+  await type('[data-nc-matter]', '000001');
+  await type('[data-nc-name]', 'Globex retainer');
+  await clickText('.modal button', 'Create matter');
+  await waitFor('.modal .cmpicker button[title="Change CM"]');
   await clickText('.modal button', 'Cancel'); // no timer created
 });
 

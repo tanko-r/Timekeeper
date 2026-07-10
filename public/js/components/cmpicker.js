@@ -197,6 +197,7 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const [name, setName] = useState(/^[\d\s-]*$/.test(initialQ) ? '' : initialQ);
   const [billable, setBillable] = useState(true);
   const [favorite, setFavorite] = useState(false);
+  const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
   const [error, setError] = useState(null);
 
   useEffect(() => { api.get('/api/clients').then(setClients).catch(() => {}); }, []);
@@ -210,7 +211,17 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const newNumber = !effective && SIX_RE.test(clientQ.trim()) ? clientQ.trim() : null;
   const clientNumber = effective ? effective.client_number : newNumber;
   const needsName = !!newNumber || (effective && !effective.name);
-  const valid = !!clientNumber && SIX_RE.test(matterNum.trim());
+  // Brand-new client: name and number are entered together, as a locked pair.
+  const valid = !!clientNumber && SIX_RE.test(matterNum.trim())
+    && (!newNumber || clientName.trim() !== '');
+  const qt = clientQ.trim();
+  const qIsText = qt !== '' && !/^[\d\s-]+$/.test(qt);
+
+  function startNewClient() {
+    if (qIsText) { setClientName(qt); setClientQ(''); }
+    setWantNew(true);
+    setListOpen(false);
+  }
 
   async function save(e) {
     e.preventDefault();
@@ -234,7 +245,9 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
       <form onSubmit=${save} class="grid">
         <${Field} label="Client" hint=${effective
           ? `Existing client ${effective.client_number}${effective.name ? '' : ' (unnamed)'}`
-          : newNumber ? `New client ${newNumber} will be created` : 'Search by name, or type a 6-digit client number'}>
+          : newNumber ? `New client ${newNumber} — created together with this matter`
+          : wantNew ? 'Now type the 6-digit client number'
+          : 'Search by name or 6-digit number — or pick “＋ New client…” below'}>
           ${picked ? html`
             <button type="button" class="btn" style=${{ justifyContent: 'space-between' }} title="Change client"
               onClick=${() => { setPicked(null); setClientQ(''); setListOpen(true); }}>
@@ -242,11 +255,12 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
               <span class="muted mono small">${picked.client_number}</span>
             </button>` : html`
             <div class="cmpicker">
-              <input type="search" data-nc-client value=${clientQ} autoFocus placeholder="e.g. Meridian or 100004"
+              <input type="search" data-nc-client value=${clientQ} autoFocus
+                placeholder=${wantNew ? '6-digit client number' : 'e.g. Meridian or 100004'}
                 onFocus=${() => setListOpen(true)}
                 onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); }}
                 onBlur=${() => setTimeout(() => setListOpen(false), 150)} />
-              ${listOpen && matches.length > 0 && !exact ? html`
+              ${listOpen && !exact && (matches.length > 0 || qt !== '') ? html`
                 <div class="cmpicker-menu">
                   ${matches.map((c) => html`
                     <div key=${c.id} class="cmpicker-item"
@@ -254,11 +268,19 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
                       <span class="name">${clientLabel(c)}</span>
                       <span class="num">${c.client_number} · ${c.matter_count} matter${c.matter_count === 1 ? '' : 's'}</span>
                     </div>`)}
+                  ${!wantNew ? html`
+                    <div class="cmpicker-item" onMouseDown=${(ev) => { ev.preventDefault(); startNewClient(); }}>
+                      <span class="name" style=${{ color: 'var(--accent)' }}>
+                        ＋ New client${qIsText ? ` “${qt}”` : ''}…</span>
+                    </div>` : null}
                 </div>` : null}
             </div>`}
         <//>
-        ${needsName ? html`
-          <${Field} label="Client name" hint="Optional — shown instead of the bare number everywhere">
+        ${needsName || wantNew ? html`
+          <${Field} label="Client name"
+            hint=${newNumber || wantNew
+              ? 'Required — saved together with the client number'
+              : 'Optional — shown instead of the bare number everywhere'}>
             <input type="text" data-nc-client-name value=${clientName} placeholder="e.g. Meridian"
               onInput=${(e) => setClientName(e.target.value)} />
           <//>` : null}
