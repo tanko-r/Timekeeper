@@ -18,6 +18,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [editing, setEditing] = useState(null);       // timer | 'new'
   const [groupModal, setGroupModal] = useState(null); // 'new' | group
   const [menu, setMenu] = useState(null);             // {x, y, timer}
+  const [tabMenu, setTabMenu] = useState(null);       // {x, y, group} — active tab's kebab
   const [stopPopup, setStopPopup] = useState(null);   // {timer, result}
   const [deleting, setDeleting] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -507,11 +508,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
             </button>
             ${byGroupMode && tab.group && effectiveTab === tab.key ? html`
               <span class="tab-tools">
-                <button class="btn btn-ghost btn-sm" title="Rename group" onClick=${() => setGroupModal(tab.group)}>
-                  <${Icon} name="edit" size=${14} /></button>
-                <button class="btn btn-ghost btn-sm" title="Delete group (timers kept)"
-                  onClick=${() => guard(api.del(`/api/timer-groups/${tab.group.id}`).then(reload))}>
-                  <${Icon} name="trash" size=${14} /></button>
+                <button class="btn btn-ghost btn-sm" title="Group menu"
+                  onClick=${(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setTabMenu({ x: r.left, y: r.bottom + 2, group: tab.group });
+                  }}>
+                  <${Icon} name="more" size=${14} /></button>
               </span>` : null}
           </span>`)}
       </div>` : null}
@@ -565,6 +567,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
     ${menu ? html`
       <${ContextMenu} x=${menu.x} y=${menu.y} items=${menuItems(menu.timer)} onClose=${() => setMenu(null)} />` : null}
+
+    ${tabMenu ? html`
+      <${ContextMenu} x=${tabMenu.x} y=${tabMenu.y} onClose=${() => setTabMenu(null)}
+        items=${[
+          { label: 'Rename group…', icon: 'edit', onClick: () => setGroupModal(tabMenu.group) },
+          {
+            label: 'Delete group (timers kept)', icon: 'trash', danger: true,
+            onClick: () => guard(api.del(`/api/timer-groups/${tabMenu.group.id}`).then(reload)),
+          },
+        ]} />` : null}
 
     ${editing ? html`
       <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes} groups=${groups}

@@ -531,16 +531,31 @@ await step('groups as tabs: create, assign via menu, isolate, drop-on-tab, persi
   if (toolsUnderAll) throw new Error('group tools must not render while "All" is active');
 
   // clicking Litigation isolates exactly that one (now-assigned) card, and
-  // now that it's the active tab, its rename/delete tools appear
+  // now that it's the active tab, its kebab (group menu) appears
   await clickText('.timer-tab', 'Litigation');
   await page.waitForFunction(() => {
     const wrap = [...document.querySelectorAll('.timer-tab-wrap')].find((w) => w.textContent.includes('Litigation'));
-    return wrap && wrap.querySelector('.tab-tools button[title="Rename group"]');
+    return wrap && wrap.querySelector('.tab-tools button[title="Group menu"]');
   }, { timeout: 4000 });
   await page.waitForFunction(() => {
     const cards = [...document.querySelectorAll('.timer-board .timer-card')];
     return cards.length === 1 && cards[0].textContent.includes('Acme research');
   }, { timeout: 4000 });
+
+  // the kebab opens a menu holding the rename/delete actions (no bare
+  // edit/trash buttons on the tab itself); Rename opens the group modal
+  const bareTools = await page.evaluate(() =>
+    !!document.querySelector('.tab-tools button[title="Rename group"], .tab-tools button[title^="Delete group"]'));
+  if (bareTools) throw new Error('rename/delete must live in the kebab menu, not as bare tab buttons');
+  await page.click('.tab-tools button[title="Group menu"]');
+  await waitFor('.ctx-menu');
+  const menuLabels = await page.$$eval('.ctx-menu .ctx-item', (els) => els.map((el) => el.textContent.trim()));
+  if (!menuLabels.some((l) => l.includes('Rename group'))) throw new Error(`kebab menu missing Rename: ${JSON.stringify(menuLabels)}`);
+  if (!menuLabels.some((l) => l.includes('Delete group'))) throw new Error(`kebab menu missing Delete: ${JSON.stringify(menuLabels)}`);
+  await clickText('.ctx-menu .ctx-item', 'Rename group');
+  await waitFor('.modal input[placeholder="e.g. Litigation"]');
+  await clickText('.modal button', 'Cancel');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
 
   // drop-on-tab: create a second group, drag the card from the isolated
   // Litigation grid onto its tab, then drag it back — exercises the actual

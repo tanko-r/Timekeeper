@@ -3,14 +3,6 @@
 Ideas captured but not yet designed or planned. Pull one into a proper
 spec/plan (see `docs/superpowers/`) before implementing.
 
-## 1. Hide edit/delete in kebab menu for group tabs
-
-Replace visible edit and delete buttons with a kebab menu (vertical dots)
-that appears when the tab is highlighted. This cleans up the tab UI while
-keeping the same functionality.
-
-Relevant: `public/js/components/tabgroup.js` or similar tab management code.
-
 ## 2. Exclusive timers: starting one stops the running one
 
 When a timer is running, starting another timer should first **stop the
