@@ -18,19 +18,22 @@ function entry(overrides = {}) {
   };
 }
 
+// Dates are zero-padded (07/06/2026): verified against Intapp's real importer
+// 2026-07-10 — an unpadded work date is silently IGNORED (the entry lands on
+// whatever day is open in the client); a padded one imports to the right day.
 test('formats a .TIM line with the exact prototype field order and values', () => {
   const out = formatTimEntries([entry()], CFG, FIXED);
   const expected = [
     'am=5400', 'ar=345000000', 'billed=N', 'billing=N', 'cl=100001',
     'closed=N', 'co=N', 'createdintimesaver=Y', 'del=N',
-    'ed=7/6/2026 9:14:30 PM', 'ex=N', 'f=TIME',
+    'ed=07/06/2026 9:14:30 PM', 'ex=N', 'f=TIME',
     'lmb=TIMEKEEPER@EXAMPLE.COM', 'ma=100001-000012',
-    'md=7/6/2026 9:14:30 PM',
+    'md=07/06/2026 9:14:30 PM',
     'na=Review lease (1.2); draft email to landlord (0.3).',
     'op=TIMEKEEPER@EXAMPLE.COM', 'originapplication=DTE Axiom',
     're=N', 'ref=fixed-ref-1', 'releasable=Y', 'shortref=7450000',
     'ss=ii', 'st=Ready to be closed', 'tk=1001', 'u2=GEN01',
-    'unconver=N', 'version=9.10.39.5', 'wd=7/6/2026 12:00:00 AM',
+    'unconver=N', 'version=9.10.39.5', 'wd=07/06/2026 12:00:00 AM',
   ].join('|');
   assert.equal(out, expected);
 });
@@ -48,7 +51,7 @@ test('pipes in narratives are sanitized so the format cannot break', () => {
 
 test('midnight and noon hours format as 12', () => {
   const midnight = formatTimEntries([entry({ finalized_at: '2026-07-06T07:05:09.000Z' })], CFG, FIXED); // 12:05:09 AM PDT
-  assert.ok(midnight.includes('ed=7/6/2026 12:05:09 AM'), midnight);
+  assert.ok(midnight.includes('ed=07/06/2026 12:05:09 AM'), midnight);
   const noon = formatTimEntries([entry({ finalized_at: '2026-07-06T19:00:00.000Z' })], CFG, FIXED); // 12:00:00 PM PDT
-  assert.ok(noon.includes('ed=7/6/2026 12:00:00 PM'), noon);
+  assert.ok(noon.includes('ed=07/06/2026 12:00:00 PM'), noon);
 });

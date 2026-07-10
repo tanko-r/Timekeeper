@@ -8,18 +8,20 @@ function two(n) {
   return String(n).padStart(2, '0');
 }
 
-// "7/6/2026 9:14:30 PM" in server-local time.
+// "07/06/2026 9:14:30 PM" in server-local time. Month/day are zero-padded:
+// verified against Intapp's real importer 2026-07-10 — it silently ignores an
+// unpadded work date and files the entry on whatever day is open on screen.
 function fmtStamp(date) {
   let h = date.getHours();
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
-  return `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()} ` +
+  return `${two(date.getMonth() + 1)}/${two(date.getDate())}/${date.getFullYear()} ` +
     `${h}:${two(date.getMinutes())}:${two(date.getSeconds())} ${ampm}`;
 }
 
 // Work date: the entry's date at midnight, formatted without TZ conversion.
 function fmtWorkDate(dateStr) {
-  const [y, m, d] = dateStr.split('-').map(Number);
+  const [y, m, d] = dateStr.split('-');
   return `${m}/${d}/${y} 12:00:00 AM`;
 }
 
