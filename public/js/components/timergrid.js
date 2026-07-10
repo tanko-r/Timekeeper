@@ -507,7 +507,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ${tabsEnabled ? html`
       <div class="timer-tabs" role="tablist" aria-label=${byGroupMode ? 'Timer groups' : 'Clients'}>
         ${tabList.map((tab) => html`
-          <span key=${tab.key} class="timer-tab-wrap">
+          <span key=${tab.key} class=${'timer-tab-wrap' + (effectiveTab === tab.key ? ' on' : '')}>
             <button class=${'timer-tab' + (effectiveTab === tab.key ? ' on' : '')}
               role="tab" aria-selected=${effectiveTab === tab.key}
               onClick=${() => setActiveTab(tab.key)}
@@ -524,7 +524,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                     const r = e.currentTarget.getBoundingClientRect();
                     setTabMenu({ x: r.left, y: r.bottom + 2, group: tab.group });
                   }}>
-                  <${Icon} name="more" size=${14} /></button>
+                  <${Icon} name="moreV" size=${14} /></button>
               </span>` : null}
           </span>`)}
       </div>` : null}

@@ -40,6 +40,7 @@ const ICONS = {
   check: 'check',
   x: 'x',
   more: 'ellipsis',
+  moreV: 'ellipsis-vertical',
   sortAZ: 'arrow-down-a-z',
   history: 'history',
   refresh: 'rotate-ccw',
@@ -58,6 +59,7 @@ const FALLBACKS = {
   'chart-column': ['bar-chart-3', 'bar-chart'],
   'triangle-alert': ['alert-triangle'],
   ellipsis: ['more-horizontal'],
+  'ellipsis-vertical': ['more-vertical'],
   'wand-2': ['wand-sparkles', 'wand'],
   'lock-open': ['unlock', 'lock-keyhole-open'],
 };
