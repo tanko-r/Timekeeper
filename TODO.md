@@ -3,29 +3,6 @@
 Ideas captured but not yet designed or planned. Pull one into a proper
 spec/plan (see `docs/superpowers/`) before implementing.
 
-## 3. Browser notification for long-running timers
-
-Fire a **browser notification** (Notifications API) when a timer has been
-running more than **2 hours**, then **hourly** after that, so a timer left
-running doesn't silently over-accrue.
-
-Distinct from the existing visual idle-nudge (`idleNudgeHours`, default 3h,
-a card icon only — `timergrid.js:315`, `settings.idleNudgeHours`); this is
-an actual OS/browser notification, on a 2h-then-hourly cadence.
-
-Relevant: `TimerGrid` poll/tick loop (`timergrid.js:35-39`), `liveElapsed`
-(`timergrid.js:41-45`); `idleNudgeHours` seed (`server/db.js:128`).
-
-Open questions:
-- Permission flow: request `Notification.permission` when? (First timer
-  start, or a Settings opt-in toggle.)
-- Per-timer notifications, or one aggregate "a timer has run 2h+"?
-- Make the 2h threshold + cadence configurable in Settings, and reconcile
-  with / possibly replace the `idleNudgeHours` knob so there aren't two
-  overlapping "long-running" settings.
-- Notifications only fire while a tab is open (no service worker / no
-  runtime deps added) — acceptable given the always-open-tab usage?
-
 ## 4. Compact card: show clock time AND tenths, stacked
 
 In the compact timer card, show **both** the running clock (`HH:MM:SS` /

@@ -6,6 +6,7 @@ import {
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
+import { longRunNotifications } from '/js/lib/notify.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -79,11 +80,44 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     return Math.floor(s);
   }, [fetchedAt]);
 
+  // OS/browser notification when a timer's CURRENT running stretch passes 2h,
+  // then hourly (TODO #3) — keyed off last_started_at, not the day
+  // accumulator, so a timer restarted after filing doesn't instantly
+  // re-alert. Runs after every render (the 1s forceTick keeps those coming);
+  // the marks ref is what makes each hour fire exactly once. Only fires
+  // while a tab is open — no service-worker push, by design.
+  const longRunMarks = useRef({});
+  useEffect(() => {
+    if (!timers || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const { due, marks } = longRunNotifications(
+      timers.map((t) => ({
+        id: t.id, name: t.name, running: !!t.running,
+        seconds: t.running && t.last_started_at
+          ? Math.max(0, (Date.now() - Date.parse(t.last_started_at)) / 1000) : 0,
+      })),
+      longRunMarks.current);
+    longRunMarks.current = marks;
+    for (const d of due) {
+      try {
+        new Notification('Timer still running', {
+          body: `"${d.name}" has been running ${d.mark} hours — stop & file, or keep going.`,
+          tag: `tk-longrun-${d.id}`, // replaces the previous hour's, never stacks
+        });
+      } catch { /* constructor unsupported (e.g. mobile) — visual idle-nudge still covers it */ }
+    }
+  });
+
   // ---------- actions ----------
 
   const guard = (p) => p.catch((e) => emitToast(e.message, { error: true }));
 
   const start = useCallback(async (timer, opts = {}) => {
+    // First-ever start is the natural user gesture to ask for notification
+    // permission (for the 2h+ long-running alerts). Fire-and-forget — the
+    // prompt must never delay the timer actually starting.
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
     const r = await api.post(`/api/timers/${timer.id}/start`, opts);
     localStorage.setItem('tk:lastTimer', String(timer.id));
     // Exclusive timers: the server stop-and-filed whatever was running. Filed
