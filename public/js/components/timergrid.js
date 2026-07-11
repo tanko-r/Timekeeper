@@ -416,6 +416,29 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ];
   }
 
+  // ---------- activity tabs (2026-07-10 feedback) ----------
+  // "Today" / "Week" show timers that actually RAN in the period; "Recent"
+  // is the rolling two-week working set, so stale timers fall out of it.
+  // Activity = the last time the timer started or stopped (running = now);
+  // views sort most-recent first.
+  const nowMs = Date.now();
+  const lastActivityMs = (t) => {
+    if (t.running) return nowMs;
+    return Math.max(
+      t.last_stopped_at ? Date.parse(t.last_stopped_at) : 0,
+      t.last_started_at ? Date.parse(t.last_started_at) : 0);
+  };
+  const dayStart = new Date(nowMs); dayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date(dayStart); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7)); // Monday
+  const ACTIVITY = {
+    'act-today': { label: 'Today', since: dayStart.getTime() },
+    'act-week': { label: 'Week', since: weekStart.getTime() },
+    'act-recent': { label: 'Recent', since: nowMs - 14 * 86400000 },
+  };
+  const activityList = (key) => shown
+    .filter((t) => lastActivityMs(t) >= ACTIVITY[key].since)
+    .sort((a, b) => lastActivityMs(b) - lastActivityMs(a));
+
   // ---------- tabs (by-group / by-client modes only; flat keeps one grid) ----------
   // Note: timer_groups.collapsed (still returned by /api/timer-groups, still
   // patchable) is deliberately NOT consulted anywhere below — the old
@@ -424,6 +447,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const tabsEnabled = byGroupMode || grouping === 'client';
   const tabList = !tabsEnabled ? [] : [
     { key: 'all', label: 'All', count: shown.length, group: null },
+    ...Object.entries(ACTIVITY).map(([key, a]) => ({
+      key, label: a.label, count: activityList(key).length, group: null, activity: true,
+    })),
     ...sections
       .filter((sec) => !(norm && sec.list.length === 0)) // filtering hides empty tabs, same as the old empty-section hiding
       .filter((sec) => !(byGroupMode && !sec.group && sec.list.length === 0 && hasGroups)) // hide empty "Ungrouped" tab
@@ -438,7 +464,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const effectiveTab = tabList.some((t) => t.key === activeTab) ? activeTab : 'all';
   const activeSection = tabsEnabled && effectiveTab !== 'all'
     ? sections.find((sec) => sec.key === effectiveTab) : null;
-  const renderedSections = activeSection ? [activeSection] : sections;
+  const renderedSections = ACTIVITY[effectiveTab] && tabsEnabled
+    ? [{ key: effectiveTab, group: null, label: null, list: activityList(effectiveTab) }]
+    : activeSection ? [activeSection] : sections;
 
   // ordered list of cards actually on screen: the active tab's cards only,
   // or every section's cards under "All" (or in flat mode, which has no
@@ -599,12 +627,13 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ${tabsEnabled ? html`
       <div class="timer-tabs" role="tablist" aria-label=${byGroupMode ? 'Timer groups' : 'Clients'}>
         ${tabList.map((tab) => html`
-          <span key=${tab.key} class=${'timer-tab-wrap' + (effectiveTab === tab.key ? ' on' : '')}>
+          <span key=${tab.key} class=${'timer-tab-wrap' + (effectiveTab === tab.key ? ' on' : '') + (tab.key === 'act-today' ? ' activity-start' : '') + (tab.key === 'act-recent' ? ' activity-end' : '')}>
             <button class=${'timer-tab' + (effectiveTab === tab.key ? ' on' : '')}
               role="tab" aria-selected=${effectiveTab === tab.key}
+              title=${tab.activity ? { 'act-today': 'Timers that ran today', 'act-week': 'Timers that ran this week (Mon–)', 'act-recent': 'Timers used in the last two weeks' }[tab.key] : undefined}
               onClick=${() => setActiveTab(tab.key)}
-              onDragOver=${byGroupMode && tab.key !== 'all' ? (e) => e.preventDefault() : undefined}
-              onDrop=${byGroupMode && tab.key !== 'all' ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: tab.group ? tab.group.id : null })); } : undefined}>
+              onDragOver=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => e.preventDefault() : undefined}
+              onDrop=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: tab.group ? tab.group.id : null })); } : undefined}>
               <span class="timer-tab-label">${tab.label}</span>
               ${tab.unnamedClient ? html`<span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
               <span class="muted small timer-tab-count">${tab.count}</span>
