@@ -1,8 +1,72 @@
 import { api } from '/js/api.js';
 import {
-  html, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
+  html, useState, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
   markJustFinalized,
 } from '/js/ui.js';
+import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
+
+// Inline narrative editing (2026-07-10 feedback): click a draft entry's
+// narrative to edit it in place — no editor round-trip. Same edit-through
+// contract as the editor's AUTO box: on a ≥2-line auto entry, text that still
+// parses folds back into the task lines (fragments + allocations, staying
+// AUTO); a structural break detaches to a durable manual narrative
+// (narrative_manual=1). Single/no-line entries just save the text.
+function InlineNarrative({ entry, onChanged }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+
+  if (entry.status !== 'draft') {
+    return html`<p class="narrative">${entry.narrative || html`<em class="muted">No narrative yet</em>`}</p>`;
+  }
+
+  async function save() {
+    setEditing(false);
+    const t = text.trim();
+    if (t === entry.narrative.trim()) return;
+    const substantive = entry.tasks.filter(
+      (x) => (x.fragment || '').trim() || (x.task_code || '').trim() || Number(x.duration) > 0);
+    const body = { narrative: t };
+    if (entry.narrative_auto && substantive.length >= 2) {
+      const taskBilling = entry.cm?.client_task_billing !== 0;
+      const parsed = parseNarrativeEdit(t, substantive.length, { taskBilling });
+      if (parsed) {
+        body.tasks = substantive.map((x, k) => ({
+          task_code: x.task_code,
+          duration: parsed.segments[k].duration ?? (Number(x.duration) || 0),
+          fragment: parsed.segments[k].fragment,
+        }));
+        body.narrative_manual = 0;
+      } else {
+        body.narrative_manual = 1;
+      }
+    }
+    try {
+      await api.patch(`/api/entries/${entry.id}`, body);
+      onChanged();
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+
+  if (!editing) {
+    return html`
+      <p class="narrative narrative-editable" title="Click to edit the narrative in place"
+        onClick=${() => { setText(entry.narrative); setEditing(true); }}>
+        ${entry.narrative || html`<em class="muted">No narrative yet</em>`}
+      </p>`;
+  }
+  return html`
+    <textarea class="narrative-inline-input" autoFocus rows=${Math.max(2, Math.ceil(text.length / 90))}
+      value=${text}
+      onInput=${(e) => setText(e.target.value)}
+      onFocus=${(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
+      onBlur=${save}
+      onKeyDown=${(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+      }} />`;
+}
 
 // Card list of entries with inline actions. onChanged() after any mutation.
 export function EntryList({ entries, openEditor, onChanged, settings, showDate = false, runningIds = null }) {
@@ -59,7 +123,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
                   <${Icon} name="timer" size=${12} /> running</span>`
               : e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
-            <p class="narrative">${e.narrative || html`<em class="muted">No narrative yet</em>`}</p>
+            <${InlineNarrative} entry=${e} onChanged=${onChanged} />
             ${e.tasks.length > 1 ? html`
               <div class="muted small">
                 ${e.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration, increment)}`).join(' · ')}

@@ -393,6 +393,11 @@ input.total-input { font-weight: 700; }
 .entry-card + .entry-card { margin-top: 8px; }
 .entry-card .body { flex: 1; min-width: 0; }
 .entry-card .narrative { margin: 3px 0 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+/* inline narrative editing: a visible hover affordance (tint + accent bar),
+   and a textarea that keeps the card's footprint instead of the 84px min */
+.entry-card .narrative-editable { cursor: text; border-radius: 4px; margin-left: -4px; padding: 0 4px; }
+.entry-card .narrative-editable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.entry-card .narrative-inline-input { width: 100%; margin-top: 3px; min-height: 0; font: inherit; color: var(--text-secondary); }
 .entry-card .hours { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .entry-card.nonbillable .hours { color: var(--nonbillable); }
 .entry-card.billable .hours { color: var(--billable); }

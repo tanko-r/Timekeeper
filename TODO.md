@@ -50,5 +50,4 @@ Various thoughts from David in using the app:
   start button), match the app theme, remember size, click-through to the
   entry. Code: `public/js/lib/pip.js`.
 - [ ] 2026-07-10 13:33 — Add "Today" and "This Week" filtering so I can see timers with time today.  There should also be a Recent group, with timers falling out after 2 weeks. (feedback/2026-07-10T13-33-35.png · #/)
-- [ ] 2026-07-10 13:45 — narrative should be editable here without opening the entry screen (feedback/2026-07-10T13-45-32.png · #/)
 - [ ] 2026-07-10 16:36 — AI expand/rewrite/shorten should look for names of people, documents, etc. in the narrative history and guess who I'm talking about when I say something like "jeff". (feedback/2026-07-10T16-36-38.png · #/)
