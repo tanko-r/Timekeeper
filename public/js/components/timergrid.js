@@ -463,6 +463,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (tabbableId != null) focusCard(tabbableId);
+    } else if (e.key === 'Tab' && !e.shiftKey && norm && visible.length > 0) {
+      // 2026-07-10 feedback: Tab out of the filter box lands on the FIRST
+      // matching card (Enter keeps the last-focused card; Tab is "take me to
+      // the results").
+      e.preventDefault();
+      focusCard(visible[0].id);
     }
   }
 
@@ -518,6 +524,22 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       });
       focusCard(Number(candidates[0].el.dataset.timerId));
       return done();
+    }
+
+    if (e.key === 'Tab' && norm) {
+      // While the filter is active, Tab walks the matching cards in reading
+      // order (left→right, top→down = DOM order); Shift+Tab walks back.
+      // Past either end, fall through to the browser so focus leaves the
+      // grid naturally. Unfiltered Tab keeps its default behavior.
+      const cards = [...document.querySelectorAll('.timer-board .timer-card')];
+      const curEl = document.querySelector(`.timer-board .timer-card[data-timer-id="${cur.id}"]`);
+      const curIdx = cards.indexOf(curEl);
+      const next = curIdx + (e.shiftKey ? -1 : 1);
+      if (curIdx >= 0 && next >= 0 && next < cards.length) {
+        focusCard(Number(cards[next].dataset.timerId));
+        return done();
+      }
+      return undefined;
     }
 
     if (e.key === 'Enter' && e.shiftKey) { setEditing(cur); return done(); }

@@ -51,5 +51,4 @@ Various thoughts from David in using the app:
   entry. Code: `public/js/lib/pip.js`.
 - [ ] 2026-07-10 13:33 — Add "Today" and "This Week" filtering so I can see timers with time today.  There should also be a Recent group, with timers falling out after 2 weeks. (feedback/2026-07-10T13-33-35.png · #/)
 - [ ] 2026-07-10 13:45 — narrative should be editable here without opening the entry screen (feedback/2026-07-10T13-45-32.png · #/)
-- [ ] 2026-07-10 14:14 — After type filtering timers, "Tab" should advance to the first timer shown.  Tab again to advance left to right, then top down. (feedback/2026-07-10T14-14-03.png · #/)
-- [ ] 2026-07-10 14:34 — The two Acme entries are duplicate time.  I had previously closed and finalized an IM entry, but the time remained on the timer.  So when an entry associated with a timer is closed, the timer should be zeroed out.  Careful that a timer gets locked to an entry until the entry is finalized. (feedback/2026-07-10T14-34-55.png · #/)
+- [ ] 2026-07-10 16:36 — AI expand/rewrite/shorten should look for names of people, documents, etc. in the narrative history and guess who I'm talking about when I say something like "jeff". (feedback/2026-07-10T16-36-38.png · #/)
