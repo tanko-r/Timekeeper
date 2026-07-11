@@ -284,3 +284,50 @@ test('ai narrate aborts the upstream Ollama request when the client disconnects'
     assert.equal(alive.status, 200, 'server still healthy after the aborted stream');
   } finally { await t.close(); await new Promise((r) => srv.close(r)); }
 });
+
+// 2026-07-10 feedback: "jeff" in a brief should resolve against the matter's
+// history — the roster and recent phrases ride along as prompt context on
+// every AI call that knows its matter.
+test('ai narrate/expand carry matter people + phrases so informal names can resolve', async () => {
+  const stub = await startStubOllama('Reviewed Vertex Backstop Agreement; incorporated revisions from J. Larson.');
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const cm = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '100001-000012', short_name: 'Acme lease',
+    })).body;
+    // history: an entry whose narrative mentions J. Larson (people extraction
+    // fills matter_people on the write)
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      narrative: 'Telephone conference with J. Larson regarding Compensation Agreement.',
+    });
+
+    const r = await t.fetchJson('POST', '/api/ai/narrate', {
+      mode: 'draft', brief: 'mark up backstop agreement from jeff', cm_id: cm.id,
+    });
+    assert.equal(r.status, 200);
+    const sys = stub.state.lastChat.messages[0].content;
+    const user = stub.state.lastChat.messages[1].content;
+    assert.match(user, /J\. Larson/, 'people roster rides along');
+    assert.match(user, /Compensation Agreement/, 'recent phrases ride along');
+    assert.match(sys, /informal|first name/i, 'name-resolution rule present');
+
+    // rewrite modes get the same context
+    await t.fetchJson('POST', '/api/ai/narrate', {
+      mode: 'shorter', narrative: 'Reviewed agreement and mark up from jeff.', cm_id: cm.id,
+    });
+    assert.match(stub.state.lastChat.messages[1].content, /J\. Larson/);
+
+    // /ai/expand too
+    await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'call with jeff re backstop', totalHours: 0.5, cm_id: cm.id,
+    });
+    assert.match(stub.state.lastChat.messages[1].content, /J\. Larson/);
+
+    // no cm_id → no matter context, no crash
+    const bare = await t.fetchJson('POST', '/api/ai/narrate', { mode: 'draft', brief: 'misc work' });
+    assert.equal(bare.status, 200);
+    assert.doesNotMatch(stub.state.lastChat.messages[1].content, /J\. Larson/);
+  } finally { await t.close(); await stub.close(); }
+});

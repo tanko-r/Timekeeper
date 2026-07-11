@@ -49,4 +49,3 @@ Various thoughts from David in using the app:
   auto-open on timer start (needs a user gesture — probably a setting on the
   start button), match the app theme, remember size, click-through to the
   entry. Code: `public/js/lib/pip.js`.
-- [ ] 2026-07-10 16:36 — AI expand/rewrite/shorten should look for names of people, documents, etc. in the narrative history and guess who I'm talking about when I say something like "jeff". (feedback/2026-07-10T16-36-38.png · #/)

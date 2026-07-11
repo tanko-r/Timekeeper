@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
-import { matterSuggestions } from './matters.js';
+import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
@@ -43,17 +43,34 @@ function systemPrompt(codes, custom) {
   return `${instructions}\n\n${formatContract(codes)}`;
 }
 
+// When a call knows its matter, the roster + recurring phrases ride along so
+// the model can resolve informal references ("jeff", "the lease") against
+// real history (2026-07-10 feedback). Deterministic and instant — the same
+// memory layer the phrasebook/people endpoints read.
+export function matterAiContext(db, cmId, today) {
+  if (!cmId) return null;
+  const names = matterPeopleList(db, cmId);
+  const sugg = matterSuggestions(db, cmId, today);
+  const phrases = (sugg ? sugg.phrases : []).slice(0, 6).map((p) => `- ${p.text}`);
+  const parts = [];
+  if (names.length) parts.push(`People from this matter's history: ${names.join(', ')}.`);
+  if (phrases.length) parts.push(`The attorney's recent work on this matter:\n${phrases.join('\n')}`);
+  return parts.length ? parts.join('\n\n') : null;
+}
+
+const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
+
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
 export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.`;
+  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${context ? NAME_RESOLUTION_RULE : ''}`;
   let user;
   if (mode === 'shorter') {
-    user = `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`;
+    user = [context, `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`].filter(Boolean).join('\n\n');
   } else if (mode === 'longer') {
-    user = `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${narrative}`;
+    user = [context, `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${narrative}`].filter(Boolean).join('\n\n');
   } else {
     user = [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
   }
@@ -74,12 +91,10 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     'SELECT t.id, t.name, t.cm_id, m.short_name FROM timers t JOIN matters m ON m.id = t.cm_id WHERE t.id=?'
   ).get(timerId);
   if (!timer) return;
-  const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock ? clock() : new Date()));
-  const recent = (sugg ? sugg.phrases : []).slice(0, 5).map((p) => `- ${p.text}`).join('\n');
   const messages = buildNarrateMessages({
     instructions: cfg.systemPrompt,
     brief: `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`,
-    context: recent ? `The attorney's recent recurring work on this matter:\n${recent}` : null,
+    context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
   });
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
@@ -128,6 +143,7 @@ export function aiRouter({ db }) {
 
     const codes = db.prepare(
       'SELECT name FROM task_codes WHERE active=1 ORDER BY sort_order, id').all().map((x) => x.name);
+    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
 
     let content;
     try {
@@ -140,12 +156,15 @@ export function aiRouter({ db }) {
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
-            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) },
+            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
             {
               role: 'user',
-              content: totalHours
-                ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
-                : `Work done: ${brief}`,
+              content: [
+                matterCtx,
+                totalHours
+                  ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
+                  : `Work done: ${brief}`,
+              ].filter(Boolean).join('\n\n'),
             },
           ],
         }),
@@ -203,9 +222,11 @@ export function aiRouter({ db }) {
     if ((mode === 'shorter' || mode === 'longer') ? !narrative : !brief) {
       return res.status(400).json({ error: 'Describe the work first.' });
     }
+    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
     const messages = buildNarrateMessages({
       instructions: cfg.systemPrompt, brief, narrative, mode,
-      context: b.context ? String(b.context).slice(0, 2000) : null,
+      context: [b.context ? String(b.context).slice(0, 2000) : null, matterCtx]
+        .filter(Boolean).join('\n\n') || null,
     });
 
     // If the client goes away mid-stream (navigated off, or a regenerate

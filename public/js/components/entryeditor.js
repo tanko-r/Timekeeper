@@ -374,6 +374,7 @@ export function EntryEditor({ spec, settings, onClose }) {
     try {
       const r = await api.post('/api/ai/expand', {
         brief: seed, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
+        cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
       });
       if (r.tasks.length > 0) {
         const even = splitTenthsEvenly(total || sum, r.tasks.length);
@@ -409,6 +410,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       let acc = '';
       await streamNdjson('/api/ai/narrate', {
         mode, brief: seed, narrative: seed,
+        cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
       }, (m) => {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.error) throw new Error(m.message || m.error);

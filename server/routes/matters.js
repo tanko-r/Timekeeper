@@ -53,6 +53,30 @@ export function matterSuggestions(db, matterId, today) {
   return { matter_id: matter.id, borrowed, phrases: rankPhrases(occurrences, { today }) };
 }
 
+// Flat name list for prompt context (AI name resolution, 2026-07-10): own
+// roster first (most recently seen first), then client-sibling names — a
+// "jeff" may only ever appear on a sibling matter, so unlike the /people
+// endpoint this always blends, not just when own history is thin.
+export function matterPeopleList(db, matterId, limit = 20) {
+  const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
+  if (!matter) return [];
+  const own = db.prepare(`
+    SELECT name FROM matter_people WHERE matter_id = ?
+    ORDER BY last_seen_at DESC, count DESC, name
+  `).all(matter.id).map((p) => p.name);
+  const have = new Set(own.map((n) => n.toLowerCase()));
+  const sib = matter.client_id == null ? [] : db.prepare(`
+    SELECT MIN(mp.name) AS name, SUM(mp.count) AS count, MAX(mp.last_seen_at) AS last_seen
+    FROM matter_people mp JOIN matters m ON m.id = mp.matter_id
+    WHERE m.client_id = ? AND m.id != ?
+    GROUP BY LOWER(mp.name)
+    ORDER BY last_seen DESC, count DESC, name
+  `).all(matter.client_id, matter.id)
+    .map((p) => p.name)
+    .filter((n) => !have.has(n.toLowerCase()));
+  return own.concat(sib).slice(0, limit);
+}
+
 export function mattersRouter({ db, clock }) {
   const r = Router();
   const getMatter = db.prepare('SELECT id, client_id FROM matters WHERE id=?');
