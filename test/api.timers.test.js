@@ -198,7 +198,7 @@ test('a 3-second stop files 0.1 (everything rounds up)', () =>
     assert.equal(stopped.entry.total, 0.1);
   }));
 
-test('linked entry finalized meanwhile → stop rolls into a new entry automatically', () =>
+test('linked entry finalized meanwhile → next start opens a fresh entry with a fresh clock', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
@@ -209,17 +209,17 @@ test('linked entry finalized meanwhile → stop rolls into a new entry automatic
     });
     await t.fetchJson('POST', `/api/entries/${stop1.entry.id}/finalize`);
 
+    // Finalize already zeroed + unlinked the timer (Acme fix,
+    // 2026-07-10), so this start is a clean slate: a NEW entry, no relink
+    // flag, no carried-over clock to deduct.
     const start2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
-    // entries are created/relinked at START now — the double-count flag
-    // surfaces there so the UI can offer the clock deduction right away
-    assert.equal(start2.relinked, true);
-    assert.equal(start2.previousTotal, 0.5);
+    assert.equal(start2.relinked ?? false, false);
     assert.notEqual(start2.entry.id, stop1.entry.id, 'finalized entry is never touched');
-    clock.advance(1800); // clock now 1.0 total
+    clock.advance(1800); // 0.5h of genuinely new work
     const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(stop2.entry.id, start2.entry.id, 'stop settles the relinked entry');
+    assert.equal(stop2.entry.id, start2.entry.id, 'stop settles the new entry');
     assert.equal(stop2.entry.status, 'draft');
-    assert.equal(stop2.entry.total, 1.0);
+    assert.equal(stop2.entry.total, 0.5, 'only post-finalize time — nothing double-counted');
   }));
 
 test('midnight rollover: final sync to yesterday via linked entry, clock zeroed and unlinked', () =>
@@ -677,4 +677,56 @@ test('dashboard timers include unassigned quick timers (for the ghost row + foot
     assert.ok(row, 'quick timer present in dashboard payload');
     assert.equal(row.cm_number, null);
     assert.equal(row.running, 1);
+  }));
+
+// 2026-07-10 feedback (Acme duplicate): finalizing a timer's linked
+// entry must ZERO the timer and unlink it — otherwise the next stop refiles
+// the whole day clock into a brand-new entry, double-counting the time.
+test('finalizing the linked entry zeroes and unlinks its timer (stopped and running)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'IM work', cm_id: cm.id,
+    })).body;
+
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(5400); // 1.5h
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.total, 1.5);
+
+    // make it finalizable, then finalize
+    await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, {
+      narrative: 'Review and analyze Access Agreement; revisions to Access Agreement.',
+    });
+    const fin = await t.fetchJson('POST', `/api/entries/${stop.entry.id}/finalize`);
+    assert.equal(fin.status, 200);
+
+    let list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].elapsed_seconds, 0, 'finalize zeroes the timer clock');
+    assert.equal(list[0].linked_entry_id, null, 'finalize unlinks the timer');
+
+    // more work after finalizing files ONLY the new time into a NEW entry
+    clock.advance(600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(720); // 0.2h
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.notEqual(stop2.entry.id, stop.entry.id);
+    assert.equal(stop2.entry.total, 0.2, 'no duplicated pre-finalize time');
+    const day = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(day.reduce((s, e) => s + e.total, 0), 1.7);
+
+    // a RUNNING timer keeps running but restarts its clock from finalize time
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800); // 0.5h on the clock (0.2 banked + 0.5 running − wait: 0.2+0.5)
+    await t.fetchJson('PATCH', `/api/entries/${stop2.entry.id}`, {
+      narrative: 'Additional revisions to Access Agreement and emails with client.',
+    });
+    const fin2 = await t.fetchJson('POST', `/api/entries/${stop2.entry.id}/finalize`);
+    assert.equal(fin2.status, 200);
+    list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].running, 1, 'timer keeps running through finalize');
+    assert.equal(list[0].elapsed_seconds, 0, 'but its clock restarts from zero');
+    clock.advance(360); // 0.1h of genuinely new time
+    const stop3 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop3.entry.total, 0.1, 'only post-finalize time files');
+    assert.notEqual(stop3.entry.id, stop2.entry.id);
   }));

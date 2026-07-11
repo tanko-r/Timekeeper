@@ -373,6 +373,16 @@ export function finalizeOne(db, id, ack, nowIso) {
     db.prepare(
       "UPDATE entries SET status='finalized', finalized_at=?, ever_finalized=1, exported_at=NULL, updated_at=? WHERE id=?"
     ).run(nowIso, nowIso, id);
+    // The entry's time is now locked in, so any timer feeding it must NOT
+    // keep that time on its day clock — the next stop would refile the whole
+    // clock into a new entry, double-counting it (Acme duplicate,
+    // 2026-07-10). Zero and unlink; a running timer keeps running but
+    // restarts its count from this moment.
+    for (const t of db.prepare('SELECT id, running FROM timers WHERE linked_entry_id=?').all(id)) {
+      db.prepare(
+        'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
+      ).run(t.running ? nowIso : null, t.id);
+    }
   })();
   return { ok: true };
 }
