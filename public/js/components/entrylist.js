@@ -69,11 +69,37 @@ function InlineNarrative({ entry, onChanged }) {
 }
 
 // Card list of entries with inline actions. onChanged() after any mutation.
-export function EntryList({ entries, openEditor, onChanged, settings, showDate = false, runningIds = null }) {
+// `timers` (dashboard only) enables the per-entry start/stop-timer button —
+// it resumes the timer linked to the entry (or links/creates one server-side).
+export function EntryList({ entries, openEditor, onChanged, settings, showDate = false, runningIds = null, timers = null }) {
   if (!entries || entries.length === 0) {
     return html`<div class="card muted">No entries.</div>`;
   }
   const increment = (settings?.rounding?.increment) || 0.1;
+
+  const timerFor = (entry) => (timers || []).find((t) => t.linked_entry_id === entry.id);
+  const timersChanged = () => window.dispatchEvent(new CustomEvent('tk:timers-changed'));
+
+  async function startTimer(entry) {
+    try {
+      await api.post('/api/timers/start-for-entry', { entry_id: entry.id });
+      timersChanged();
+      onChanged();
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+
+  async function stopTimer(timer) {
+    try {
+      const r = await api.post(`/api/timers/${timer.id}/stop`);
+      timersChanged();
+      onChanged();
+      if (r.discarded) emitToast('Misclick (under 2s) — nothing recorded.');
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
 
   async function del(entry) {
     await api.del(`/api/entries/${entry.id}`);
@@ -134,6 +160,15 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
           <div style=${{ textAlign: 'right' }}>
             <div class="hours">${fmtHours(e.total, increment)}</div>
             <div class="entry-actions">
+              ${timers && e.status === 'draft' ? (() => {
+                const t = timerFor(e);
+                return t && t.running ? html`
+                  <button class="btn btn-ghost btn-sm entry-timer-btn running" title=${`Stop "${t.name}" & file time`}
+                    onClick=${() => stopTimer(t)}><${Icon} name="stop" size=${16} /></button>` : html`
+                  <button class="btn btn-ghost btn-sm entry-timer-btn"
+                    title=${t ? `Resume "${t.name}" on this entry` : 'Start a timer on this entry (links back to its timer)'}
+                    onClick=${() => startTimer(e)}><${Icon} name="play" size=${16} /></button>`;
+              })() : null}
               ${e.status === 'draft' ? html`
                 <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}><${Icon} name="edit" size=${16} /></button>
                 <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>

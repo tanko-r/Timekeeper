@@ -159,7 +159,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
           </div>
         </div>`)}
       <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
-        settings=${settings} runningIds=${runningEntryIds} />
+        settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} />
     </div>
 
     ${warnGate ? html`

@@ -805,3 +805,93 @@ test('quick timer: "fresh" also clears held_since', () =>
     const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
     assert.equal(row.held_since, null);
   }));
+
+// Start-timer-from-entry (2026-07-11 feedback: entry cards get a start
+// button that "links back to the other timer"). The timer clock is a day
+// accumulator that overwrites the linked entry's total at stop — so linking
+// MUST align the clock to the entry's current total, never clobber it.
+test('start-for-entry: resumes the timer already linked to the entry', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+
+    const r = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: stop.entry.id });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.timer.id, timer.id, 'reuses the linked timer, no new one');
+    assert.equal(r.body.timer.running, 1);
+    const count = (await t.fetchJson('GET', '/api/timers')).body.length;
+    assert.equal(count, 1);
+  }));
+
+test('start-for-entry: manual entry gets a timer whose clock starts at the entry total', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const entry = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Drafted the lease amendment carefully.',
+      tasks: [{ task_code: '', duration: 1.2, fragment: '' }],
+    })).body;
+
+    const r = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entry.id });
+    assert.equal(r.status, 200);
+    const timer = r.body.timer;
+    assert.equal(timer.running, 1);
+    assert.equal(timer.linked_entry_id, entry.id);
+    assert.equal(timer.elapsed_seconds, Math.round(1.2 * 3600), 'clock aligned to the entry total');
+
+    // 30 more minutes then stop: total grows from the base, never clobbered
+    clock.advance(1800);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.id, entry.id, 'stop files back into the SAME entry');
+    assert.equal(stop.entry.total, 1.7, '1.2 base + 0.5 new');
+  }));
+
+test('start-for-entry: reuses a paused same-matter timer instead of creating another', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    const entry = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Reviewed and revised indemnification rider.',
+      tasks: [{ task_code: '', duration: 0.5, fragment: '' }],
+    })).body;
+
+    const r = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entry.id });
+    assert.equal(r.body.timer.id, timer.id, 'existing matter timer reused');
+    assert.equal(r.body.timer.linked_entry_id, entry.id, 'relinked to this entry');
+    assert.equal(r.body.timer.elapsed_seconds, 1800, 'clock aligned to entry total');
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body.length, 1);
+  }));
+
+test('start-for-entry: refuses finalized and non-today entries', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const entry = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Analyzed lease scope and reported.',
+      tasks: [{ task_code: '', duration: 0.5, fragment: '' }],
+    })).body;
+    await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`);
+    const r1 = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entry.id });
+    assert.equal(r1.status, 409, 'finalized entry cannot take a timer');
+
+    const old = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-01', cm_id: cm.id, narrative: 'Analyzed lease scope and reported.',
+      tasks: [{ task_code: '', duration: 0.5, fragment: '' }],
+    })).body;
+    const r2 = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: old.id });
+    assert.equal(r2.status, 409, 'only today\'s entries can take a timer');
+  }));
+
+test('start-for-entry: exclusivity still stops other running timers', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const other = (await t.fetchJson('POST', '/api/timers', { name: 'Other', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${other.id}/start`);
+    clock.advance(1200);
+
+    const entry = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Prepared closing checklist and circulated.',
+      tasks: [{ task_code: '', duration: 0.3, fragment: '' }],
+    })).body;
+    const r = await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entry.id });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.stopped.length, 1, 'the other running timer was stopped');
+    const rows = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(rows.find((x) => x.id === other.id).running, 0);
+  }));

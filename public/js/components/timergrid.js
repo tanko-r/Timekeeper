@@ -142,6 +142,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     return () => window.removeEventListener('tk:edit-timer', onEditTimer);
   }, [timers]);
 
+  // Someone outside the grid changed a timer (e.g. an entry card's
+  // start/stop button) — refresh now instead of waiting for the 5s poll.
+  useEffect(() => {
+    const onChanged = () => reload().catch(() => {});
+    window.addEventListener('tk:timers-changed', onChanged);
+    return () => window.removeEventListener('tk:timers-changed', onChanged);
+  }, [reload]);
+
   // ---------- actions ----------
 
   const guard = (p) => p.catch((e) => emitToast(e.message, { error: true }));

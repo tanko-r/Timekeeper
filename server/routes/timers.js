@@ -374,17 +374,17 @@ export function timersRouter({ db, clock }) {
     };
   }
 
-  r.post('/:id/start', (req, res) => {
-    applyRollovers(db, clock);
-    const timer = getTimer.get(req.params.id);
-    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
-    const b = req.body || {};
+  // Core of a start: exclusivity stop of other timers, the running flag,
+  // the pre-computed narrative suggestion, and the start-created entry.
+  // Shared by POST /:id/start and POST /start-for-entry; returns
+  // { status, body } for the route to send.
+  function doStart(timer, b) {
     const backdated = b.minutesAgo != null || b.atLastStop;
 
     let startMs = null;
     if (timer.running) {
       if (backdated) {
-        return res.status(409).json({ error: 'Timer is already running — pause it before a backdated start.' });
+        return { status: 409, body: { error: 'Timer is already running — pause it before a backdated start.' } };
       }
     } else {
       startMs = clock().getTime();
@@ -393,7 +393,7 @@ export function timersRouter({ db, clock }) {
       } else if (b.minutesAgo != null) {
         const mins = Number(b.minutesAgo);
         if (!Number.isFinite(mins) || mins < 0 || mins > 24 * 60) {
-          return res.status(400).json({ error: 'minutesAgo must be 0–1440.' });
+          return { status: 400, body: { error: 'minutesAgo must be 0–1440.' } };
         }
         startMs = clock().getTime() - mins * 60_000;
       }
@@ -444,7 +444,58 @@ export function timersRouter({ db, clock }) {
 
     const out = { timer: withElapsed(getTimer.get(timer.id)), entry, ...(relink || {}) };
     if (stopped.length > 0) out.stopped = stopped;
-    res.json(out);
+    return { status: 200, body: out };
+  }
+
+  r.post('/:id/start', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    const { status, body } = doStart(timer, req.body || {});
+    res.status(status).json(body);
+  });
+
+  // Start (or create) the timer behind an entry — the entry card's start
+  // button (2026-07-11 feedback). Priority: the timer already linked to the
+  // entry, else a paused same-matter timer (relinked here), else a brand-new
+  // timer named after the matter. Because the day-accumulator clock
+  // OVERWRITES the linked entry's total at stop, (re)linking aligns the
+  // clock to the entry's current total first — resuming, never clobbering.
+  r.post('/start-for-entry', (req, res) => {
+    applyRollovers(db, clock);
+    const entryId = Number((req.body || {}).entry_id);
+    const entry = entryId ? loadEntry(db, entryId) : null;
+    if (!entry || entry.deleted_at) return res.status(404).json({ error: 'Entry not found.' });
+    if (entry.status !== 'draft') {
+      return res.status(409).json({ error: 'Entry is finalized — unlock it before timing against it.' });
+    }
+    if (entry.date !== todayLocal(clock())) {
+      return res.status(409).json({ error: 'Only today’s entries can take a timer (the clock is a day accumulator).' });
+    }
+
+    let timer = db.prepare(`SELECT ${TIMER_COLS} FROM timers WHERE linked_entry_id=?`).get(entry.id);
+    if (!timer) {
+      // a paused timer on the same matter is "the other timer" to link back
+      // to; a running one is busy accruing into its own entry — leave it
+      timer = db.prepare(
+        `SELECT ${TIMER_COLS} FROM timers WHERE cm_id=? AND running=0 ORDER BY
+           COALESCE(last_stopped_at, last_started_at, created_at) DESC, id DESC`
+      ).get(entry.cm_id);
+      if (!timer) {
+        const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
+        const info = db.prepare(
+          'INSERT INTO timers (name, cm_id, task_code, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(entry.cm.short_name, entry.cm_id,
+          (entry.tasks[0] && entry.tasks[0].task_code) || null,
+          max + 1, todayLocal(clock()), now());
+        timer = getTimer.get(info.lastInsertRowid);
+      }
+      db.prepare('UPDATE timers SET linked_entry_id=?, accumulated_seconds=? WHERE id=?')
+        .run(entry.id, Math.round(entry.total * 3600), timer.id);
+      timer = getTimer.get(timer.id);
+    }
+    const { status, body } = doStart(timer, {});
+    res.status(status).json(body);
   });
 
   // Stop = pause + file the day total into the linked entry (create/relink as
