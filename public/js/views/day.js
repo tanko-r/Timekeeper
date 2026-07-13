@@ -11,12 +11,15 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
   const { loading, data, error } = useAsync(
     () => api.get(`/api/entries?date=${day}`), [day, refreshKey]);
 
+  // stepping onto today lands on the dashboard — that's today's real screen
+  const goDay = (dateStr) => nav(dateStr === todayStr() ? '#/' : `#/day/${dateStr}`);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       if (['input', 'textarea', 'select'].includes(tag)) return;
-      if (e.key === '[') nav(`#/day/${addDays(day, -1)}`);
-      if (e.key === ']') nav(`#/day/${addDays(day, 1)}`);
+      if (e.key === '[') goDay(addDays(day, -1));
+      if (e.key === ']') goDay(addDays(day, 1));
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -48,10 +51,10 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
 
   return html`
     <div class="page-head">
-      <button class="btn" title="Previous day ([)" onClick=${() => nav(`#/day/${addDays(day, -1)}`)}><${Icon} name="chevronLeft" size=${16} /></button>
+      <button class="btn" title="Previous day ([)" onClick=${() => goDay(addDays(day, -1))}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${fmtDateLong(day)}</h1>
-      <button class="btn" title="Next day (])" onClick=${() => nav(`#/day/${addDays(day, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
-      ${day !== todayStr() ? html`<button class="btn btn-sm" onClick=${() => nav(`#/day/${todayStr()}`)}>Today</button>` : null}
+      <button class="btn" title="Next day (])" onClick=${() => goDay(addDays(day, 1))}><${Icon} name="chevronRight" size=${16} /></button>
+      ${day !== todayStr() ? html`<button class="btn btn-sm" onClick=${() => nav('#/')}>Today</button>` : null}
       <div class="spacer"></div>
       <span class="muted">${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
       <button class="btn" onClick=${finalizeDay}><${Icon} name="lock" size=${16} /> Finalize day</button>

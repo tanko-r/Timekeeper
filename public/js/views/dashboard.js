@@ -1,6 +1,6 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useMemo, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, emitToast, Confirm, Icon,
+  html, useState, useEffect, useMemo, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, addDays, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
@@ -21,6 +21,19 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     window.addEventListener('tk:close-day', onCloseDay);
     return () => window.removeEventListener('tk:close-day', onCloseDay);
   }, []);
+
+  // [ / ] step into the adjacent days' viewers, same keys as the day view
+  useEffect(() => {
+    if (!data) return undefined;
+    const onKey = (e) => {
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (['input', 'textarea', 'select'].includes(tag)) return;
+      if (e.key === '[') nav(`#/day/${addDays(data.date, -1)}`);
+      if (e.key === ']') nav(`#/day/${addDays(data.date, 1)}`);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [data]);
 
   if (error) return html`<${ErrorBox} error=${error} />`;
   if (loading && !data) return html`<${Spinner} />`;
@@ -74,7 +87,11 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   return html`
     <div class="dashboard-view">
     <div class="page-head">
+      <button class="btn" title="Previous day ([) — past days keep everything recorded on them"
+        onClick=${() => nav(`#/day/${addDays(d.date, -1)}`)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${fmtDateLong(d.date)}</h1>
+      <button class="btn" title="Next day (])"
+        onClick=${() => nav(`#/day/${addDays(d.date, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
       <div class="spacer"></div>
       <button class="btn" onClick=${finalizeToday}><${Icon} name="lock" size=${16} /> Finalize today</button>
       <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export today</button>
