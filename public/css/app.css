@@ -198,37 +198,37 @@ table.tk tr.client-row td {
 }
 .group-name { font-size: 13px; font-weight: 700; }
 /* ---------- timer tabs (Intapp-style client tabs; by-group / by-client modes) ----------
-   Physical, browser-style tabs: the whole wrap (label + kebab) is the tab
-   body, so the active highlight encloses the group-menu kebab too. The
-   active tab is a raised card with an accent bar on top, overlapping the
-   strip's baseline border by 1px so it merges into the content below. */
+   Physical chip-tabs: the whole wrap (label + kebab) is the tab body, so the
+   active highlight encloses the group-menu kebab too. Every tab carries its
+   own bounding box, which is what makes MULTIPLE ROWS work (2026-07-11
+   feedback) — a wrapped row reads as a row of tabs, not text floating above
+   the strip's baseline. Active = raised card with an accent bar on top. */
 .timer-tabs {
-  display: flex; align-items: flex-end; gap: 5px; flex-wrap: wrap;
-  border-bottom: 1px solid var(--border); margin: 8px 0 14px; padding: 2px 2px 0;
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border); margin: 8px 0 14px; padding: 2px 2px 8px;
 }
 .timer-tab-wrap {
   display: flex; align-items: center;
-  border: 1px solid transparent; border-bottom: 0;
-  border-radius: 8px 8px 0 0; margin-bottom: -1px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2);
 }
-.timer-tab-wrap:hover { background: var(--surface-2); }
+.timer-tab-wrap:hover { background: var(--surface-1); }
 .timer-tab-wrap.on {
-  background: var(--surface-1); border-color: var(--border);
-  box-shadow: inset 0 2px 0 var(--accent), 0 -1px 3px rgba(0, 0, 0, 0.05);
+  background: var(--surface-1); border-color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.07);
 }
 .timer-tab {
   display: inline-flex; align-items: center; gap: 6px; border: 0; background: none;
-  padding: 7px 12px; font: inherit; font-size: 12.5px; font-weight: 600;
-  color: var(--text-muted); cursor: pointer; border-radius: 8px 8px 0 0;
+  padding: 6px 11px; font: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--text-muted); cursor: pointer; border-radius: 8px;
 }
 .timer-tab:hover { color: var(--text-primary); }
 .timer-tab.on { color: var(--text-primary); }
 .timer-tab-count { font-weight: 600; }
 /* the Today/Week/Recent activity cluster sits between "All" and the group
-   tabs — hairline dividers mark it off as a different KIND of tab */
-.timer-tab-wrap.activity-start { border-left: 1px solid var(--border); border-radius: 0 8px 0 0; margin-left: 5px; padding-left: 2px; }
-.timer-tab-wrap.activity-end { border-right: 1px solid var(--border); border-radius: 8px 0 0 0; margin-right: 5px; padding-right: 2px; }
-.timer-tab-wrap.activity-start.on, .timer-tab-wrap.activity-end.on { border-color: var(--border); }
+   tabs — extra breathing room marks it off as a different KIND of tab */
+.timer-tab-wrap.activity-start { margin-left: 8px; }
+.timer-tab-wrap.activity-end { margin-right: 8px; }
 .tab-tools { display: flex; gap: 0; margin: 0 6px 0 -8px; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-left: 10px; }
 .seg button {
