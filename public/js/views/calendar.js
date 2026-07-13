@@ -1,7 +1,9 @@
-import { api } from '/js/api.js';
+import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, fmtHours, addDays, todayStr, Icon,
+  html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, addDays, todayStr, emitToast, Icon,
 } from '/js/ui.js';
+import { rangeFor } from '/js/lib/daterange.js';
+import { EntryList } from '/js/components/entrylist.js';
 import { nav } from '/js/app.js';
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -33,9 +35,82 @@ function weekFor(dateStr) {
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
 }
 
-export function CalendarView({ settings, openEditor, refreshKey }) {
+// Entries panel under the calendar (2026-07-13 feedback): a single click
+// SELECTS a day and shows its entries here — no screen change; double-click
+// still opens the dedicated day view. Day/Week/Month/Range scopes anchor on
+// the selected day, and Export downloads whatever range is shown.
+function SelectedPanel({ selected, settings, openEditor, refreshKey, bumpRefresh, onClose }) {
+  const [mode, setMode] = useState('day'); // day | week | month | range
+  const [customFrom, setCustomFrom] = useState(selected);
+  const [customTo, setCustomTo] = useState(selected);
+
+  const range = mode === 'range'
+    ? (customFrom <= customTo ? { from: customFrom, to: customTo } : { from: customTo, to: customFrom })
+    : rangeFor(mode, selected);
+
+  const { loading, data } = useAsync(
+    () => api.get(`/api/entries?from=${range.from}&to=${range.to}`),
+    [range.from, range.to, refreshKey]);
+
+  const entries = data || [];
+  const total = entries.reduce((a, e) => a + e.total, 0);
+  const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
+
+  const title = mode === 'day' ? fmtDateLong(selected)
+    : mode === 'week' ? `Week of ${fmtDateLong(range.from)}`
+    : mode === 'month' ? (() => {
+      const [y, m] = selected.split('-').map(Number);
+      return new Date(y, m - 1, 1, 12).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    })()
+    : 'Custom range';
+
+  async function exportRange() {
+    const r = await api.post('/api/export', { from: range.from, to: range.to });
+    if (r.count === 0) {
+      emitToast('No finalized entries in this range — finalize first (or use the Export page for drafts).');
+      return;
+    }
+    downloadText(`timekeeper-${range.from}${range.to !== range.from ? `_${range.to}` : ''}.csv`, r.csv);
+    emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`);
+    bumpRefresh();
+  }
+
+  return html`
+    <div class="panel cal-selected-panel">
+      <div class="section-title">
+        <h2>${title}</h2>
+        <span class="muted small">${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
+        <div class="seg" role="group" aria-label="Panel range">
+          ${[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['range', 'Range']].map(([v, label]) => html`
+            <button key=${v} class=${mode === v ? 'on' : ''}
+              onClick=${() => {
+                if (v === 'range' && mode !== 'range') { setCustomFrom(selected); setCustomTo(selected); }
+                setMode(v);
+              }}>${label}</button>`)}
+        </div>
+        ${mode === 'range' ? html`
+          <span class="row" style=${{ gap: '4px' }}>
+            <input type="date" value=${customFrom} onChange=${(e) => setCustomFrom(e.target.value)} />
+            <span class="muted">–</span>
+            <input type="date" value=${customTo} onChange=${(e) => setCustomTo(e.target.value)} />
+          </span>` : null}
+        <div class="spacer" style=${{ flex: 1 }}></div>
+        <button class="btn btn-sm" title="Download finalized entries in view as CSV (marks them exported)"
+          onClick=${exportRange}><${Icon} name="export" size=${15} /> Export</button>
+        <button class="btn btn-sm" title="Open the full day view (also: double-click the day)"
+          onClick=${() => nav(`#/day/${selected}`)}><${Icon} name="calendar" size=${15} /> Open day</button>
+        <button class="btn btn-ghost btn-sm" title="Close" onClick=${onClose}>✕</button>
+      </div>
+      ${loading && !data ? html`<${Spinner} />` : html`
+        <${EntryList} entries=${entries} openEditor=${openEditor} onChanged=${bumpRefresh}
+          settings=${settings} showDate=${mode !== 'day'} />`}
+    </div>`;
+}
+
+export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const [mode, setMode] = useState('month');
   const [anchor, setAnchor] = useState(todayStr());
+  const [selected, setSelected] = useState(null);
 
   const range = mode === 'month'
     ? { from: gridFor(monthOf(anchor))[0].date, to: gridFor(monthOf(anchor))[41].date }
@@ -80,12 +155,15 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
     }
   }
 
+  // single click selects (entries appear below); double click opens the day
+  const pick = (date) => setSelected((cur) => (cur === date ? null : date));
+
   return html`
     <div class="page-head">
       <button class="btn" onClick=${() => shift(-1)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${mode === 'month' ? monthLabel : `Week of ${weekFor(anchor)[0]}`}</h1>
       <button class="btn" onClick=${() => shift(1)}><${Icon} name="chevronRight" size=${16} /></button>
-      <button class="btn btn-sm" onClick=${() => setAnchor(todayStr())}>Today</button>
+      <button class="btn btn-sm" onClick=${() => { setAnchor(todayStr()); setSelected(todayStr()); }}>Today</button>
       <div class="spacer"></div>
       <div class="row" style=${{ gap: '4px' }}>
         <button class=${'btn btn-sm' + (mode === 'month' ? ' btn-primary' : '')} onClick=${() => setMode('month')}>Month</button>
@@ -96,6 +174,7 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
       <span><span class="dot dot-billable"></span>Billable</span>
       <span><span class="dot dot-nonbillable"></span>Non-billable</span>
       ${target ? html`<span class="muted">✓ ≥${fmtHours(target)}h · ◐ ≥50% · ! under 50%</span>` : null}
+      <span class="muted">Click a day to see its entries below · double-click opens it</span>
     </div>
     ${loading && !data ? html`<${Spinner} />` : mode === 'month' ? html`
       <div class="cal-grid">
@@ -106,8 +185,10 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
           const scale = Math.max(target || 0, info ? info.total : 0, 0.1);
           return html`
             <button key=${cell.date}
-              class=${'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '') + (cell.date === todayStr() ? ' today' : '')}
-              onClick=${() => nav(`#/day/${cell.date}`)}>
+              class=${'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '')
+                + (cell.date === todayStr() ? ' today' : '') + (cell.date === selected ? ' selected' : '')}
+              onClick=${() => pick(cell.date)}
+              onDoubleClick=${() => nav(`#/day/${cell.date}`)}>
               <span class="cal-num">${cell.dayNum}</span>
               ${status ? html`<span class=${'cal-status ' + status[0]} title=${'vs ' + fmtHours(target) + 'h target'}>${status[1]}</span>` : null}
               ${info ? html`
@@ -123,9 +204,10 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
         ${weekFor(anchor).map((day) => {
           const info = byDay.get(day);
           return html`
-            <div key=${day} class="week-col">
+            <div key=${day} class=${'week-col' + (day === selected ? ' selected' : '')}>
               <div class="col-head">
-                <a href=${`#/day/${day}`}>${day.slice(5)}</a>
+                <button class="week-day-btn" title="Click: entries below · double-click: open day"
+                  onClick=${() => pick(day)} onDoubleClick=${() => nav(`#/day/${day}`)}>${day.slice(5)}</button>
                 <span class="mono muted">${info ? fmtHours(info.total) : ''}</span>
               </div>
               ${(info?.entries || []).map((e) => html`
@@ -136,5 +218,8 @@ export function CalendarView({ settings, openEditor, refreshKey }) {
             </div>`;
         })}
       </div>`}
+    ${selected ? html`
+      <${SelectedPanel} selected=${selected} settings=${settings} openEditor=${openEditor}
+        refreshKey=${refreshKey} bumpRefresh=${bumpRefresh} onClose=${() => setSelected(null)} />` : null}
   `;
 }
