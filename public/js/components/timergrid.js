@@ -53,6 +53,27 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
   const [focusId, setFocusId] = useState(null);
 
+  // A just-created timer jumps into view (2026-07-13 feedback): switch to
+  // the All tab, clear any filter, then — once the render that includes the
+  // new card commits — scroll to it and hand it the keyboard focus. An
+  // effect (not a bare rAF at creation time) because the card may not be in
+  // the DOM until the post-reload render.
+  const [revealId, setRevealId] = useState(null);
+  const reveal = (id) => {
+    setGridFilter('');
+    setActiveTab('all');
+    setRevealId(id);
+  };
+  useEffect(() => {
+    if (revealId == null) return;
+    const el = document.querySelector(`.timer-board .timer-card[data-timer-id="${revealId}"]`);
+    if (!el) return; // not rendered yet — retry on the next timers/tab render
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setFocusId(revealId);
+    el.focus({ preventScroll: true });
+    setRevealId(null);
+  });
+
   // Grid search bar: `/` on the dashboard (or the toolbar button) opens an
   // explicit search input; typing narrows the grid in place (still just a
   // plain string — `gridFilter` — shared with the filtering internals).
@@ -208,10 +229,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     await reload();
   }, [reload]);
 
-  const duplicate = useCallback(async (timer) => {
-    await api.post(`/api/timers/${timer.id}/duplicate`);
+  // not memoized: reveal() closes over the current grouping mode
+  const duplicate = async (timer) => {
+    const copy = await api.post(`/api/timers/${timer.id}/duplicate`);
     await reload();
-  }, [reload]);
+    if (copy && copy.id) reveal(copy.id);
+  };
 
   // 't' shortcut: toggle last-used timer
   useEffect(() => {
@@ -622,6 +645,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         onClick=${() => guard((async () => {
           const t = await api.post('/api/timers', {});
           await start(t);
+          reveal(t.id);
         })())}>
         <${Icon} name="timer" size=${16} /> Quick
       </button>
@@ -719,8 +743,10 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ${editing ? html`
       <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes} groups=${groups}
         onDone=${async (saved) => {
+          const wasNew = editing === 'new';
           setEditing(null);
           await reload();
+          if (wasNew && saved && saved.id) reveal(saved.id);
           if (saved && saved.entry) {
             onEntryChanged();
             // paused assign filed its settled held time — flow straight into
