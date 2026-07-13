@@ -730,3 +730,78 @@ test('finalizing the linked entry zeroes and unlinks its timer (stopped and runn
     assert.equal(stop3.entry.total, 0.1, 'only post-finalize time files');
     assert.notEqual(stop3.entry.id, stop2.entry.id);
   }));
+
+// Held-over surfacing (2026-07-11 feedback: "these timers were orphaned from
+// yesterday — not sure why"): carrying an unassigned quick timer's clock
+// across midnight is deliberate (nowhere to bank), but the UI must SAY so.
+// held_since records the (first) day the held time came from; assigning a
+// matter or zeroing the clock clears it.
+test('quick timer: midnight carry-over stamps held_since with the day the time came from', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2 * 3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    clock.set('2026-07-07T10:00:00-07:00');
+    let row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.held_since, '2026-07-06');
+
+    // a second midnight keeps the ORIGINAL day, not the latest
+    clock.set('2026-07-08T10:00:00-07:00');
+    row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.held_since, '2026-07-06');
+
+    // dashboard surfaces the count so the banner can point at it
+    const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
+    assert.equal(dash.alerts.heldTimers.length, 1);
+    assert.equal(dash.alerts.heldTimers[0].id, timer.id);
+    assert.equal(dash.alerts.heldTimers[0].held_since, '2026-07-06');
+  }));
+
+test('quick timer: a zero-clock timer crossing midnight does NOT get held_since', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Idle' })).body;
+    clock.set('2026-07-07T10:00:00-07:00');
+    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.held_since, null);
+  }));
+
+test('quick timer: assigning a matter clears held_since (the time files)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2 * 3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    clock.set('2026-07-07T10:00:00-07:00');
+
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(patched.held_since, null);
+    assert.ok(patched.entry, 'held time filed on assignment');
+  }));
+
+test('quick timer: zeroing the clock clears held_since (nothing held anymore)', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2 * 3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    clock.set('2026-07-07T10:00:00-07:00');
+
+    await t.fetchJson('PUT', `/api/timers/${timer.id}/clock`, { hours: 0 });
+    let row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.held_since, null);
+  }));
+
+test('quick timer: "fresh" also clears held_since', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(2 * 3600);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    clock.set('2026-07-07T10:00:00-07:00');
+
+    await t.fetchJson('POST', `/api/timers/${timer.id}/fresh`);
+    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.held_since, null);
+  }));

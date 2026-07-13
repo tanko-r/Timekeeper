@@ -222,6 +222,10 @@ const MIGRATIONS = [
   DROP TABLE timers;
   ALTER TABLE timers_new RENAME TO timers;
   `,
+  // held_since: the day an unassigned quick timer's carried-over clock came
+  // from (set at the midnight rollover, cleared on assign/zero) — lets the
+  // UI say WHY a timer from yesterday is still sitting there.
+  'ALTER TABLE timers ADD COLUMN held_since TEXT;',
 ];
 
 const SEED_SETTINGS = {

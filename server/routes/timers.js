@@ -18,7 +18,7 @@ import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
-  group_id, linked_entry_id, last_stopped_at, suggested_narrative`;
+  group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since`;
 
 const TENTH_SECONDS = 360;
 
@@ -112,9 +112,14 @@ export function applyRollovers(db, clock) {
       // Unassigned quick timer: nowhere to bank — carry the clock forward
       // across midnight so the held time survives until a matter is
       // assigned (it then files, dated the day of the next stop).
+      // held_since stamps the day the held time came from (first carry
+      // only) so the UI can explain the leftover timer instead of leaving
+      // it looking orphaned (2026-07-11 feedback).
+      const heldSince = timer.held_since
+        || (r.bankSeconds > 0 ? timer.last_reset_date : null);
       db.prepare(
-        'UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_reset_date=? WHERE id=?'
-      ).run(r.bankSeconds, timer.running ? r.restartIso : null, today, timer.id);
+        'UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_reset_date=?, held_since=? WHERE id=?'
+      ).run(r.bankSeconds, timer.running ? r.restartIso : null, today, heldSince, timer.id);
       continue;
     }
     const hours = secondsToHours(r.bankSeconds, rounding);
@@ -273,13 +278,14 @@ export function timersRouter({ db, clock }) {
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cmChanged = b.cm_id !== undefined && (b.cm_id ?? null) !== (timer.cm_id ?? null);
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=? WHERE id=?').run(
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, held_since=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
       b.group_id !== undefined ? b.group_id : timer.group_id,
       cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
+      cmChanged ? null : timer.held_since, // assigned → the held time files below
       timer.id);
 
     // Quick-timer completion (stop → assign → narrate): giving a PAUSED
@@ -458,7 +464,7 @@ export function timersRouter({ db, clock }) {
     // an untouched empty entry isn't "kept" — it never had anything to keep
     deleteIfUntouched(db, timer.linked_entry_id, now());
     db.prepare(
-      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL, held_since=NULL WHERE id=?'
     ).run(timer.running ? now() : null, timer.id);
     // invariant: a RUNNING matter timer always has a linked entry
     let entry = null;
@@ -494,8 +500,9 @@ export function timersRouter({ db, clock }) {
     }
     const snapped = Math.max(0, Math.round(target / TENTH_SECONDS) * TENTH_SECONDS);
 
-    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?')
-      .run(snapped, timer.running ? now() : null, timer.id);
+    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=?, held_since=? WHERE id=?')
+      .run(snapped, timer.running ? now() : null,
+        snapped === 0 ? null : timer.held_since, timer.id);
 
     let entry = null;
     const fresh = getTimer.get(timer.id);

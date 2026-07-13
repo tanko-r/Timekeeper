@@ -60,6 +60,12 @@ export function dashboardRouter({ db, clock }) {
         unexportedFinalized: db.prepare(
           "SELECT COUNT(*) c FROM entries WHERE deleted_at IS NULL AND status='finalized' AND exported_at IS NULL"
         ).get().c,
+        // unassigned quick timers still holding time carried over from an
+        // earlier day — deliberate carry (nowhere to bank), but it needs a
+        // banner, not silence (2026-07-11 feedback)
+        heldTimers: timers
+          .filter((t) => t.held_since && !t.cm_id)
+          .map((t) => ({ id: t.id, name: t.name, held_since: t.held_since, elapsed_seconds: t.elapsed_seconds })),
       },
     });
   });

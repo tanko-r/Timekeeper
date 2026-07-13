@@ -46,7 +46,9 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   const unassignedRunning = (d.timers || []).filter((t) => t.running && !t.cm_id);
 
   const alerts = d.alerts;
-  const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0 || alerts.unexportedFinalized > 0;
+  const heldTimers = alerts.heldTimers || [];
+  const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0
+    || alerts.unexportedFinalized > 0 || heldTimers.length > 0;
 
   // Two-step finalize: warnings must be seen before they're acknowledged.
   async function finalizeToday(ack = false) {
@@ -116,6 +118,12 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
             <button class="alert-pill" onClick=${() => nav('#/export')}>
               ${alerts.unexportedFinalized} finalized ${alerts.unexportedFinalized === 1 ? 'entry' : 'entries'} not yet exported
             </button>` : null}
+          ${heldTimers.map((t) => html`
+            <button key=${'held-' + t.id} class="alert-pill"
+              title="Unassigned quick-timer time carries across midnight (nowhere to file it). Assign a matter to file, or zero the clock to discard."
+              onClick=${() => window.dispatchEvent(new CustomEvent('tk:edit-timer', { detail: { id: t.id } }))}>
+              “${t.name}” holds ${fmtHours(Math.round(t.elapsed_seconds / 360) / 10)}h from ${t.held_since} — assign a matter
+            </button>`)}
         </div>
       </div>` : null}
 
