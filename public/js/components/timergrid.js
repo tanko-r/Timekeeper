@@ -7,6 +7,7 @@ import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
+import { startAlignedTick } from '/js/lib/tick.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -70,9 +71,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   useEffect(() => { api.get('/api/task-codes').then(setTaskCodes).catch(() => {}); }, []);
   useEffect(() => {
     const poll = setInterval(() => reload().catch(() => {}), 5000);
-    const tick = setInterval(() => forceTick((x) => x + 1), 1000);
-    return () => { clearInterval(poll); clearInterval(tick); };
+    return () => clearInterval(poll);
   }, [reload]);
+  // The rendered second flips when (now - fetchedAt) crosses a whole second —
+  // tick aligned to that boundary, not a drifting 1s interval (which made the
+  // clock hang and then jump two counts at once).
+  useEffect(() => startAlignedTick(fetchedAt, () => forceTick((x) => x + 1)), [fetchedAt]);
 
   const liveElapsed = useCallback((t) => {
     let s = t.elapsed_seconds;

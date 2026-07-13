@@ -1,4 +1,5 @@
 import { html, useEffect, useRef, useState, fmtHours, fmtClock, Icon } from '/js/ui.js';
+import { startAlignedTick } from '/js/lib/tick.js';
 
 // Persistent "today" footer (spec §4): ambient awareness — live running
 // clock, billable-vs-target meter, one key to close the day. Dashboard only.
@@ -7,9 +8,9 @@ export function TodayFooter({ today, timers, fetchedAt, onCloseDay }) {
   const [, tick] = useState(0);
   useEffect(() => {
     if (!running.length) return undefined;
-    const h = setInterval(() => tick((x) => x + 1), 1000);
-    return () => clearInterval(h);
-  }, [running.length]);
+    // aligned to fetchedAt so the display never hangs across a second boundary
+    return startAlignedTick(fetchedAt || 0, () => tick((x) => x + 1));
+  }, [running.length, fetchedAt]);
 
   // subtle pulse when the filed total changes (Task 7 owns the wider motion language)
   const prev = useRef(today.total);
