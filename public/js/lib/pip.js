@@ -50,6 +50,16 @@ export function narrativeValue(t) {
   return (narrativeMode(t) === 'stash' ? t.draft_narrative : t.entry_narrative) || '';
 }
 
+// After a stop lands (Stop button, or exclusivity-stop when another timer
+// starts), which timer gets the full-window close-out pane? The one that
+// stopped — unless the misclick grace undid the start (no time, no entry),
+// the timer vanished, or it is somehow running again. Pure — unit-tested.
+export function closeoutTimer(timers, id) {
+  const t = (timers || []).find((x) => x.id === id);
+  if (!t || t.running) return null;
+  return t.elapsed_seconds > 0 || t.linked_entry_id ? t : null;
+}
+
 export function fmtDayTotal(totalSeconds) {
   return `${(Math.max(0, totalSeconds) / 3600).toFixed(1)}h today`;
 }
@@ -78,13 +88,13 @@ const PIP_CSS = `
     :root:not([data-theme="light"]) {
       --surface-1: #1a1a19; --surface-2: #242422; --border: #3a3a37;
       --text-primary: #ffffff; --text-secondary: #c3c2b7;
-      --accent: #3987e5;
+      --accent: #3987e5; --good: #23b523;
     }
   }
   :root[data-theme="dark"] {
     --surface-1: #1a1a19; --surface-2: #242422; --border: #3a3a37;
     --text-primary: #ffffff; --text-secondary: #c3c2b7;
-    --accent: #3987e5;
+    --accent: #3987e5; --good: #23b523;
   }
   * { margin: 0; box-sizing: border-box; }
   [hidden] { display: none !important; }
@@ -113,12 +123,14 @@ const PIP_CSS = `
   .pin.on { color: var(--accent); opacity: 1; }
   .pin svg { width: 13px; height: 13px; }
   .act {
-    font: 600 11px system-ui, sans-serif; color: var(--text-primary);
+    display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
-    padding: 3px 9px; cursor: pointer; flex: none;
+    width: 26px; height: 22px; padding: 0; cursor: pointer; flex: none;
   }
   .act:hover { border-color: var(--text-muted); }
-  .row.running .act { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .act svg { width: 11px; height: 11px; }
+  .act.start { color: var(--good); }
+  .act.stop { color: var(--danger); }
   .detail { padding: 0 8px 8px 23px; }
   .cap { color: var(--text-muted); font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   textarea {
@@ -142,6 +154,20 @@ const PIP_CSS = `
     width: 24px; height: 22px; cursor: pointer;
   }
   .quick:hover { border-color: var(--text-muted); }
+  .closeout {
+    flex: 1; display: flex; flex-direction: column; gap: 5px;
+    padding: 8px; min-height: 0; overflow-y: auto;
+  }
+  .co-title { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .co-time { color: var(--text-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .co-time b { font-family: ui-monospace, monospace; color: var(--text-primary); }
+  .closeout textarea { flex: 1; min-height: 48px; }
+  .co-foot { display: flex; align-items: center; justify-content: space-between; }
+  .done {
+    font: 600 11px system-ui, sans-serif; color: #fff;
+    background: var(--accent); border: 1px solid var(--accent); border-radius: 5px;
+    padding: 3px 14px; cursor: pointer;
+  }
 `;
 
 // lucide "pin" — same path as icons.js, which is NOT importable here: it
@@ -152,6 +178,13 @@ const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
   + '<path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5'
   + ' 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0'
   + ' 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>';
+
+// lucide "play" (same path as icons.js) and "square", filled solid so they
+// read as the classic green-go / red-stop transport glyphs at 11px.
+const PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+  + '<path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" /></svg>';
+const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">'
+  + '<rect x="3" y="3" width="18" height="18" rx="2" /></svg>';
 
 let pipWin = null; // one floating window per tab (mirrors the API's own limit)
 
@@ -185,6 +218,7 @@ export async function toggleTimerPip() {
   themeObs.observe(mainRoot, { attributes: true, attributeFilter: ['data-theme'] });
   doc.body.innerHTML = `
     <div class="rows" data-rows></div>
+    <div class="closeout" data-closeout hidden></div>
     <div class="empty" data-empty hidden>No time today — pin a timer or hit +.</div>
     <div class="err" data-err hidden></div>
     <div class="foot">
@@ -193,6 +227,7 @@ export async function toggleTimerPip() {
     </div>`;
 
   const rowsEl = doc.querySelector('[data-rows]');
+  const closeoutEl = doc.querySelector('[data-closeout]');
   const emptyEl = doc.querySelector('[data-empty]');
   const errEl = doc.querySelector('[data-err]');
   const totalEl = doc.querySelector('[data-total]');
@@ -200,6 +235,7 @@ export async function toggleTimerPip() {
   let timers = [];
   let fetchedAt = 0;
   let expandedId = null; // one expanded row at a time
+  let closeoutId = null; // just-stopped timer whose close-out pane owns the window
   const drafts = new Map(); // timer id → unsaved narrative text
   const debounces = new Map(); // timer id → save debounce handle
   let pendingRender = false; // a render was skipped to protect a focused textarea
@@ -223,7 +259,9 @@ export async function toggleTimerPip() {
     const t = timers.find((x) => x.id === id);
     if (!t) return;
     const text = drafts.get(id);
-    const rowErr = rowsEl.querySelector(`.row[data-id="${id}"] [data-rowerr]`);
+    // doc-wide: the narrative surface lives in a .row normally, but in the
+    // close-out pane (which also carries data-id) after a stop
+    const rowErr = doc.querySelector(`[data-id="${id}"] [data-rowerr]`);
     try {
       if (narrativeMode(t) === 'stash') {
         await api.patch(`/api/timers/${id}`, { draft_narrative: text });
@@ -232,7 +270,7 @@ export async function toggleTimerPip() {
       }
       if (drafts.get(id) === text) drafts.delete(id);
       if (rowErr) rowErr.textContent = '';
-      const flash = rowsEl.querySelector(`.row[data-id="${id}"] [data-saved]`);
+      const flash = doc.querySelector(`[data-id="${id}"] [data-saved]`);
       if (flash) {
         flash.classList.add('show');
         pipWin.setTimeout(() => flash.classList.remove('show'), 1200);
@@ -244,8 +282,41 @@ export async function toggleTimerPip() {
   }
 
   function focusNarrative(id) {
-    const ta = rowsEl.querySelector(`.row[data-id="${id}"] textarea`);
+    const ta = doc.querySelector(`[data-id="${id}"] textarea`);
     if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+
+  // textarea + ✓-saved / error strip, shared by the expanded row and the
+  // close-out pane. Esc calls onEscape (collapse whichever surface owns it),
+  // then blurs — blur saves and flushes any render deferred while typing.
+  function buildNarrativeField(t, onEscape) {
+    const ta = doc.createElement('textarea');
+    ta.rows = 2;
+    ta.value = drafts.has(t.id) ? drafts.get(t.id) : narrativeValue(t);
+    ta.addEventListener('input', () => {
+      drafts.set(t.id, ta.value);
+      clearTimeout(debounces.get(t.id));
+      debounces.set(t.id, pipWin.setTimeout(() => saveNarrative(t.id), 600));
+    });
+    ta.addEventListener('blur', () => {
+      saveNarrative(t.id);
+      if (pendingRender) { pendingRender = false; render(); }
+    });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        onEscape();
+        pendingRender = true;
+        ta.blur();
+      }
+    });
+    const saved = doc.createElement('span');
+    saved.className = 'saved';
+    saved.dataset.saved = '';
+    saved.textContent = '✓ saved';
+    const rowErr = doc.createElement('div');
+    rowErr.className = 'rowerr';
+    rowErr.dataset.rowerr = '';
+    return { ta, saved, rowErr };
   }
 
   function buildDetail(t) {
@@ -271,35 +342,54 @@ export async function toggleTimerPip() {
       return detail;
     }
 
-    const ta = doc.createElement('textarea');
-    ta.rows = 2;
-    ta.value = drafts.has(t.id) ? drafts.get(t.id) : narrativeValue(t);
-    ta.addEventListener('input', () => {
-      drafts.set(t.id, ta.value);
-      clearTimeout(debounces.get(t.id));
-      debounces.set(t.id, pipWin.setTimeout(() => saveNarrative(t.id), 600));
-    });
-    ta.addEventListener('blur', () => {
-      saveNarrative(t.id);
-      if (pendingRender) { pendingRender = false; render(); }
-    });
-    ta.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        // collapse: blur triggers the save AND the deferred re-render
-        expandedId = null;
-        pendingRender = true;
-        ta.blur();
-      }
-    });
-    const saved = doc.createElement('span');
-    saved.className = 'saved';
-    saved.dataset.saved = '';
-    saved.textContent = '✓ saved';
-    const rowErr = doc.createElement('div');
-    rowErr.className = 'rowerr';
-    rowErr.dataset.rowerr = '';
-    detail.append(ta, saved, rowErr);
+    const f = buildNarrativeField(t, () => { expandedId = null; });
+    detail.append(f.ta, f.saved, f.rowErr);
     return detail;
+  }
+
+  // Full-window close-out pane: after a stop, the narrative field takes over
+  // the window so writing the entry isn't skipped. Done / Esc returns to the
+  // list (autosave means both are just "dismiss").
+  function buildCloseout(t) {
+    closeoutEl.dataset.id = t.id;
+    const title = doc.createElement('div');
+    title.className = 'co-title';
+    title.textContent = t.name;
+    const time = doc.createElement('div');
+    time.className = 'co-time';
+    const clock = doc.createElement('b');
+    clock.textContent = fmtClock(secsOf(t));
+    time.append('Stopped at ', clock);
+    time.append(t.cm_id
+      ? ` · ${t.cm_short_name} · ${t.cm_number}`
+      : ' · no matter yet — narrative is kept until one is assigned');
+
+    const done = doc.createElement('button');
+    done.className = 'done';
+    done.textContent = 'Done';
+    // clicking Done blurs the textarea first, which already saves
+    done.addEventListener('click', () => { closeoutId = null; render(); });
+    const foot = doc.createElement('div');
+    foot.className = 'co-foot';
+
+    const kids = [title, time];
+    if (narrativeMode(t) === 'readonly') {
+      const ro = doc.createElement('div');
+      ro.className = 'ro';
+      ro.textContent = narrativeValue(t);
+      const hint = doc.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'split entry — edit in app';
+      kids.push(ro, hint);
+      foot.append(doc.createElement('span'), done);
+    } else {
+      const f = buildNarrativeField(t, () => { closeoutId = null; });
+      f.ta.placeholder = 'What did you do? Saved automatically.';
+      kids.push(f.ta, f.rowErr);
+      foot.append(f.saved, done);
+    }
+    kids.push(foot);
+    closeoutEl.replaceChildren(...kids);
   }
 
   function buildRow(t) {
@@ -323,8 +413,10 @@ export async function toggleTimerPip() {
       ? 'Unpin — drops off this window once its day is over'
       : 'Pin — keeps this timer here across days';
     const actBtn = bar.querySelector('[data-act]');
-    actBtn.textContent = t.running ? 'Stop' : 'Start';
+    actBtn.classList.add(t.running ? 'stop' : 'start');
+    actBtn.innerHTML = t.running ? STOP_SVG : PLAY_SVG;
     actBtn.title = t.running ? 'Stop & file time' : 'Start';
+    actBtn.setAttribute('aria-label', actBtn.title);
 
     bar.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
@@ -340,10 +432,20 @@ export async function toggleTimerPip() {
     });
     actBtn.addEventListener('click', async () => {
       actBtn.disabled = true;
+      // Whichever timer this click stops — this one (Stop) or the one the
+      // server's start-exclusivity stops (Start) — gets the close-out pane,
+      // once the poll confirms the stop banked something to narrate.
+      const stopping = t.running ? t : timers.find((x) => x.running);
       try {
         await api.post(`/api/timers/${t.id}/${t.running ? 'stop' : 'start'}`);
         localStorage.setItem('tk:lastTimer', String(t.id));
         await poll();
+        if (stopping && closeoutTimer(timers, stopping.id)) {
+          closeoutId = stopping.id;
+          expandedId = null;
+          render();
+          focusNarrative(stopping.id);
+        }
       } catch (e) { showErr(e); } finally { actBtn.disabled = false; }
     });
 
@@ -358,8 +460,23 @@ export async function toggleTimerPip() {
     const rows = buildPipRows(timers);
     localStorage.setItem('tk:pipRows', String(rows.length || 1));
     if (expandedId !== null && !rows.some((t) => t.id === expandedId)) expandedId = null;
-    rowsEl.replaceChildren(...rows.map(buildRow));
-    emptyEl.hidden = rows.length > 0;
+    const co = closeoutId === null ? null : closeoutTimer(timers, closeoutId);
+    if (!co) closeoutId = null;
+    if (co) {
+      // close-out owns the window; the list comes back on Done / Esc
+      rowsEl.replaceChildren();
+      rowsEl.hidden = true;
+      emptyEl.hidden = true;
+      buildCloseout(co);
+      closeoutEl.hidden = false;
+    } else {
+      closeoutEl.hidden = true;
+      closeoutEl.replaceChildren();
+      closeoutEl.removeAttribute('data-id');
+      rowsEl.hidden = false;
+      rowsEl.replaceChildren(...rows.map(buildRow));
+      emptyEl.hidden = rows.length > 0;
+    }
     totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
     doc.body.classList.toggle('running', rows.some((t) => t.running));
   }
@@ -381,6 +498,10 @@ export async function toggleTimerPip() {
       const t = await api.post('/api/timers', {});
       await api.post(`/api/timers/${t.id}/start`);
       localStorage.setItem('tk:lastTimer', String(t.id));
+      // no close-out here even though + exclusivity-stops the running timer:
+      // the + flow's whole point (spec §4) is capturing the interruption in
+      // the NEW timer's narrative right now
+      closeoutId = null;
       expandedId = t.id;
       await poll();
       focusNarrative(t.id);

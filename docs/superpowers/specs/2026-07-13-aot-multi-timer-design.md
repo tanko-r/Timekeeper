@@ -147,3 +147,25 @@ today.
 Edit-through narrative parsing for split entries in the PiP window; changing
 dashboard sort for pinned timers; any timer-behavior change tied to pinning;
 Firefox/Safari support (Document PiP is Chromium-only).
+
+## Addendum (2026-07-13): stop close-out pane + transport icons
+
+Requested by David after first use:
+
+- **Close-out pane.** When a stop lands from inside the window — the row's
+  Stop button, or the server's start-exclusivity stop when another row is
+  started — the window is taken over by a full-pane narrative field for the
+  just-stopped timer (name, `Stopped at <clock> · matter` caption, textarea,
+  Done button). The point is that writing the narrative can't be skipped in
+  the popout flow. Done / Esc dismisses back to the list; autosave (same
+  debounce/blur machinery as the expanded row) means dismissal never loses
+  text. Split entries render read-only with the usual "edit in app" hint.
+  The pane is skipped when there is nothing to narrate: misclick grace undid
+  the start, or the timer is already running again / gone by poll time
+  (pure helper `closeoutTimer`, unit-tested).
+- The footer `+` quick timer still does NOT trigger a close-out for the
+  timer it exclusivity-stops: §4's flow (capture the interruption in the NEW
+  timer's focused narrative immediately) takes priority.
+- **Transport icons.** The Start/Stop text buttons are now bordered icon
+  buttons: solid green play triangle (start) / solid red square (stop),
+  lucide shapes inlined like the pin glyph.

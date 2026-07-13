@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClock, pipSupported,
+  closeoutTimer,
 } from '../public/js/lib/pip.js';
 
 const T = (id, extra = {}) => ({
@@ -49,6 +50,25 @@ test('fmtClock matches the titlebar/ui format', () => {
   assert.equal(fmtClock(75), '01:15');
   assert.equal(fmtClock(3600), '1:00:00');
   assert.equal(fmtClock(4271.9), '1:11:11');
+});
+
+test('closeoutTimer: returns the stopped timer when there is something to narrate', () => {
+  const stopped = T(4, { elapsed_seconds: 600, linked_entry_id: 9 });
+  assert.equal(closeoutTimer([T(1), stopped], 4), stopped, 'time filed to an entry');
+
+  const held = T(4, { elapsed_seconds: 600 });
+  assert.equal(closeoutTimer([held], 4), held, 'matterless timer holding time — narrative stashes');
+
+  const entryOnly = T(4, { linked_entry_id: 9 });
+  assert.equal(closeoutTimer([entryOnly], 4), entryOnly, 'entry exists even at 0:00 today');
+});
+
+test('closeoutTimer: null when the stop left nothing to narrate', () => {
+  assert.equal(closeoutTimer([T(1), T(4)], 4), null, 'misclick grace undid the start');
+  assert.equal(closeoutTimer([T(1)], 4), null, 'timer gone by the time the poll lands');
+  assert.equal(closeoutTimer(null, 4), null);
+  const stillRunning = T(4, { running: 1, elapsed_seconds: 600 });
+  assert.equal(closeoutTimer([stillRunning], 4), null, 'never close out a timer that is running');
 });
 
 test('pipSupported is false outside a browser', () => {
