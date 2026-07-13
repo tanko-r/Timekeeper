@@ -64,58 +64,84 @@ export function fmtClock(totalSeconds) {
   return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+// Mirrors app.css's design tokens (copied by hand — stylesheets are NOT
+// inherited into the PiP document): light by default, dark via the OS
+// preference, and the app's explicit Settings theme wins through the
+// data-theme attribute mirrored from the main document in toggleTimerPip.
 const PIP_CSS = `
+  :root {
+    --surface-1: #fcfcfb; --surface-2: #efefec; --border: #dddcd6;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8b8a84;
+    --accent: #2a78d6; --danger: #d03b3b; --good: #0ca30c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface-1: #1a1a19; --surface-2: #242422; --border: #3a3a37;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7;
+      --accent: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-1: #1a1a19; --surface-2: #242422; --border: #3a3a37;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7;
+    --accent: #3987e5;
+  }
   * { margin: 0; box-sizing: border-box; }
   [hidden] { display: none !important; }
   body {
     font: 12px/1.35 system-ui, sans-serif;
-    background: #14161b; color: #e8eaf0;
+    background: var(--surface-1); color: var(--text-primary);
     height: 100vh; display: flex; flex-direction: column;
-    border-left: 4px solid #3a3f4b; user-select: none;
+    border-left: 4px solid var(--border); user-select: none;
   }
-  body.running { border-left-color: #e11d48; }
+  body.running { border-left-color: var(--accent); }
   .rows { flex: 1; overflow-y: auto; }
-  .row { border-bottom: 1px solid #23262e; }
+  .row { border-bottom: 1px solid var(--border); }
   .rowbar { display: flex; align-items: center; gap: 7px; padding: 6px 8px; cursor: pointer; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3f4b; flex: none; }
-  .row.running .dot { background: #e11d48; animation: pulse 1.6s ease-in-out infinite; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+  .row.running .dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .clock { font-family: ui-monospace, monospace; font-weight: 700; font-size: 14px; flex: none; min-width: 54px; }
-  .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aab0bf; }
-  .row.running .name { color: #e8eaf0; }
-  .pin { background: none; border: none; cursor: pointer; font-size: 12px; opacity: 0.18; padding: 2px; flex: none; }
-  .pin:hover { opacity: 0.6; }
-  .pin.on { opacity: 1; }
+  .row.running .clock { color: var(--accent); }
+  .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+  .row.running .name { color: var(--text-primary); }
+  .pin {
+    background: none; border: none; cursor: pointer; padding: 2px; flex: none;
+    display: inline-flex; color: var(--text-muted); opacity: 0.35;
+  }
+  .pin:hover { opacity: 0.8; }
+  .pin.on { color: var(--accent); opacity: 1; }
+  .pin svg { width: 13px; height: 13px; }
   .act {
-    font: 600 11px system-ui, sans-serif; color: #e8eaf0;
-    background: #262a33; border: 1px solid #3a3f4b; border-radius: 5px;
+    font: 600 11px system-ui, sans-serif; color: var(--text-primary);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
     padding: 3px 9px; cursor: pointer; flex: none;
   }
-  .act:hover { background: #313644; }
-  .row.running .act { background: #b3123a; border-color: #e11d48; }
+  .act:hover { border-color: var(--text-muted); }
+  .row.running .act { background: var(--accent); border-color: var(--accent); color: #fff; }
   .detail { padding: 0 8px 8px 23px; }
-  .cap { color: #8b93a5; font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cap { color: var(--text-muted); font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   textarea {
-    width: 100%; font: 12px/1.35 system-ui, sans-serif; color: #e8eaf0;
-    background: #1b1e25; border: 1px solid #3a3f4b; border-radius: 5px;
+    width: 100%; font: 12px/1.35 system-ui, sans-serif; color: var(--text-primary);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
     padding: 4px 6px; resize: none;
   }
-  textarea:focus { outline: none; border-color: #5b6373; }
-  .ro { color: #c6cbd6; }
-  .hint { color: #8b93a5; font-size: 10px; margin-top: 2px; }
-  .saved { color: #4ade80; font-size: 11px; opacity: 0; transition: opacity 0.2s; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .ro { color: var(--text-secondary); }
+  .hint { color: var(--text-muted); font-size: 10px; margin-top: 2px; }
+  .saved { color: var(--good); font-size: 11px; opacity: 0; transition: opacity 0.2s; }
   .saved.show { opacity: 1; }
-  .rowerr { color: #f0a5b8; font-size: 11px; margin-top: 3px; }
-  .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #8b93a5; padding: 12px; text-align: center; }
-  .err { color: #f0a5b8; font-size: 11px; padding: 4px 8px; }
-  .foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid #2a2e37; }
-  .total { color: #aab0bf; font-family: ui-monospace, monospace; font-size: 11px; }
+  .rowerr { color: var(--danger); font-size: 11px; margin-top: 3px; }
+  .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); padding: 12px; text-align: center; }
+  .err { color: var(--danger); font-size: 11px; padding: 4px 8px; }
+  .foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid var(--border); }
+  .total { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size: 11px; }
   .quick {
-    font: 700 14px/1 system-ui, sans-serif; color: #e8eaf0;
-    background: #262a33; border: 1px solid #3a3f4b; border-radius: 5px;
+    font: 700 14px/1 system-ui, sans-serif; color: var(--text-primary);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
     width: 24px; height: 22px; cursor: pointer;
   }
-  .quick:hover { background: #313644; }
+  .quick:hover { border-color: var(--text-muted); }
 `;
 
 let pipWin = null; // one floating window per tab (mirrors the API's own limit)
@@ -135,6 +161,19 @@ export async function toggleTimerPip() {
   const { api } = await import('/js/api.js');
   const doc = pipWin.document;
   doc.head.appendChild(doc.createElement('style')).textContent = PIP_CSS;
+
+  // Follow the app's theme: the OS preference flows in via the media query
+  // in PIP_CSS; an explicit Settings choice lives as data-theme on the MAIN
+  // document's root (app.js applyTheme) — copy it over and mirror changes.
+  const mainRoot = document.documentElement;
+  const syncTheme = () => {
+    const t = mainRoot.getAttribute('data-theme');
+    if (t) doc.documentElement.setAttribute('data-theme', t);
+    else doc.documentElement.removeAttribute('data-theme');
+  };
+  syncTheme();
+  const themeObs = new MutationObserver(syncTheme);
+  themeObs.observe(mainRoot, { attributes: true, attributeFilter: ['data-theme'] });
   doc.body.innerHTML = `
     <div class="rows" data-rows></div>
     <div class="empty" data-empty hidden>No time today — pin a timer or hit +.</div>
@@ -345,6 +384,7 @@ export async function toggleTimerPip() {
   pipWin.addEventListener('pagehide', () => {
     pipWin.clearInterval(p);
     pipWin.clearInterval(k);
+    themeObs.disconnect();
     pipWin = null;
   });
   return true;
