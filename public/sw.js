@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v24';
+const CACHE = 'timekeeper-v25';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -39,11 +39,13 @@ const SHELL = [
   './js/components/timergrid.js',
   './js/components/timerimport.js',
   './js/components/todayfooter.js',
+  './js/lib/daterange.js',
   './js/lib/expand.js',
   './js/lib/ghost.js',
   './js/lib/narrativesync.js',
   './js/lib/notify.js',
   './js/lib/pip.js',
+  './js/lib/tick.js',
   './js/lib/titlebar.js',
   './js/lib/timeamounts.js',
   './js/views/calendar.js',

@@ -49,3 +49,8 @@ Various thoughts from David in using the app:
   auto-open on timer start (needs a user gesture — probably a setting on the
   start button), match the app theme, remember size, click-through to the
   entry. Code: `public/js/lib/pip.js`.
+All items captured 2026-07-11 through 2026-07-13 were addressed on
+2026-07-13 (entry start-timer button, held-over quick-timer surfacing, day
+nav arrows, alphabetical activity tabs, wrapping tab rows, smooth second
+counter, range viewers with export on calendar + day views, new-timer
+jump-into-view).
