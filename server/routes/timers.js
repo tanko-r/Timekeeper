@@ -67,13 +67,16 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       const cm = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(timer.cm_id);
       const info = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
-        VALUES (?, ?, '', ?, 'draft', ?, 'timer', ?, ?)`)
-        .run(dateStr, timer.cm_id, cm ? cm.billable : 1, hours, nowIso, nowIso);
+        VALUES (?, ?, ?, ?, 'draft', ?, 'timer', ?, ?)`)
+        .run(dateStr, timer.cm_id, timer.draft_narrative || '',
+          cm ? cm.billable : 1, hours, nowIso, nowIso);
       db.prepare(
         'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
       ).run(info.lastInsertRowid, timer.task_code || '', hours, '');
       entryId = info.lastInsertRowid;
-      db.prepare('UPDATE timers SET linked_entry_id=? WHERE id=?').run(entryId, timer.id);
+      // stash consumed: text typed before this entry existed now lives on it
+      db.prepare('UPDATE timers SET linked_entry_id=?, draft_narrative=NULL WHERE id=?')
+        .run(entryId, timer.id);
     }
     db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
     rebuildMatterPeople(db, timer.cm_id);

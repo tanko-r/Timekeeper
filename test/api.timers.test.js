@@ -924,3 +924,51 @@ test('PATCH pinned + draft_narrative round-trip; unrelated PATCH leaves them alo
     assert.equal(got.pinned, 0);
     assert.equal(got.draft_narrative, null, 'blank stash stores NULL');
   }));
+
+test('stash: start on a matter timer creates the entry WITH the stashed narrative and clears it', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'A', cm_id: cm.id })).body;
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
+      draft_narrative: 'Drafted motion to compel further responses.',
+    });
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.equal(started.entry.narrative, 'Drafted motion to compel further responses.');
+    const got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.draft_narrative, null, 'stash consumed');
+  }));
+
+test('stash: quick-timer flow — stop holds, assign files held time with the stash', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {})).body; // no matter
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
+      draft_narrative: 'Call with client re scheduling order.',
+    });
+    clock.advance(1800);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.unassigned, true);
+    assert.equal(stop.entry, null, 'no matter yet — time held, no entry');
+
+    const assigned = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.ok(assigned.entry, 'held time files on assignment');
+    assert.equal(assigned.entry.narrative, 'Call with client re scheduling order.');
+    assert.equal(assigned.draft_narrative, null);
+  }));
+
+test('stash: NOT applied to an existing linked entry; stays until a new entry consumes it', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'A', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1200);
+    const stop1 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    await t.fetchJson('PATCH', `/api/entries/${stop1.entry.id}`, { narrative: 'Original narrative kept.' });
+
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { draft_narrative: 'Late stash.' });
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1200);
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop2.entry.id, stop1.entry.id);
+    assert.equal(stop2.entry.narrative, 'Original narrative kept.', 'existing entry narrative wins');
+    const got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.draft_narrative, 'Late stash.', 'stash waits for a NEW entry');
+  }));
