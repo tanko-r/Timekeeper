@@ -18,7 +18,8 @@ import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
-  group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since`;
+  group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since,
+  pinned, draft_narrative`;
 
 const TENTH_SECONDS = 360;
 

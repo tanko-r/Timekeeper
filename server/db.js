@@ -226,6 +226,11 @@ const MIGRATIONS = [
   // from (set at the midnight rollover, cleared on assign/zero) — lets the
   // UI say WHY a timer from yesterday is still sitting there.
   'ALTER TABLE timers ADD COLUMN held_since TEXT;',
+  // AOT float window (2026-07-13 spec): pinned keeps a timer in the PiP list
+  // across days; draft_narrative stashes narrative text typed before an entry
+  // exists (consumed by the next entry the timer creates).
+  `ALTER TABLE timers ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE timers ADD COLUMN draft_narrative TEXT;`,
 ];
 
 const SEED_SETTINGS = {

@@ -895,3 +895,11 @@ test('start-for-entry: exclusivity still stops other running timers', () =>
     const rows = (await t.fetchJson('GET', '/api/timers')).body;
     assert.equal(rows.find((x) => x.id === other.id).running, 0);
   }));
+
+test('timers carry pinned + draft_narrative with defaults', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm) => {
+    await t.fetchJson('POST', '/api/timers', { name: 'A', cm_id: cm.id });
+    const list = (await t.fetchJson('GET', '/api/timers')).body;
+    assert.equal(list[0].pinned, 0);
+    assert.equal(list[0].draft_narrative, null);
+  }));
