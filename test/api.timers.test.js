@@ -972,3 +972,31 @@ test('stash: NOT applied to an existing linked entry; stays until a new entry co
     const got = (await t.fetchJson('GET', '/api/timers')).body[0];
     assert.equal(got.draft_narrative, 'Late stash.', 'stash waits for a NEW entry');
   }));
+
+test('timer list exposes linked-entry narrative + substantive line count', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'A', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+
+    let got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.entry_narrative, '');
+    assert.equal(got.entry_narrative_manual, 0);
+    assert.equal(got.entry_substantive_lines, 1, 'timer entries start single-line');
+
+    await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, {
+      tasks: [
+        { task_code: 'Research', duration: 0.6, fragment: 'research preemption' },
+        { task_code: 'Draft', duration: 0.4, fragment: 'draft memo' },
+      ],
+    });
+    got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.entry_substantive_lines, 2);
+    assert.ok(got.entry_narrative.includes('Research preemption'), 'generated narrative rides along');
+
+    const quick = (await t.fetchJson('POST', '/api/timers', {})).body;
+    got = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === quick.id);
+    assert.equal(got.entry_narrative, null);
+    assert.equal(got.entry_substantive_lines, 0, 'unlinked timer counts zero lines');
+  }));

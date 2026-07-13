@@ -160,7 +160,13 @@ export function timersRouter({ db, clock }) {
       (SELECT billable FROM matters WHERE matters.id = timers.cm_id) AS cm_billable,
       (SELECT client_id FROM matters WHERE matters.id = timers.cm_id) AS client_id,
       (SELECT c.client_number FROM matters m JOIN clients c ON c.id = m.client_id WHERE m.id = timers.cm_id) AS client_number,
-      (SELECT c.name FROM matters m JOIN clients c ON c.id = m.client_id WHERE m.id = timers.cm_id) AS client_name
+      (SELECT c.name FROM matters m JOIN clients c ON c.id = m.client_id WHERE m.id = timers.cm_id) AS client_name,
+      (SELECT narrative FROM entries WHERE entries.id = timers.linked_entry_id) AS entry_narrative,
+      (SELECT narrative_manual FROM entries WHERE entries.id = timers.linked_entry_id) AS entry_narrative_manual,
+      (SELECT COUNT(*) FROM entry_tasks WHERE entry_tasks.entry_id = timers.linked_entry_id
+        AND (TRIM(COALESCE(entry_tasks.fragment, '')) != ''
+          OR TRIM(COALESCE(entry_tasks.task_code, '')) != ''
+          OR COALESCE(entry_tasks.duration, 0) > 0)) AS entry_substantive_lines
     FROM timers ORDER BY sort_order, id`);
 
   r.get('/', (req, res) => {
