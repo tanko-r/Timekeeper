@@ -424,7 +424,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // "Today" / "Week" show timers that actually RAN in the period; "Recent"
   // is the rolling two-week working set, so stale timers fall out of it.
   // Activity = the last time the timer started or stopped (running = now);
-  // views sort most-recent first.
+  // views sort alphabetically (2026-07-11 feedback — was most-recent-first,
+  // which made cards shuffle around as timers ran).
   const nowMs = Date.now();
   const lastActivityMs = (t) => {
     if (t.running) return nowMs;
@@ -441,7 +442,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   };
   const activityList = (key) => shown
     .filter((t) => lastActivityMs(t) >= ACTIVITY[key].since)
-    .sort((a, b) => lastActivityMs(b) - lastActivityMs(a));
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   // ---------- tabs (by-group / by-client modes only; flat keeps one grid) ----------
   // Note: timer_groups.collapsed (still returned by /api/timer-groups, still
