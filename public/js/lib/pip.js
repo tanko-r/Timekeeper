@@ -1,21 +1,19 @@
-// SPIKE — always-on-top floating mini timer (TODO.md "AOT Timer" idea).
+// Always-on-top floating multi-timer panel (Document Picture-in-Picture).
 //
 // A PWA window can't set itself always-on-top, but Chrome 116+'s Document
-// Picture-in-Picture API can open a small utility window that the OS keeps
-// above everything, the same surface video sites use for floating players.
-// It shares this page's JS context and origin, so the same api.js client and
-// session cookie work inside it. Caveats found while spiking:
-//   - Chrome/Edge desktop only (no Firefox/Safari/mobile); needs a secure
-//     context (localhost or the cloudflared https host) and a user gesture.
-//   - One PiP window per tab; closing the tab closes it. The main tab keeps
-//     running its own polls, and the dashboard re-polls every 5s, so timer
-//     actions taken here show up there within a poll.
-//   - The window is chromeless: no tab title, favicon badge, or nav — it
-//     needs its own inline styles (stylesheets are NOT inherited).
+// Picture-in-Picture API can open a small utility window the OS keeps above
+// everything. It shares this page's JS context and origin, so the same
+// api.js client and session cookie work inside it. Caveats:
+//   - Chrome/Edge desktop only; needs a secure context and a user gesture.
+//   - One PiP window per tab; closing the tab closes it. The dashboard
+//     re-polls every 5s, so actions taken here show up there within a poll.
+//   - Chromeless: stylesheets are NOT inherited — inline CSS only.
 //
-// The floating card mirrors the timer-card idiom: big mono clock, caption,
-// one Start/Stop button driving the same /api/timers endpoints. Ticks locally
-// off elapsed_seconds + wall-clock delta (same trick as lib/titlebar.js).
+// The panel lists every timer that is running, has clock time today, or is
+// pinned (spec docs/superpowers/specs/2026-07-13-aot-multi-timer-design.md).
+// Clicking a row expands a narrative field that edits the linked entry's
+// narrative — or stashes to timers.draft_narrative when no entry exists yet.
+// Footer: ticking day total + a `+` quick-timer button.
 
 // api.js is imported lazily inside toggleTimerPip: node:test can't resolve
 // the browser-absolute '/js/api.js' specifier, and the pure helpers below
@@ -69,32 +67,54 @@ export function fmtClock(totalSeconds) {
 const PIP_CSS = `
   * { margin: 0; box-sizing: border-box; }
   body {
-    font: 13px/1.35 system-ui, sans-serif;
+    font: 12px/1.35 system-ui, sans-serif;
     background: #14161b; color: #e8eaf0;
     height: 100vh; display: flex; flex-direction: column;
-    justify-content: center; gap: 2px; padding: 10px 14px;
     border-left: 4px solid #3a3f4b; user-select: none;
   }
   body.running { border-left-color: #e11d48; }
-  .clock {
-    font-family: ui-monospace, monospace; font-size: 30px; font-weight: 700;
-    letter-spacing: 1px; display: flex; align-items: center; gap: 10px;
-  }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #3a3f4b; flex: none; }
-  body.running .dot { background: #e11d48; animation: pulse 1.6s ease-in-out infinite; }
+  .rows { flex: 1; overflow-y: auto; }
+  .row { border-bottom: 1px solid #23262e; }
+  .rowbar { display: flex; align-items: center; gap: 7px; padding: 6px 8px; cursor: pointer; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3a3f4b; flex: none; }
+  .row.running .dot { background: #e11d48; animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
-  .caption {
-    color: #aab0bf; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .clock { font-family: ui-monospace, monospace; font-weight: 700; font-size: 14px; flex: none; min-width: 54px; }
+  .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aab0bf; }
+  .row.running .name { color: #e8eaf0; }
+  .pin { background: none; border: none; cursor: pointer; font-size: 12px; opacity: 0.18; padding: 2px; flex: none; }
+  .pin:hover { opacity: 0.6; }
+  .pin.on { opacity: 1; }
+  .act {
+    font: 600 11px system-ui, sans-serif; color: #e8eaf0;
+    background: #262a33; border: 1px solid #3a3f4b; border-radius: 5px;
+    padding: 3px 9px; cursor: pointer; flex: none;
   }
-  body.running .caption { color: #e8eaf0; }
-  button {
-    position: absolute; right: 10px; top: 10px;
-    font: 600 12px system-ui, sans-serif; color: #e8eaf0;
-    background: #262a33; border: 1px solid #3a3f4b; border-radius: 6px;
-    padding: 4px 10px; cursor: pointer;
+  .act:hover { background: #313644; }
+  .row.running .act { background: #b3123a; border-color: #e11d48; }
+  .detail { padding: 0 8px 8px 23px; }
+  .cap { color: #8b93a5; font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  textarea {
+    width: 100%; font: 12px/1.35 system-ui, sans-serif; color: #e8eaf0;
+    background: #1b1e25; border: 1px solid #3a3f4b; border-radius: 5px;
+    padding: 4px 6px; resize: none;
   }
-  button:hover { background: #313644; }
-  .err { color: #f0a5b8; font-size: 12px; }
+  textarea:focus { outline: none; border-color: #5b6373; }
+  .ro { color: #c6cbd6; }
+  .hint { color: #8b93a5; font-size: 10px; margin-top: 2px; }
+  .saved { color: #4ade80; font-size: 11px; opacity: 0; transition: opacity 0.2s; }
+  .saved.show { opacity: 1; }
+  .rowerr { color: #f0a5b8; font-size: 11px; margin-top: 3px; }
+  .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: #8b93a5; padding: 12px; text-align: center; }
+  .err { color: #f0a5b8; font-size: 11px; padding: 4px 8px; }
+  .foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid #2a2e37; }
+  .total { color: #aab0bf; font-family: ui-monospace, monospace; font-size: 11px; }
+  .quick {
+    font: 700 14px/1 system-ui, sans-serif; color: #e8eaf0;
+    background: #262a33; border: 1px solid #3a3f4b; border-radius: 5px;
+    width: 24px; height: 22px; cursor: pointer;
+  }
+  .quick:hover { background: #313644; }
 `;
 
 let pipWin = null; // one floating window per tab (mirrors the API's own limit)
@@ -103,69 +123,227 @@ export async function toggleTimerPip() {
   if (pipWin && !pipWin.closed) { pipWin.close(); pipWin = null; return false; }
 
   // requestWindow first — it consumes the click's transient activation, and
-  // an awaited import in front of it could outlive that window.
-  pipWin = await window.documentPictureInPicture.requestWindow({ width: 300, height: 92 });
+  // an awaited import in front of it could outlive that window. Height comes
+  // from the row count cached at the last render (PiP windows can't be
+  // resized programmatically); the list scrolls if the guess is off.
+  const cachedRows = Math.max(1, Number(localStorage.getItem('tk:pipRows')) || 3);
+  pipWin = await window.documentPictureInPicture.requestWindow({
+    width: 320,
+    height: Math.min(64 + 34 * cachedRows, 320),
+  });
   const { api } = await import('/js/api.js');
   const doc = pipWin.document;
   doc.head.appendChild(doc.createElement('style')).textContent = PIP_CSS;
   doc.body.innerHTML = `
-    <div class="clock"><span class="dot"></span><span data-clock>--:--</span></div>
-    <div class="caption" data-caption>Loading…</div>
-    <button data-toggle hidden>Start</button>`;
+    <div class="rows" data-rows></div>
+    <div class="empty" data-empty hidden>No time today — pin a timer or hit +.</div>
+    <div class="err" data-err hidden></div>
+    <div class="foot">
+      <span class="total" data-total>…</span>
+      <button class="quick" data-quick title="Quick timer — starts now; assign a matter later">+</button>
+    </div>`;
 
-  const el = {
-    clock: doc.querySelector('[data-clock]'),
-    caption: doc.querySelector('[data-caption]'),
-    toggle: doc.querySelector('[data-toggle]'),
-  };
+  const rowsEl = doc.querySelector('[data-rows]');
+  const emptyEl = doc.querySelector('[data-empty]');
+  const errEl = doc.querySelector('[data-err]');
+  const totalEl = doc.querySelector('[data-total]');
 
-  let timers = null;
+  let timers = [];
   let fetchedAt = 0;
-  const poll = () => api.get('/api/timers')
-    .then((t) => { timers = t; fetchedAt = Date.now(); render(); })
-    .catch((e) => { el.caption.textContent = `Can’t reach server — ${e.message}`; el.caption.className = 'err'; });
+  let expandedId = null; // one expanded row at a time
+  const drafts = new Map(); // timer id → unsaved narrative text
+  const debounces = new Map(); // timer id → save debounce handle
+  let pendingRender = false; // a render was skipped to protect a focused textarea
 
-  const render = () => {
-    const t = buildPipRows(timers)[0] || null;
-    if (!t) {
-      el.clock.textContent = '--:--';
-      el.caption.textContent = timers ? 'No timers yet — add one on the dashboard.' : 'Loading…';
-      el.toggle.hidden = true;
-      doc.body.classList.remove('running');
-      return;
+  const secsOf = (t) => t.elapsed_seconds + (t.running ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0);
+  const narrFocused = () => doc.activeElement && doc.activeElement.tagName === 'TEXTAREA';
+
+  const showErr = (e) => { errEl.textContent = e.message; errEl.hidden = false; };
+
+  const poll = () => api.get('/api/timers')
+    .then((t) => { timers = t; fetchedAt = Date.now(); errEl.hidden = true; render(); })
+    .catch((e) => showErr(new Error(`Can’t reach server — ${e.message}`)));
+
+  // Save the draft for timer id. Looks the timer up fresh: by save time a
+  // poll may have created/relinked its entry, which changes WHERE the text
+  // belongs (narrativeMode). Only clears the draft if the text didn't change
+  // while the request was in flight.
+  async function saveNarrative(id) {
+    clearTimeout(debounces.get(id));
+    if (!drafts.has(id)) return;
+    const t = timers.find((x) => x.id === id);
+    if (!t) return;
+    const text = drafts.get(id);
+    const rowErr = rowsEl.querySelector(`.row[data-id="${id}"] [data-rowerr]`);
+    try {
+      if (narrativeMode(t) === 'stash') {
+        await api.patch(`/api/timers/${id}`, { draft_narrative: text });
+      } else {
+        await api.patch(`/api/entries/${t.linked_entry_id}`, { narrative: text });
+      }
+      if (drafts.get(id) === text) drafts.delete(id);
+      if (rowErr) rowErr.textContent = '';
+      const flash = rowsEl.querySelector(`.row[data-id="${id}"] [data-saved]`);
+      if (flash) {
+        flash.classList.add('show');
+        pipWin.setTimeout(() => flash.classList.remove('show'), 1200);
+      }
+      poll();
+    } catch (e) {
+      if (rowErr) rowErr.textContent = e.message; else showErr(e);
     }
-    const secs = t.elapsed_seconds + (t.running ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0);
-    el.clock.textContent = fmtClock(secs);
-    el.caption.textContent = t.name;
-    el.caption.className = 'caption';
-    el.caption.title = t.cm_short_name ? `${t.cm_short_name} · ${t.cm_number}` : 'no matter yet';
-    el.toggle.textContent = t.running ? 'Stop' : 'Start';
-    el.toggle.hidden = false;
-    doc.body.classList.toggle('running', !!t.running);
+  }
+
+  function focusNarrative(id) {
+    const ta = rowsEl.querySelector(`.row[data-id="${id}"] textarea`);
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
+
+  function buildDetail(t) {
+    const detail = doc.createElement('div');
+    detail.className = 'detail';
+    const cap = doc.createElement('div');
+    cap.className = 'cap';
+    cap.textContent = t.cm_id
+      ? `${t.cm_short_name} · ${t.cm_number}`
+      : (t.held_since
+        ? `no matter yet — holding time since ${t.held_since}`
+        : 'no matter yet — narrative is stashed until one is assigned');
+    detail.appendChild(cap);
+
+    if (narrativeMode(t) === 'readonly') {
+      const ro = doc.createElement('div');
+      ro.className = 'ro';
+      ro.textContent = narrativeValue(t);
+      const hint = doc.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'split entry — edit in app';
+      detail.append(ro, hint);
+      return detail;
+    }
+
+    const ta = doc.createElement('textarea');
+    ta.rows = 2;
+    ta.value = drafts.has(t.id) ? drafts.get(t.id) : narrativeValue(t);
+    ta.addEventListener('input', () => {
+      drafts.set(t.id, ta.value);
+      clearTimeout(debounces.get(t.id));
+      debounces.set(t.id, pipWin.setTimeout(() => saveNarrative(t.id), 600));
+    });
+    ta.addEventListener('blur', () => {
+      saveNarrative(t.id);
+      if (pendingRender) { pendingRender = false; render(); }
+    });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        // collapse: blur triggers the save AND the deferred re-render
+        expandedId = null;
+        pendingRender = true;
+        ta.blur();
+      }
+    });
+    const saved = doc.createElement('span');
+    saved.className = 'saved';
+    saved.dataset.saved = '';
+    saved.textContent = '✓ saved';
+    const rowErr = doc.createElement('div');
+    rowErr.className = 'rowerr';
+    rowErr.dataset.rowerr = '';
+    detail.append(ta, saved, rowErr);
+    return detail;
+  }
+
+  function buildRow(t) {
+    const row = doc.createElement('div');
+    row.className = `row${t.running ? ' running' : ''}`;
+    row.dataset.id = t.id;
+
+    const bar = doc.createElement('div');
+    bar.className = 'rowbar';
+    bar.innerHTML = `
+      <span class="dot"></span>
+      <span class="clock" data-clock></span>
+      <span class="name"></span>
+      <button class="pin${t.pinned ? ' on' : ''}" data-pin></button>
+      <button class="act" data-act></button>`;
+    bar.querySelector('[data-clock]').textContent = fmtClock(secsOf(t));
+    bar.querySelector('.name').textContent = t.name;
+    const pinBtn = bar.querySelector('[data-pin]');
+    pinBtn.textContent = '📌';
+    pinBtn.title = t.pinned
+      ? 'Unpin — drops off this window once its day is over'
+      : 'Pin — keeps this timer here across days';
+    const actBtn = bar.querySelector('[data-act]');
+    actBtn.textContent = t.running ? 'Stop' : 'Start';
+    actBtn.title = t.running ? 'Stop & file time' : 'Start';
+
+    bar.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      expandedId = expandedId === t.id ? null : t.id;
+      render();
+      if (expandedId === t.id) focusNarrative(t.id);
+    });
+    pinBtn.addEventListener('click', async () => {
+      try {
+        await api.patch(`/api/timers/${t.id}`, { pinned: t.pinned ? 0 : 1 });
+        await poll();
+      } catch (e) { showErr(e); }
+    });
+    actBtn.addEventListener('click', async () => {
+      actBtn.disabled = true;
+      try {
+        await api.post(`/api/timers/${t.id}/${t.running ? 'stop' : 'start'}`);
+        localStorage.setItem('tk:lastTimer', String(t.id));
+        await poll();
+      } catch (e) { showErr(e); } finally { actBtn.disabled = false; }
+    });
+
+    row.appendChild(bar);
+    if (t.id === expandedId) row.appendChild(buildDetail(t));
+    return row;
+  }
+
+  function render() {
+    // never rebuild under a focused textarea — the blur handler re-renders
+    if (narrFocused()) { pendingRender = true; return; }
+    const rows = buildPipRows(timers);
+    localStorage.setItem('tk:pipRows', String(rows.length || 1));
+    if (expandedId !== null && !rows.some((t) => t.id === expandedId)) expandedId = null;
+    rowsEl.replaceChildren(...rows.map(buildRow));
+    emptyEl.hidden = rows.length > 0;
+    totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
+    doc.body.classList.toggle('running', rows.some((t) => t.running));
+  }
+
+  // 1s tick: clocks + total only — no DOM rebuild, so typing is undisturbed
+  const tick = () => {
+    const rows = buildPipRows(timers);
+    for (const t of rows) {
+      const el = rowsEl.querySelector(`.row[data-id="${t.id}"] [data-clock]`);
+      if (el) el.textContent = fmtClock(secsOf(t));
+    }
+    totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
   };
 
-  el.toggle.addEventListener('click', async () => {
-    const t = buildPipRows(timers)[0] || null;
-    if (!t) return;
-    el.toggle.disabled = true;
+  doc.querySelector('[data-quick]').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
     try {
-      await api.post(`/api/timers/${t.id}/${t.running ? 'stop' : 'start'}`);
+      const t = await api.post('/api/timers', {});
+      await api.post(`/api/timers/${t.id}/start`);
       localStorage.setItem('tk:lastTimer', String(t.id));
+      expandedId = t.id;
       await poll();
-    } catch (e) {
-      el.caption.textContent = e.message;
-      el.caption.className = 'err';
-    } finally {
-      el.toggle.disabled = false;
-    }
+      focusNarrative(t.id);
+    } catch (err) { showErr(err); } finally { btn.disabled = false; }
   });
 
   await poll();
   const p = pipWin.setInterval(poll, 5000);
-  const tick = pipWin.setInterval(render, 1000);
+  const k = pipWin.setInterval(tick, 1000);
   pipWin.addEventListener('pagehide', () => {
     pipWin.clearInterval(p);
-    pipWin.clearInterval(tick);
+    pipWin.clearInterval(k);
     pipWin = null;
   });
   return true;
