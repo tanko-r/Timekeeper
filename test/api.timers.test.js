@@ -903,3 +903,24 @@ test('timers carry pinned + draft_narrative with defaults', () =>
     assert.equal(list[0].pinned, 0);
     assert.equal(list[0].draft_narrative, null);
   }));
+
+test('PATCH pinned + draft_narrative round-trip; unrelated PATCH leaves them alone', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'A', cm_id: cm.id })).body;
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
+      pinned: 1, draft_narrative: 'Call with opposing counsel re discovery.',
+    });
+    let got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.pinned, 1);
+    assert.equal(got.draft_narrative, 'Call with opposing counsel re discovery.');
+
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { name: 'B' });
+    got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.pinned, 1, 'pinned survives an unrelated PATCH');
+    assert.equal(got.draft_narrative, 'Call with opposing counsel re discovery.');
+
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { pinned: 0, draft_narrative: '  ' });
+    got = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(got.pinned, 0);
+    assert.equal(got.draft_narrative, null, 'blank stash stores NULL');
+  }));

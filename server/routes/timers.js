@@ -279,7 +279,7 @@ export function timersRouter({ db, clock }) {
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cmChanged = b.cm_id !== undefined && (b.cm_id ?? null) !== (timer.cm_id ?? null);
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, held_since=? WHERE id=?').run(
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, held_since=?, pinned=?, draft_narrative=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
@@ -287,6 +287,12 @@ export function timersRouter({ db, clock }) {
       cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
       cmChanged ? null : timer.held_since, // assigned → the held time files below
+      b.pinned !== undefined ? (b.pinned ? 1 : 0) : timer.pinned,
+      // user text — deliberately SURVIVES cmChanged; the assignment's
+      // syncToEntry below is exactly where the stash gets consumed
+      b.draft_narrative !== undefined
+        ? (String(b.draft_narrative ?? '').trim() || null)
+        : timer.draft_narrative,
       timer.id);
 
     // Quick-timer completion (stop → assign → narrate): giving a PAUSED
