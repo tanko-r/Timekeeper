@@ -30,6 +30,7 @@ const ICONS = {
   unlock: 'lock-open',
   eye: 'eye',
   star: 'star',
+  pin: 'pin',
   chevronLeft: 'chevron-left',
   chevronRight: 'chevron-right',
   chevronDown: 'chevron-down',

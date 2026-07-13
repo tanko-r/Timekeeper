@@ -360,6 +360,13 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       },
       { label: 'Duplicate timer', icon: 'copy', onClick: () => guard(duplicate(timer)) },
       {
+        label: timer.pinned ? 'Unpin from float window' : 'Pin to float window',
+        icon: 'pin',
+        onClick: () => guard(api.patch(`/api/timers/${timer.id}`, {
+          pinned: timer.pinned ? 0 : 1,
+        }).then(reload)),
+      },
+      {
         custom: () => html`
           <div class="ctx-inline">
             <span class="muted small">Group</span>
@@ -843,6 +850,10 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
         <span class="timer-flag held-over"
           title=${`Holding ${fmtClock(secs)} carried over since ${timer.held_since} — quick-timer time survives midnight until a matter is assigned. Assign one to file it (dated the day of the next stop), or zero the clock to discard.`}>
           <${Icon} name="history" size=${12} /></span>` : null}
+      ${timer.pinned ? html`
+        <span class="timer-flag pinned"
+          title="Pinned to the always-on-top float window — it stays there across days">
+          <${Icon} name="pin" size=${12} /></span>` : null}
       ${editingClock ? html`
         <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
           onInput=${(e) => setClockText(e.target.value)}
