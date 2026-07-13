@@ -19,19 +19,41 @@
 
 // api.js is imported lazily inside toggleTimerPip: node:test can't resolve
 // the browser-absolute '/js/api.js' specifier, and the pure helpers below
-// (pickPipTimer, fmtClock) are unit-tested (test/pip.test.js) — same reason
+// (buildPipRows, fmtClock, …) are unit-tested (test/pip.test.js) — same reason
 // lib/titlebar.js and lib/narrativesync.js keep their imports at zero.
 
 export function pipSupported() {
   return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 }
 
-// Which timer does the floating card show / toggle? The running one wins;
-// otherwise the 't'-shortcut's notion of last-used (localStorage tk:lastTimer),
-// falling back to the first timer. Pure — unit-tested in test/pip.test.js.
-export function pickPipTimer(timers, lastUsedId) {
-  const list = timers || [];
-  return list.find((t) => t.running) || list.find((t) => t.id === lastUsedId) || list[0] || null;
+// Which timers earn a row: running, any clock time today (includes held time
+// carried from earlier days), or pinned (timers.pinned — the whole point of
+// pinning is surviving the midnight reset). Running first; otherwise the
+// server's dashboard order is preserved — never time-sorted, rows must not
+// jump while the user watches. Pure — unit-tested in test/pip.test.js.
+export function buildPipRows(timers) {
+  const list = (timers || []).filter((t) => t.running || t.elapsed_seconds > 0 || t.pinned);
+  return [...list.filter((t) => t.running), ...list.filter((t) => !t.running)];
+}
+
+// How the expanded row's narrative surface behaves:
+//   'stash'    — no linked entry: text goes to timers.draft_narrative and is
+//                consumed by the next entry the timer creates (syncToEntry)
+//   'readonly' — split entry (2+ substantive lines, auto-generated
+//                narrative): view only; edit-through stays in the main editor
+//   'entry'    — edits the linked entry's narrative directly
+export function narrativeMode(t) {
+  if (!t.linked_entry_id) return 'stash';
+  if (t.entry_substantive_lines >= 2 && !t.entry_narrative_manual) return 'readonly';
+  return 'entry';
+}
+
+export function narrativeValue(t) {
+  return (narrativeMode(t) === 'stash' ? t.draft_narrative : t.entry_narrative) || '';
+}
+
+export function fmtDayTotal(totalSeconds) {
+  return `${(Math.max(0, totalSeconds) / 3600).toFixed(1)}h today`;
 }
 
 // mirrors ui.js fmtClock (which pulls in the React vendor bundle — not
@@ -104,7 +126,7 @@ export async function toggleTimerPip() {
     .catch((e) => { el.caption.textContent = `Can’t reach server — ${e.message}`; el.caption.className = 'err'; });
 
   const render = () => {
-    const t = pickPipTimer(timers, Number(localStorage.getItem('tk:lastTimer')));
+    const t = buildPipRows(timers)[0] || null;
     if (!t) {
       el.clock.textContent = '--:--';
       el.caption.textContent = timers ? 'No timers yet — add one on the dashboard.' : 'Loading…';
@@ -123,7 +145,7 @@ export async function toggleTimerPip() {
   };
 
   el.toggle.addEventListener('click', async () => {
-    const t = pickPipTimer(timers, Number(localStorage.getItem('tk:lastTimer')));
+    const t = buildPipRows(timers)[0] || null;
     if (!t) return;
     el.toggle.disabled = true;
     try {
