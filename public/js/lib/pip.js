@@ -66,6 +66,7 @@ export function fmtClock(totalSeconds) {
 
 const PIP_CSS = `
   * { margin: 0; box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     font: 12px/1.35 system-ui, sans-serif;
     background: #14161b; color: #e8eaf0;
