@@ -144,6 +144,15 @@ const PIP_CSS = `
   .quick:hover { border-color: var(--text-muted); }
 `;
 
+// lucide "pin" — same path as icons.js, which is NOT importable here: it
+// dereferences window.React at module scope and this file loads under
+// node:test (same reason fmtClock is a copy).
+const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5'
+  + ' 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0'
+  + ' 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>';
+
 let pipWin = null; // one floating window per tab (mirrors the API's own limit)
 
 export async function toggleTimerPip() {
@@ -309,7 +318,7 @@ export async function toggleTimerPip() {
     bar.querySelector('[data-clock]').textContent = fmtClock(secsOf(t));
     bar.querySelector('.name').textContent = t.name;
     const pinBtn = bar.querySelector('[data-pin]');
-    pinBtn.textContent = '📌';
+    pinBtn.innerHTML = PIN_SVG;
     pinBtn.title = t.pinned
       ? 'Unpin — drops off this window once its day is over'
       : 'Pin — keeps this timer here across days';
