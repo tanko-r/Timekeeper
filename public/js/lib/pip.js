@@ -201,7 +201,17 @@ export async function toggleTimerPip() {
     height: Math.min(64 + 34 * cachedRows, 320),
   });
   const { api } = await import('/js/api.js');
+  // Same lazy-import rationale as api.js (node:test can't resolve the
+  // browser-absolute specifier at module scope, and pip.test.js imports
+  // this file). expand.js itself is zero-dep.
+  const { expandShortcuts } = await import('/js/lib/expand.js');
   const doc = pipWin.document;
+
+  // Text-expansion dictionary (2026-07-14 feedback: expansions must work in
+  // the AOT narrative field too). Fetched once per window open — the set
+  // changes rarely, and a stale miss just means no expansion.
+  let shortcuts = [];
+  api.get('/api/shortcuts').then((s) => { shortcuts = s; }).catch(() => {});
   doc.head.appendChild(doc.createElement('style')).textContent = PIP_CSS;
 
   // Follow the app's theme: the OS preference flows in via the media query
@@ -294,6 +304,11 @@ export async function toggleTimerPip() {
     ta.rows = 2;
     ta.value = drafts.has(t.id) ? drafts.get(t.id) : narrativeValue(t);
     ta.addEventListener('input', () => {
+      const hit = expandShortcuts(ta.value, ta.selectionStart, shortcuts);
+      if (hit) {
+        ta.value = hit.text;
+        ta.setSelectionRange(hit.caret, hit.caret);
+      }
       drafts.set(t.id, ta.value);
       clearTimeout(debounces.get(t.id));
       debounces.set(t.id, pipWin.setTimeout(() => saveNarrative(t.id), 600));
