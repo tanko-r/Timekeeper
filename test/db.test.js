@@ -217,11 +217,12 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // 4's entries.narrative_manual column, the quick-timer timers rebuild and
   // the entries rebuild — which need no undo SQL: replaying a rebuild is
   // schema-idempotent, its only effect is making cm_id nullable — the
-  // timers.held_since column, and the AOT-window timers.pinned/
-  // draft_narrative columns) and roll user_version back by nine (positional
-  // — no hardcoded version numbers)
+  // timers.held_since column, the AOT-window timers.pinned/
+  // draft_narrative columns, and the timers.narrative_template column) and
+  // roll user_version back by ten (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN narrative_template;
     ALTER TABLE timers DROP COLUMN draft_narrative;
     ALTER TABLE timers DROP COLUMN pinned;
     ALTER TABLE timers DROP COLUMN held_since;
@@ -231,7 +232,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 9}`);
+  db1.pragma(`user_version = ${v - 10}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -312,8 +313,11 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db1.prepare("INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, 'Review', 0.5, 'lease', 0)").run(eid);
   db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
     VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
+  // narrative_template landed after the rebuild — undo it too so the replay
+  // window (rebuild + template column) applies cleanly
+  db1.exec('ALTER TABLE timers DROP COLUMN narrative_template');
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 1}`);
+  db1.pragma(`user_version = ${v - 2}`);
   db1.close();
 
   const db2 = openDb(path);
