@@ -27,13 +27,14 @@ export function pipSupported() {
 // Which timers earn a row: running, any clock time today, pinned
 // (timers.pinned — the whole point of pinning is surviving the midnight
 // reset), or hand-added for the day via the "recent" picker (extraIds).
-// Running first; otherwise the
-// server's dashboard order is preserved — never time-sorted, rows must not
-// jump while the user watches. Pure — unit-tested in test/pip.test.js.
+// Alphabetical, regardless of running state (2026-07-14 feedback): a row must
+// keep its position when its timer starts or stops — never jump to the top
+// while the user watches. Pure — unit-tested in test/pip.test.js.
 export function buildPipRows(timers, extraIds = null) {
-  const list = (timers || []).filter((t) => t.running || t.elapsed_seconds > 0 || t.pinned
-    || (extraIds && extraIds.has(t.id)));
-  return [...list.filter((t) => t.running), ...list.filter((t) => !t.running)];
+  return (timers || [])
+    .filter((t) => t.running || t.elapsed_seconds > 0 || t.pinned
+      || (extraIds && extraIds.has(t.id)))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
 }
 
 // The "recent" picker's candidates (2026-07-14 feedback): timers that ran in

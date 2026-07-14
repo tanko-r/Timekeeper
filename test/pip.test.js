@@ -11,15 +11,19 @@ const T = (id, extra = {}) => ({
   entry_substantive_lines: 0, ...extra,
 });
 
-test('buildPipRows: running OR time-today OR pinned; running first, input order kept', () => {
+test('buildPipRows: running OR time-today OR pinned; alphabetical, stable across start/stop', () => {
   const timers = [
-    T(1),                                  // idle, no time — hidden
-    T(2, { elapsed_seconds: 600 }),        // time today
-    T(3, { pinned: 1 }),                   // pinned at zero
-    T(4, { running: 1, elapsed_seconds: 60 }),
-    T(5, { elapsed_seconds: 30 }),
+    T(1, { name: 'Hidden' }),                                  // idle, no time — hidden
+    T(2, { name: 'Delta', elapsed_seconds: 600 }),             // time today
+    T(3, { name: 'alpha', pinned: 1 }),                        // pinned at zero
+    T(4, { name: 'Sam', running: 1, elapsed_seconds: 60 }),
+    T(5, { name: 'Bravo', elapsed_seconds: 30 }),
   ];
-  assert.deepEqual(buildPipRows(timers).map((t) => t.id), [4, 2, 3, 5]);
+  // A–Z regardless of running state — a started timer must NOT jump to the top
+  assert.deepEqual(buildPipRows(timers).map((t) => t.id), [3, 5, 2, 4]);
+  const started = timers.map((t) => (t.id === 5 ? { ...t, running: 1 } : t));
+  assert.deepEqual(buildPipRows(started).map((t) => t.id), [3, 5, 2, 4],
+    'starting Bravo keeps every row in place');
   assert.deepEqual(buildPipRows([]), []);
   assert.deepEqual(buildPipRows(null), []);
 });
@@ -78,7 +82,7 @@ test('pipSupported is false outside a browser', () => {
 // 2026-07-14 feedback: a "recent" picker next to + adds past-week timers to
 // today's float list. The additions ride in as an extra-ids set…
 test('buildPipRows: extras set pulls otherwise-hidden timers into the list', () => {
-  const timers = [T(1), T(2, { elapsed_seconds: 600 }), T(3)];
+  const timers = [T(1, { name: 'A' }), T(2, { name: 'B', elapsed_seconds: 600 }), T(3, { name: 'C' })];
   assert.deepEqual(buildPipRows(timers, new Set([3])).map((t) => t.id), [2, 3]);
   assert.deepEqual(buildPipRows(timers, new Set()).map((t) => t.id), [2]);
   assert.deepEqual(buildPipRows(timers).map((t) => t.id), [2], 'extras optional');
