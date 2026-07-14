@@ -4,6 +4,9 @@ import {
   markJustFinalized,
 } from '/js/ui.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
+import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { useShortcuts } from '/js/components/shortcuts.js';
+import { expandShortcuts } from '/js/lib/expand.js';
 
 // Inline narrative editing (2026-07-10 feedback): click a draft entry's
 // narrative to edit it in place — no editor round-trip. Same edit-through
@@ -14,6 +17,12 @@ import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
 function InlineNarrative({ entry, onChanged }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
+  // Same deterministic assists as the main editor (2026-07-14 feedback —
+  // text expansion "not working in card view"): shortcut expansion plus the
+  // matter's ghost completions. Suggestions fetch only while editing.
+  const shortcuts = useShortcuts();
+  const phrases = useMatterSuggestions(editing ? entry.cm?.id : null);
+  const expand = (t, caret) => expandShortcuts(t, caret, shortcuts);
 
   if (entry.status !== 'draft') {
     return html`<p class="narrative">${entry.narrative || html`<em class="muted">No narrative yet</em>`}</p>`;
@@ -56,9 +65,10 @@ function InlineNarrative({ entry, onChanged }) {
       </p>`;
   }
   return html`
-    <textarea class="narrative-inline-input" autoFocus rows=${Math.max(2, Math.ceil(text.length / 90))}
-      value=${text}
-      onInput=${(e) => setText(e.target.value)}
+    <${GhostInput} multiline class="narrative-inline-input" autoFocus
+      rows=${Math.max(2, Math.ceil(text.length / 90))}
+      value=${text} suggestions=${phrases} expand=${expand}
+      onChange=${setText}
       onFocus=${(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
       onBlur=${save}
       onKeyDown=${(e) => {

@@ -53,7 +53,10 @@ export function useMatterSuggestions(cmId) {
 // moving the caret recomputes/hides it.
 export function GhostInput({
   value, onChange, suggestions = [], expand = null,
-  multiline = false, rows = 3, onSelectionChange, ...rest
+  multiline = false, rows = 3, onSelectionChange,
+  // composed, not clobbered: callers (e.g. the entry list's inline editor)
+  // get their handlers AFTER the ghost's own Tab-accept / blur-dismiss
+  onKeyDown: onKeyDownProp, onBlur: onBlurProp, ...rest
 }) {
   const fieldRef = useRef(null);
   const mirrorRef = useRef(null);
@@ -113,7 +116,9 @@ export function GhostInput({
       pendingCaret.current = next.length;
       setGhost(null);
       onChange(next);
+      return;
     }
+    if (onKeyDownProp) onKeyDownProp(e);
   }
 
   const shared = {
@@ -125,7 +130,7 @@ export function GhostInput({
       recompute(e.target.value, e.target.selectionStart);
       if (onSelectionChange) onSelectionChange(e.target);
     },
-    onBlur: () => setGhost(null),
+    onBlur: (e) => { setGhost(null); if (onBlurProp) onBlurProp(e); },
     ...rest,
   };
 
