@@ -401,6 +401,14 @@ input.total-input { font-weight: 700; }
 .dot-nonbillable { background: var(--nonbillable); }
 
 /* ---------- entries ---------- */
+/* day-group headers in multi-day lists (Week/Month/Range): the date is a
+   heading over its cards, with a heavier rule where a new week starts */
+.entry-day-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 16px 2px 6px; font-size: 13px; font-weight: 700;
+}
+div:first-child > .entry-day-head { margin-top: 4px; }
+.entry-week-divider { border-top: 2px solid var(--border); margin-top: 18px; }
 .entry-card {
   display: flex; gap: 12px; padding: 12px 14px; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface-1); align-items: flex-start;

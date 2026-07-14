@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
-  markJustFinalized,
+  markJustFinalized, fmtDateFull,
 } from '/js/ui.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
@@ -141,13 +141,29 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
     emitToast('Unlocked — edits will be tracked in the audit log.');
   }
 
-  return html`
-    <div>
-      ${entries.map((e) => html`
+  // Multi-day lists (Week/Month/Range — 2026-07-13 feedback): the date is a
+  // GROUP HEADER ("Thursday, June 18, 2026"), not a field repeated on every
+  // card, with a subtle divider where a new ISO week begins. Entries arrive
+  // date-ordered from the API, so consecutive runs are whole days.
+  const mondayOf = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(y, m - 1, d, 12);
+    dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+    return dt.toDateString();
+  };
+  const dayGroups = [];
+  if (showDate) {
+    for (const e of entries) {
+      const last = dayGroups[dayGroups.length - 1];
+      if (last && last.date === e.date) last.entries.push(e);
+      else dayGroups.push({ date: e.date, entries: [e] });
+    }
+  }
+
+  const card = (e) => html`
         <div key=${e.id} class=${'entry-card ' + (e.billable ? 'billable' : 'nonbillable')}>
           <div class="body">
             <div class="entry-meta">
-              ${showDate ? html`<strong>${e.date}</strong>` : null}
               ${e.cm ? html`
                 <strong>${e.cm.short_name}</strong>
                 <span class="muted mono small">${e.cm.cm_number}</span>` : html`
@@ -193,6 +209,24 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
                 onClick=${() => openEditor({ copyFrom: e.id })}><${Icon} name="copy" size=${16} /></button>
             </div>
           </div>
-        </div>`)}
+        </div>`;
+
+  if (!showDate) return html`<div>${entries.map(card)}</div>`;
+
+  return html`
+    <div>
+      ${dayGroups.map((g, gi) => {
+        const total = g.entries.reduce((a, e) => a + e.total, 0);
+        const newWeek = gi > 0 && mondayOf(dayGroups[gi - 1].date) !== mondayOf(g.date);
+        return html`
+          <div key=${g.date}>
+            ${newWeek ? html`<div class="entry-week-divider" role="separator"></div>` : null}
+            <div class="entry-day-head">
+              <span>${fmtDateFull(g.date)}</span>
+              <span class="muted small">${g.entries.length} ${g.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(total, increment)}h</span>
+            </div>
+            ${g.entries.map(card)}
+          </div>`;
+      })}
     </div>`;
 }

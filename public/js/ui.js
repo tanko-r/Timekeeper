@@ -49,6 +49,14 @@ export function fmtDateLong(dateStr) {
   });
 }
 
+// Full spelling for day-group headers ("Thursday, June 18, 2026").
+export function fmtDateFull(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, {
+    weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+  });
+}
+
 export function fmtStamp(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString(undefined, {
