@@ -945,10 +945,10 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await page.keyboard.press('Escape');             // dismiss — the draft is already filed
   await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
 
-  // A4: geometry-aware arrows. The grid is multi-column, so a flat ±1 index
-  // (the old behavior) would send ArrowDown sideways instead of to the row
-  // below. Force a wrap onto a second row (flat view, several cards), then
-  // confirm ArrowRight walks DOM order and ArrowDown lands below.
+  // A4: column-major arrows (2026-07-13 feedback: the grid flows top-to-
+  // bottom in columns). ArrowDown walks DOM order — the next card DOWN the
+  // same column — and ArrowRight jumps geometrically to the adjacent
+  // column. Force multiple columns (flat view, several cards), then confirm.
   for (const name of ['Acme filing', 'Acme calls', 'Acme review']) {
     await clickText('button', 'New timer');
     await type('.modal input[placeholder="e.g. Acme — research"]', name);
@@ -964,23 +964,24 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
     && document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
 
-  // ArrowRight: next card in DOM order (row 1 has multiple columns)
+  // ArrowDown: next card in DOM order — directly below in the same column
   await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
-  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('ArrowDown');
   await page.waitForFunction(() => {
     const cards = [...document.querySelectorAll('.timer-board .timer-card')];
     return document.activeElement === cards[1];
   }, { timeout: 4000 });
 
-  // ArrowDown from the top-left card: must land on a card in the row below,
-  // not on cards[1] (which a flat index+1 would incorrectly pick).
+  // ArrowRight from the top-left card: must land in the NEXT COLUMN (left
+  // edge further right), not on cards[1] (which sits below in the same
+  // column — the old flat index+1 target).
   await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
-  const topBefore = await page.evaluate(() => document.activeElement.getBoundingClientRect().top);
-  await page.keyboard.press('ArrowDown');
-  await page.waitForFunction((prevTop) => {
+  const leftBefore = await page.evaluate(() => document.activeElement.getBoundingClientRect().left);
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction((prevLeft) => {
     const el = document.activeElement;
-    return el && el.classList.contains('timer-card') && el.getBoundingClientRect().top > prevTop + 4;
-  }, { timeout: 4000 }, topBefore);
+    return el && el.classList.contains('timer-card') && el.getBoundingClientRect().left > prevLeft + 4;
+  }, { timeout: 4000 }, leftBefore);
 
   await clickText('.seg button', 'By group'); // restore for later steps
 });
@@ -1105,7 +1106,11 @@ await step('alt+drag feedback: select region → note box → TODO entry filed',
     document.dispatchEvent(new MouseEvent('mousemove', opts(420, 330)));
     document.dispatchEvent(new MouseEvent('mouseup', opts(420, 330)));
   });
-  await waitFor('.feedback-note');
+  // real tab capture (getDisplayMedia → video frame → canvas) can take well
+  // over the default 5s on a loaded box — and if this wait gives up early,
+  // the note modal opens AFTER the step ends, poisoning the close-out
+  // step's modal-backdrop fence check with a false "n leaked".
+  await waitFor('.feedback-note', 30000);
   const hasShot = await page.evaluate(() => !!document.querySelector('.feedback-shot'));
   if (!hasShot) throw new Error('annotated screenshot preview missing from the note box');
   await page.type('.feedback-note', 'E2E: tighten this area', { delay: 5 });
