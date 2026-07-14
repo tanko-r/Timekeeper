@@ -88,12 +88,12 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
   const increment = (settings?.rounding?.increment) || 0.1;
 
   const timerFor = (entry) => (timers || []).find((t) => t.linked_entry_id === entry.id);
-  const timersChanged = () => window.dispatchEvent(new CustomEvent('tk:timers-changed'));
+  // (no manual tk:timers-changed dispatch here — api.js announces every
+  // successful /api/timers write itself now)
 
   async function startTimer(entry) {
     try {
       await api.post('/api/timers/start-for-entry', { entry_id: entry.id });
-      timersChanged();
       onChanged();
     } catch (e) {
       emitToast(e.message, { error: true });
@@ -103,7 +103,6 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
   async function stopTimer(timer) {
     try {
       const r = await api.post(`/api/timers/${timer.id}/stop`);
-      timersChanged();
       onChanged();
       if (r.discarded) emitToast('Misclick (under 2s) — nothing recorded.');
     } catch (e) {

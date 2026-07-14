@@ -688,9 +688,15 @@ export async function toggleTimerPip() {
 
   await poll();
   const p = pipWin.setInterval(poll, 5000);
+  // Instant sync with the rest of the app: api.js announces every timer
+  // mutation (grid buttons, entry-card start/stop, this float's own actions)
+  // on the MAIN window — re-poll right away instead of waiting out the 5s.
+  const onTimersChanged = () => poll();
+  window.addEventListener('tk:timers-changed', onTimersChanged);
   pipWin.addEventListener('pagehide', () => {
     pipWin.clearInterval(p);
     stopTick();
+    window.removeEventListener('tk:timers-changed', onTimersChanged);
     themeObs.disconnect();
     pipWin = null;
   });

@@ -10,6 +10,18 @@ export class ApiError extends Error {
   }
 }
 
+// Cross-surface sync: the timer grid, entry cards, and the PiP float all
+// mutate through this client, so a successful write is announced as a window
+// event and every surface refreshes instantly — no waiting out a 5s poll
+// (which Chrome throttles hard in a tab hidden behind other windows, exactly
+// when the float is in use). Pure — unit-tested in test/apisync.test.js.
+export function changeEventsFor(method, path) {
+  if (method === 'GET') return [];
+  if (/^\/api\/timers(\/|$)/.test(path)) return ['tk:timers-changed'];
+  if (/^\/api\/entries(\/|$)/.test(path)) return ['tk:entries-changed'];
+  return [];
+}
+
 async function request(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -25,6 +37,7 @@ async function request(method, path, body) {
     throw new ApiError(res.status, json);
   }
   if (!res.ok) throw new ApiError(res.status, json);
+  for (const ev of changeEventsFor(method, path)) window.dispatchEvent(new CustomEvent(ev));
   return json;
 }
 

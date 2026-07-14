@@ -160,6 +160,14 @@ function App() {
   // Refresh views when the editor closes with changes or timers write entries.
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
+  // api.js announces every successful entry write (tk:entries-changed) —
+  // including ones made from the PiP float, which the dashboard otherwise
+  // never hears about (its entry panel has no poll, only refreshKey).
+  useEffect(() => {
+    window.addEventListener('tk:entries-changed', bumpRefresh);
+    return () => window.removeEventListener('tk:entries-changed', bumpRefresh);
+  }, [bumpRefresh]);
+
   // Running-timer presence in the OS chrome: the tab title (which is also the
   // installed PWA's taskbar hover preview) carries the live clock + timer
   // name, and the favicon gains a red recording dot. App-level (not
@@ -175,6 +183,7 @@ function App() {
       .catch(() => {});
     poll();
     const p = setInterval(poll, 5000);
+    window.addEventListener('tk:timers-changed', poll);
     let badged = null;
     const apply = () => {
       const { title, running } = runningTitle(timers, Date.now(), fetchedAt);
@@ -199,6 +208,7 @@ function App() {
       alive = false;
       clearInterval(p);
       clearInterval(t);
+      window.removeEventListener('tk:timers-changed', poll);
       document.title = 'Timekeeper';
     };
   }, [settings, refreshKey]);
