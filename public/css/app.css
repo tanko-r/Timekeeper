@@ -190,7 +190,13 @@ table.tk tr.client-row td {
 
 /* ---------- timers (compact, grouped) ---------- */
 .icon { vertical-align: -3px; flex: none; }
-.timer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 6px; }
+/* Column-major flow (2026-07-13 feedback): cards read top-to-bottom down a
+   column, then continue in the next — so an A–Z sort scans like a list, not
+   a ragged row-major grid. CSS multicol gives the same responsive column
+   count as the old auto-fill grid; the wider column-gap is the "subtle
+   padding between columns". */
+.timer-grid { columns: 300px; column-gap: 18px; }
+.timer-grid > * { break-inside: avoid; margin-bottom: 6px; }
 .timer-section { margin-bottom: 4px; }
 .group-head {
   display: flex; align-items: center; gap: 4px; margin: 10px 0 6px; min-height: 28px;

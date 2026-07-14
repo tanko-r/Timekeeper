@@ -563,30 +563,30 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     }
 
     if (['ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
-      // Geometry-aware: DOM order for Left/Right (can't desync from what's
-      // actually on screen); rendered position for Up/Down, since the grid
-      // is multi-column and a flat ±1 index walks the wrong axis.
+      // Column-major multicol layout: DOM order runs DOWN a column, so
+      // Up/Down walk DOM order (can't desync from what's on screen);
+      // Left/Right need geometry — the column break isn't in the DOM.
       const cards = [...document.querySelectorAll('.timer-board .timer-card')];
       const curEl = document.querySelector(`.timer-board .timer-card[data-timer-id="${cur.id}"]`);
       if (cards.length === 0 || !curEl) return done();
       const curIdx = cards.indexOf(curEl);
 
-      if (e.key === 'ArrowRight') { focusCard(Number(cards[Math.min(curIdx + 1, cards.length - 1)].dataset.timerId)); return done(); }
-      if (e.key === 'ArrowLeft') { focusCard(Number(cards[Math.max(curIdx - 1, 0)].dataset.timerId)); return done(); }
+      if (e.key === 'ArrowDown') { focusCard(Number(cards[Math.min(curIdx + 1, cards.length - 1)].dataset.timerId)); return done(); }
+      if (e.key === 'ArrowUp') { focusCard(Number(cards[Math.max(curIdx - 1, 0)].dataset.timerId)); return done(); }
 
       const rect = curEl.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
       const candidates = cards
         .filter((el) => el !== curEl)
         .map((el) => ({ el, r: el.getBoundingClientRect() }))
-        .filter(({ r }) => (e.key === 'ArrowDown' ? r.top > rect.top + 4 : r.top < rect.top - 4));
-      if (candidates.length === 0) return done(); // no row in that direction — keep focus
+        .filter(({ r }) => (e.key === 'ArrowRight' ? r.left > rect.left + 4 : r.left < rect.left - 4));
+      if (candidates.length === 0) return done(); // no column in that direction — keep focus
       candidates.sort((a, b) => {
-        const rowDeltaDiff = Math.abs(a.r.top - rect.top) - Math.abs(b.r.top - rect.top);
-        if (rowDeltaDiff !== 0) return rowDeltaDiff;
-        const dxA = Math.abs((a.r.left + a.r.width / 2) - cx);
-        const dxB = Math.abs((b.r.left + b.r.width / 2) - cx);
-        return dxA - dxB;
+        const colDeltaDiff = Math.abs(a.r.left - rect.left) - Math.abs(b.r.left - rect.left);
+        if (colDeltaDiff !== 0) return colDeltaDiff;
+        const dyA = Math.abs((a.r.top + a.r.height / 2) - cy);
+        const dyB = Math.abs((b.r.top + b.r.height / 2) - cy);
+        return dyA - dyB;
       });
       focusCard(Number(candidates[0].el.dataset.timerId));
       return done();
@@ -594,7 +594,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
     if (e.key === 'Tab' && norm) {
       // While the filter is active, Tab walks the matching cards in reading
-      // order (left→right, top→down = DOM order); Shift+Tab walks back.
+      // order (down each column, then the next = DOM order); Shift+Tab walks back.
       // Past either end, fall through to the browser so focus leaves the
       // grid naturally. Unfiltered Tab keeps its default behavior.
       const cards = [...document.querySelectorAll('.timer-board .timer-card')];
