@@ -858,9 +858,9 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
           </button>
         </span>`}
       ${timer.running
-        ? html`<button class="btn btn-primary btn-sm" tabIndex=${-1} title="Stop & file time" onClick=${onStop}>
+        ? html`<button class="btn btn-sm timer-stop-btn" tabIndex=${-1} title="Stop & file time" onClick=${onStop}>
             <${Icon} name="stop" size=${15} /></button>`
-        : html`<button class="btn btn-sm" tabIndex=${-1} title="Start" onClick=${onStart}>
+        : html`<button class="btn btn-sm timer-start-btn" tabIndex=${-1} title="Start" onClick=${onStart}>
             <${Icon} name="play" size=${15} /></button>`}
       <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1} title="Timer menu"
         onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(r.left, r.bottom + 2); }}>

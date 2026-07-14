@@ -160,7 +160,7 @@ input.input-narrow { width: 90px; }
 .chip-exported { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 /* running-entry cue (feedback 2026-07-10): the entry exists from start */
 .chip-running {
-  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--status-good); border-color: color-mix(in srgb, var(--status-good) 40%, transparent);
   animation: tk-running-pulse 2s ease-in-out infinite;
 }
 @keyframes tk-running-pulse { 50% { opacity: 0.55; } }
@@ -248,7 +248,7 @@ table.tk tr.client-row td {
   position: relative; cursor: grab; min-width: 0; min-height: 32px;
 }
 .timer-card:active { cursor: grabbing; }
-.timer-card.running { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.timer-card.running { border-color: var(--status-good); box-shadow: 0 0 0 1px var(--status-good) inset; }
 .timer-name {
   font-weight: 650; font-size: 13px; flex: 2 1 70px; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
@@ -283,8 +283,10 @@ table.tk tr.client-row td {
 /* unassigned quick timer holding time carried over from an earlier day */
 /* pinned to the always-on-top float window */
 .timer-flag.pinned { color: var(--accent); }
-/* entry card start/stop-timer button — accent while its timer runs */
-.entry-timer-btn.running { color: var(--accent); }
+/* entry card start/stop-timer button — design vocabulary (2026-07-14):
+   green go-arrow, red stop-square, everywhere a transport control appears */
+.entry-timer-btn { color: var(--status-good); }
+.entry-timer-btn.running { color: var(--status-critical); }
 /* clock pair: raw HH:MM:SS (display-only) beside the decimal tenths — same
    size, tenths bolder because it's the clickable/filed value */
 .timer-clock-pair { display: flex; align-items: baseline; gap: 5px; flex: none; }
@@ -297,15 +299,24 @@ table.tk tr.client-row td {
   border-radius: 5px; flex: none;
 }
 .timer-clock:hover { background: var(--surface-2); }
-.timer-card.running .timer-clock { color: var(--accent); }
-.timer-card.running .timer-clock-raw { color: var(--accent); opacity: 0.75; }
+/* active counter is GREEN (2026-07-14 design vocabulary) */
+.timer-card.running .timer-clock { color: var(--status-good); }
+.timer-card.running .timer-clock-raw { color: var(--status-good); opacity: 0.75; }
 .timer-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .timer-board:focus { outline: none; }
 /* worked-today (spec §4): theme-aware via the status token; the 3px edge +
    reduced padding keeps content aligned with untouched cards. Functional
    only — motion is Phase 4. */
 .timer-card.worked { border-left: 3px solid var(--status-good); padding-left: 4px; }
-.timer-card.worked.running { border-left-color: var(--accent); }
+
+/* transport buttons: green go-arrow / red stop-square (2026-07-14) */
+.timer-start-btn { color: var(--status-good); }
+.timer-stop-btn {
+  color: var(--status-critical);
+  border-color: color-mix(in srgb, var(--status-critical) 45%, var(--border));
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+}
+.timer-stop-btn:hover { background: color-mix(in srgb, var(--status-critical) 18%, var(--surface-1)); }
 
 .timer-search-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .timer-search { width: 180px; padding: 3px 8px; font-size: 12.5px; }
@@ -422,6 +433,7 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 .entry-card .narrative-editable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
 .entry-card .narrative-inline-input { width: 100%; margin-top: 3px; min-height: 0; font: inherit; color: var(--text-secondary); }
 .entry-card .hours { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.entry-card .hours.active { color: var(--status-good); }
 .entry-card.nonbillable .hours { color: var(--nonbillable); }
 .entry-card.billable .hours { color: var(--billable); }
 .entry-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
@@ -702,7 +714,7 @@ tr.import-skip td { opacity: 0.55; }
   overflow: hidden; border: 1px solid var(--border);
 }
 .tf-meter-fill { display: block; height: 100%; background: var(--accent); }
-.tf-running { display: inline-flex; align-items: center; gap: 6px; }
+.tf-running { display: inline-flex; align-items: center; gap: 6px; color: var(--status-good); }
 
 /* ---------- close-out (one-sweep card stack) ---------- */
 .closeout-backdrop {
@@ -734,7 +746,7 @@ tr.import-skip td { opacity: 0.55; }
 @media (prefers-reduced-motion: no-preference) {
   /* timer start: one soft pulse on the card */
   .timer-card.just-started { animation: tk-start 300ms ease-out 1; }
-  @keyframes tk-start { 30% { box-shadow: 0 0 0 3px var(--accent-soft); } }
+  @keyframes tk-start { 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--status-good) 35%, transparent); } }
 
   /* stop chips + quick capture + close-out cards: settle in */
   .stop-chips, .qc-card, .closeout-card { animation: tk-settle 180ms ease-out 1; }

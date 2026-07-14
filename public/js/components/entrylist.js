@@ -188,7 +188,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
             ${e.status === 'draft' ? html`<${ValidationList} findings=${e.validation} compact=${true} />` : null}
           </div>
           <div style=${{ textAlign: 'right' }}>
-            <div class="hours">${fmtHours(e.total, increment)}</div>
+            <div class=${'hours' + (runningIds && runningIds.has(e.id) ? ' active' : '')}>${fmtHours(e.total, increment)}</div>
             <div class="entry-actions">
               ${timers && e.status === 'draft' ? (() => {
                 const t = timerFor(e);

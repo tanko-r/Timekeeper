@@ -104,15 +104,16 @@ const PIP_CSS = `
     height: 100vh; display: flex; flex-direction: column;
     border-left: 4px solid var(--border); user-select: none;
   }
-  body.running { border-left-color: var(--accent); }
+  body.running { border-left-color: var(--good); }
   .rows { flex: 1; overflow-y: auto; }
   .row { border-bottom: 1px solid var(--border); }
   .rowbar { display: flex; align-items: center; gap: 7px; padding: 6px 8px; cursor: pointer; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
-  .row.running .dot { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .row.running .dot { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .clock { font-family: ui-monospace, monospace; font-weight: 700; font-size: 14px; flex: none; min-width: 54px; }
-  .row.running .clock { color: var(--accent); }
+  /* active counter is GREEN, matching the app (2026-07-14 design vocabulary) */
+  .row.running .clock { color: var(--good); }
   .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
   .row.running .name { color: var(--text-primary); }
   .pin {
