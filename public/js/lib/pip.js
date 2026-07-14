@@ -24,14 +24,29 @@ export function pipSupported() {
   return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 }
 
-// Which timers earn a row: running, any clock time today, or pinned
+// Which timers earn a row: running, any clock time today, pinned
 // (timers.pinned — the whole point of pinning is surviving the midnight
-// reset). Running first; otherwise the
+// reset), or hand-added for the day via the "recent" picker (extraIds).
+// Running first; otherwise the
 // server's dashboard order is preserved — never time-sorted, rows must not
 // jump while the user watches. Pure — unit-tested in test/pip.test.js.
-export function buildPipRows(timers) {
-  const list = (timers || []).filter((t) => t.running || t.elapsed_seconds > 0 || t.pinned);
+export function buildPipRows(timers, extraIds = null) {
+  const list = (timers || []).filter((t) => t.running || t.elapsed_seconds > 0 || t.pinned
+    || (extraIds && extraIds.has(t.id)));
   return [...list.filter((t) => t.running), ...list.filter((t) => !t.running)];
+}
+
+// The "recent" picker's candidates (2026-07-14 feedback): timers that ran in
+// the past week but aren't already on the float list, alphabetical. Pure.
+export function recentPickList(timers, extraIds, nowMs) {
+  const shown = new Set(buildPipRows(timers, extraIds).map((t) => t.id));
+  const weekAgo = nowMs - 7 * 86400000;
+  return (timers || [])
+    .filter((t) => !shown.has(t.id))
+    .filter((t) => Math.max(
+      t.last_started_at ? Date.parse(t.last_started_at) : 0,
+      t.last_stopped_at ? Date.parse(t.last_stopped_at) : 0) >= weekAgo)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
 
 // How the expanded row's narrative surface behaves:
@@ -171,6 +186,28 @@ const PIP_CSS = `
   .co-time b { font-family: ui-monospace, monospace; color: var(--text-primary); }
   .closeout textarea { flex: 1; min-height: 48px; }
   .co-foot { display: flex; align-items: center; justify-content: space-between; }
+  .foot-btns { display: flex; gap: 5px; }
+  .recent-btn { width: auto; padding: 0 8px; font: 600 11px 'InterVariable', system-ui, sans-serif; }
+  .recent-panel {
+    flex: 1; display: flex; flex-direction: column; gap: 6px;
+    padding: 8px; min-height: 0;
+  }
+  .recent-filter {
+    font: 12px 'InterVariable', system-ui, sans-serif; width: 100%;
+    padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px;
+    background: var(--surface-2); color: var(--text-primary);
+  }
+  .recent-filter:focus { outline: none; border-color: var(--accent); }
+  .recent-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  .recent-item {
+    display: flex; gap: 6px; align-items: baseline; width: 100%;
+    padding: 5px 6px; border: 0; border-bottom: 1px solid var(--border);
+    background: none; text-align: left; cursor: pointer;
+    color: var(--text-primary); font: 12px 'InterVariable', system-ui, sans-serif;
+  }
+  .recent-item:hover { background: var(--surface-2); }
+  .recent-item .sub { color: var(--text-muted); font-size: 10px; margin-left: auto; flex: none; }
+  .recent-none { color: var(--text-muted); font-size: 11px; padding: 6px; }
   .done {
     font: 600 11px 'InterVariable', system-ui, sans-serif; color: #fff;
     background: var(--accent); border: 1px solid var(--accent); border-radius: 5px;
@@ -237,15 +274,21 @@ export async function toggleTimerPip() {
   doc.body.innerHTML = `
     <div class="rows" data-rows></div>
     <div class="closeout" data-closeout hidden></div>
+    <div class="recent-panel" data-recent-panel hidden></div>
     <div class="empty" data-empty hidden>No time today — pin a timer or hit +.</div>
     <div class="err" data-err hidden></div>
     <div class="foot">
       <span class="total" data-total>…</span>
-      <button class="quick" data-quick title="Quick timer — starts now; assign a matter later">+</button>
+      <span class="foot-btns">
+        <button class="quick recent-btn" data-recent-btn
+          title="Add a timer from the past week to today's list">Recent ▾</button>
+        <button class="quick" data-quick title="Quick timer — starts now; assign a matter later">+</button>
+      </span>
     </div>`;
 
   const rowsEl = doc.querySelector('[data-rows]');
   const closeoutEl = doc.querySelector('[data-closeout]');
+  const recentEl = doc.querySelector('[data-recent-panel]');
   const emptyEl = doc.querySelector('[data-empty]');
   const errEl = doc.querySelector('[data-err]');
   const totalEl = doc.querySelector('[data-total]');
@@ -254,6 +297,24 @@ export async function toggleTimerPip() {
   let fetchedAt = 0;
   let expandedId = null; // one expanded row at a time
   let closeoutId = null; // just-stopped timer whose close-out pane owns the window
+  let recentOpen = false; // the "recent" picker pane owns the window while open
+
+  // Timers hand-added to today's list via the picker: day-scoped, browser
+  // -local ("add to the list for TODAY" — not a durable pin).
+  const localToday = () => {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const extras = (() => {
+    try {
+      const o = JSON.parse(localStorage.getItem('tk:pipExtras') || 'null');
+      if (o && o.date === localToday()) return new Set(o.ids);
+    } catch { /* corrupt/absent — start empty */ }
+    return new Set();
+  })();
+  const saveExtras = () => localStorage.setItem(
+    'tk:pipExtras', JSON.stringify({ date: localToday(), ids: [...extras] }));
   const drafts = new Map(); // timer id → unsaved narrative text
   const debounces = new Map(); // timer id → save debounce handle
   let pendingRender = false; // a render was skipped to protect a focused textarea
@@ -478,22 +539,33 @@ export async function toggleTimerPip() {
   function render() {
     // never rebuild under a focused textarea — the blur handler re-renders
     if (narrFocused()) { pendingRender = true; return; }
-    const rows = buildPipRows(timers);
+    const rows = buildPipRows(timers, extras);
     localStorage.setItem('tk:pipRows', String(rows.length || 1));
     if (expandedId !== null && !rows.some((t) => t.id === expandedId)) expandedId = null;
     const co = closeoutId === null ? null : closeoutTimer(timers, closeoutId);
     if (!co) closeoutId = null;
     if (co) {
       // close-out owns the window; the list comes back on Done / Esc
+      recentOpen = false;
+      recentEl.hidden = true;
+      recentEl.replaceChildren();
       rowsEl.replaceChildren();
       rowsEl.hidden = true;
       emptyEl.hidden = true;
       buildCloseout(co);
       closeoutEl.hidden = false;
+    } else if (recentOpen) {
+      // the picker owns the window; deliberately NOT rebuilt here — a poll
+      // mid-typing must not clobber the filter input
+      rowsEl.replaceChildren();
+      rowsEl.hidden = true;
+      emptyEl.hidden = true;
+      closeoutEl.hidden = true;
     } else {
       closeoutEl.hidden = true;
       closeoutEl.replaceChildren();
       closeoutEl.removeAttribute('data-id');
+      recentEl.hidden = true;
       rowsEl.hidden = false;
       rowsEl.replaceChildren(...rows.map(buildRow));
       emptyEl.hidden = rows.length > 0;
@@ -502,9 +574,80 @@ export async function toggleTimerPip() {
     doc.body.classList.toggle('running', rows.some((t) => t.running));
   }
 
+  // The "recent" pane (2026-07-14 feedback): past-week timers not already on
+  // the list; type-to-filter; picking one adds it for the day and opens its
+  // narrative. Built once per open — poll renders leave it alone.
+  function closeRecent() {
+    recentOpen = false;
+    recentEl.replaceChildren();
+    render();
+  }
+  function openRecent() {
+    recentOpen = true;
+    const input = doc.createElement('input');
+    input.className = 'recent-filter';
+    input.placeholder = 'Type to filter — Esc closes';
+    const list = doc.createElement('div');
+    list.className = 'recent-list';
+    const pick = (t) => {
+      extras.add(t.id);
+      saveExtras();
+      recentOpen = false;
+      recentEl.replaceChildren();
+      expandedId = t.id;
+      render();
+      focusNarrative(t.id);
+    };
+    const rebuild = () => {
+      const q = input.value.trim().toLowerCase();
+      const cands = recentPickList(timers, extras, Date.now())
+        .filter((t) => !q || [t.name, t.cm_short_name, t.cm_number, t.client_name]
+          .some((v) => String(v || '').toLowerCase().includes(q)));
+      list.replaceChildren(...cands.map((t) => {
+        const b = doc.createElement('button');
+        b.type = 'button';
+        b.className = 'recent-item';
+        const name = doc.createElement('span');
+        name.textContent = t.name;
+        b.appendChild(name);
+        if (t.cm_number) {
+          const sub = doc.createElement('span');
+          sub.className = 'sub';
+          sub.textContent = t.cm_number;
+          b.appendChild(sub);
+        }
+        b.addEventListener('click', () => pick(t));
+        return b;
+      }));
+      if (cands.length === 0) {
+        const none = doc.createElement('div');
+        none.className = 'recent-none';
+        none.textContent = q ? 'No match in the past week.' : 'Nothing ran in the past week that isn’t already listed.';
+        list.replaceChildren(none);
+      }
+      return cands;
+    };
+    input.addEventListener('input', rebuild);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeRecent();
+      if (e.key === 'Enter') {
+        const first = rebuild()[0];
+        if (first) pick(first);
+      }
+    });
+    rebuild();
+    recentEl.replaceChildren(input, list);
+    recentEl.hidden = false;
+    render();
+    input.focus();
+  }
+  doc.querySelector('[data-recent-btn]').addEventListener('click', () => {
+    if (recentOpen) closeRecent(); else openRecent();
+  });
+
   // 1s tick: clocks + total only — no DOM rebuild, so typing is undisturbed
   const tick = () => {
-    const rows = buildPipRows(timers);
+    const rows = buildPipRows(timers, extras);
     for (const t of rows) {
       const el = rowsEl.querySelector(`.row[data-id="${t.id}"] [data-clock]`);
       if (el) el.textContent = fmtClock(secsOf(t));

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClock, pipSupported,
+  buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClock, pipSupported, recentPickList,
   closeoutTimer,
 } from '../public/js/lib/pip.js';
 
@@ -73,4 +73,32 @@ test('closeoutTimer: null when the stop left nothing to narrate', () => {
 
 test('pipSupported is false outside a browser', () => {
   assert.equal(pipSupported(), false);
+});
+
+// 2026-07-14 feedback: a "recent" picker next to + adds past-week timers to
+// today's float list. The additions ride in as an extra-ids set…
+test('buildPipRows: extras set pulls otherwise-hidden timers into the list', () => {
+  const timers = [T(1), T(2, { elapsed_seconds: 600 }), T(3)];
+  assert.deepEqual(buildPipRows(timers, new Set([3])).map((t) => t.id), [2, 3]);
+  assert.deepEqual(buildPipRows(timers, new Set()).map((t) => t.id), [2]);
+  assert.deepEqual(buildPipRows(timers).map((t) => t.id), [2], 'extras optional');
+});
+
+// …and the picker itself offers past-week-active timers not already shown,
+// alphabetically.
+test('recentPickList: past-week activity, excludes shown rows, A–Z', () => {
+  const now = Date.parse('2026-07-14T12:00:00-07:00');
+  const days = (n) => new Date(now - n * 86400000).toISOString();
+  const timers = [
+    T(1, { name: 'Zeta', last_stopped_at: days(2) }),          // recent → offered
+    T(2, { name: 'Alpha', last_started_at: days(6) }),         // recent → offered
+    T(3, { name: 'Old', last_stopped_at: days(9) }),           // too old
+    T(4, { name: 'Never' }),                                   // no activity
+    T(5, { name: 'Shown', elapsed_seconds: 60, last_stopped_at: days(1) }), // already a row
+    T(6, { name: 'Added', last_stopped_at: days(3) }),         // already added via extras
+  ];
+  assert.deepEqual(
+    recentPickList(timers, new Set([6]), now).map((t) => t.name),
+    ['Alpha', 'Zeta']);
+  assert.deepEqual(recentPickList(null, new Set(), now), []);
 });
