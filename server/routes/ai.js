@@ -31,7 +31,7 @@ function formatContract(codes) {
   return `Rules for tasks:
 - Break the work into 1–5 component tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: a short lowercase action phrase for that task suitable for parenthetical task-billing, e.g. "review lease agreement".
+- fragment: the COMPLETE billing-narrative clause for that task — as specific and professional as the narrative itself, preserving every concrete detail (documents, parties, subject matter) from the description that belongs to that task. Never flatten to a terse label: "review and analyze letter of intent and Purchase and Sale Agreement for the data center transaction", not "review documents". Start lowercase; no trailing period.
 - share: fraction of the total time for that task; all shares sum to 1.
 
 Respond with ONLY this JSON, no other text:
@@ -198,7 +198,7 @@ export function aiRouter({ db }) {
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
     const tasks = rawTasks.slice(0, 8).map((t) => ({
       task_code: codes.includes(t.task_code) ? t.task_code : (codes[0] || ''),
-      fragment: String(t.fragment || '').trim().slice(0, 200),
+      fragment: String(t.fragment || '').trim().slice(0, 400),
       share: Number(t.share) > 0 ? Number(t.share) : 0,
     }));
     const hours = totalHours && tasks.length

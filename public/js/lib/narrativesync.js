@@ -136,6 +136,29 @@ export function rebalanceHours(durations, changedIndex, newValue, { total, incre
   return units.map(fromUnits);
 }
 
+// ---------- splitNarrativeSegments ----------
+
+// Literal "split into tasks" (2026-07-14 feedback): divide an existing
+// narrative into task fragments at semicolons, keeping the wording verbatim
+// — no AI, no flattening. A segment ending in a numeric parenthetical
+// ("draft amendment (1.2)") surrenders it as that task's duration; anything
+// else leaves duration null for the caller to allocate. The trailing period
+// of the final segment is dropped (generateNarrative re-adds it).
+const TRAILING_HOURS_RE = /^([\s\S]*?)\s*\((\d+(?:\.\d+)?)\)\s*$/;
+
+export function splitNarrativeSegments(text) {
+  const raw = String(text || '').trim().replace(/\.\s*$/, '');
+  if (!raw) return [];
+  return raw.split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((seg) => {
+      const m = TRAILING_HOURS_RE.exec(seg);
+      if (m && m[1].trim()) return { fragment: m[1].trim(), duration: Number(m[2]) };
+      return { fragment: seg, duration: null };
+    });
+}
+
 // ---------- formatSuggestion ----------
 
 export function formatSuggestion(text) {

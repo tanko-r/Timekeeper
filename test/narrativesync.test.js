@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion,
+  splitNarrativeSegments,
 } from '../public/js/lib/narrativesync.js';
 
 // ---------- generateNarrative (client mirror of server/lib/narrative.js) ----------
@@ -297,4 +298,28 @@ test('formatSuggestion: does not add a period after ! or ?', () => {
 test('formatSuggestion: blank input stays blank', () => {
   assert.equal(formatSuggestion(''), '');
   assert.equal(formatSuggestion('   '), '');
+});
+
+// ---------- splitNarrativeSegments (literal "split into tasks", 2026-07-14) ----------
+
+test('splitNarrativeSegments: semicolon segments keep their full wording', () => {
+  const segs = splitNarrativeSegments(
+    'Reviewed Development Agreements, escrow instructions and settlement statements; drafted revisions to Settlement Agreement with assistance from AI.');
+  assert.equal(segs.length, 2);
+  assert.equal(segs[0].fragment, 'Reviewed Development Agreements, escrow instructions and settlement statements');
+  assert.equal(segs[0].duration, null);
+  assert.equal(segs[1].fragment, 'drafted revisions to Settlement Agreement with assistance from AI');
+});
+
+test('splitNarrativeSegments: trailing (x.x) allocations are lifted into durations', () => {
+  const segs = splitNarrativeSegments('Review lease (0.6); draft amendment (1.2).');
+  assert.deepEqual(segs, [
+    { fragment: 'Review lease', duration: 0.6 },
+    { fragment: 'draft amendment', duration: 1.2 },
+  ]);
+});
+
+test('splitNarrativeSegments: empty segments drop; blank text is []', () => {
+  assert.deepEqual(splitNarrativeSegments('  '), []);
+  assert.equal(splitNarrativeSegments('one thing;; another.').length, 2);
 });

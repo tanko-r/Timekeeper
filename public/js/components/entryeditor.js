@@ -9,7 +9,9 @@ import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
-import { generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion } from '/js/lib/narrativesync.js';
+import {
+  generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion, splitNarrativeSegments,
+} from '/js/lib/narrativesync.js';
 
 const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
 const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
@@ -296,6 +298,27 @@ export function EntryEditor({ spec, settings, onClose }) {
     queueSave();
   }, [queueSave]);
 
+  // Literal split (2026-07-14 feedback): divide the EXISTING narrative into
+  // task lines at semicolons — wording kept verbatim, no AI. Trailing "(x.x)"
+  // amounts become that line's hours; the rest of the total spreads evenly.
+  // AUTO comes on so the narrative now regenerates from the (identical)
+  // fragments and stays in sync with further line edits.
+  function splitFromNarrative() {
+    const segs = splitNarrativeSegments(seedText);
+    if (segs.length < 2) return;
+    const explicitSum = tenth(segs.reduce((a, s) => a + (s.duration || 0), 0));
+    const unknownIdx = segs.map((s, i) => (s.duration == null ? i : -1)).filter((i) => i >= 0);
+    const pool = Math.max(0, tenth((total || sum || explicitSum) - explicitSum));
+    const even = splitTenthsEvenly(pool, Math.max(1, unknownIdx.length));
+    const durations = segs.map((s, i) => (
+      s.duration != null ? tenth(s.duration) : even[unknownIdx.indexOf(i)] || 0));
+    update({
+      tasks: segs.map((s, i) => ({ task_code: '', fragment: s.fragment, duration: durations[i] })),
+      auto: true,
+      ...(total > 0 ? {} : { total: tenth(durations.reduce((a, b) => a + b, 0)) }),
+    });
+  }
+
   const splitEvenly = useCallback(() => {
     setLocal((cur) => {
       const parts = splitTenthsEvenly(cur.total || 0, cur.tasks.length);
@@ -387,6 +410,9 @@ export function EntryEditor({ spec, settings, onClose }) {
             task_code: t.task_code, fragment: t.fragment,
             duration: t.hours != null ? t.hours : even[i] || 0,
           })),
+          // fragments are full narrative clauses now — let AUTO regenerate
+          // the narrative from them so it stays as robust as the split
+          auto: true,
         });
       } else {
         update({ narrative: r.narrative });
@@ -498,6 +524,10 @@ export function EntryEditor({ spec, settings, onClose }) {
         <h3 style=${{ margin: 0 }}>Task lines</h3>
         <span class="muted small">divide the total among tasks</span>
         <div class="spacer" style=${{ flex: 1 }}></div>
+        ${!finalized && substantiveIdx.length <= 1 && splitNarrativeSegments(seedText).length >= 2 ? html`
+          <button class="btn btn-sm"
+            title="Divide the narrative into task lines at its semicolons — keeps your wording exactly; trailing (x.x) amounts become that task's hours, the rest splits evenly"
+            onClick=${splitFromNarrative}><${Icon} name="clipboard" size=${14} /> Split into tasks</button>` : null}
         ${!finalized && local.tasks.length > 1 && total > 0 ? html`
           <button class="btn btn-sm" onClick=${splitEvenly}>Split evenly</button>` : null}
         ${remaining !== 0 && total > 0 && local.tasks.length > 0 ? html`
