@@ -1049,3 +1049,32 @@ test('unassociated entry: finalize blocks, finalize-day skips, export excludes w
     assert.equal(out.unassociated, 0);
     assert.ok(out.csv.includes('100001-000012'));
   }));
+
+// 2026-07-13 feedback: a timer can carry a template narrative; every entry
+// the timer creates STARTS with it (the stash, if any, follows).
+test('narrative_template: seeds new entries, composes with the stash, round-trips on PATCH', () =>
+  withServer('2026-07-13T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'A', cm_id: cm.id, narrative_template: 'Attend weekly Meridian call;',
+    })).body;
+    assert.equal(timer.narrative_template, 'Attend weekly Meridian call;');
+
+    // template alone seeds the start-created entry
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.equal(started.entry.narrative, 'Attend weekly Meridian call;');
+
+    // fresh → next entry gets the template again, with the stash appended
+    await t.fetchJson('POST', `/api/timers/${timer.id}/fresh`);
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
+      draft_narrative: 'discussed Calloway lease.',
+    });
+    const again = (await t.fetchJson('POST', `/api/timers/${timer.id}/fresh`)).body;
+    assert.equal(again.entry.narrative, 'Attend weekly Meridian call; discussed Calloway lease.');
+
+    // blank template stores NULL; unrelated PATCH leaves it alone
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { name: 'B' });
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].narrative_template,
+      'Attend weekly Meridian call;');
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { narrative_template: '  ' });
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].narrative_template, null);
+  }));

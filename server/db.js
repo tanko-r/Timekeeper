@@ -276,6 +276,12 @@ const MIGRATIONS = [
   CREATE INDEX idx_entries_cm ON entries(cm_id);
   UPDATE timers SET held_since = NULL;
   `,
+
+  // v14 — timer template narrative (2026-07-13 feedback): every entry the
+  // timer creates starts with this text.
+  `
+  ALTER TABLE timers ADD COLUMN narrative_template TEXT;
+  `,
 ];
 
 const SEED_SETTINGS = {

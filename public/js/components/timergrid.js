@@ -877,6 +877,7 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
     ? { id: timer.cm_id, cm_number: timer.cm_number, short_name: timer.cm_short_name } : null);
   const [taskCode, setTaskCode] = useState(timer ? (timer.task_code || '') : '');
   const [groupId, setGroupId] = useState(timer ? (timer.group_id ?? '') : '');
+  const [template, setTemplate] = useState(timer ? (timer.narrative_template || '') : '');
   const [error, setError] = useState(null);
 
   async function save() {
@@ -884,6 +885,7 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
       const body = {
         name, cm_id: cm ? cm.id : null, task_code: taskCode || null,
         group_id: groupId === '' ? null : Number(groupId),
+        narrative_template: template.trim() || null,
       };
       const saved = timer
         ? await api.patch(`/api/timers/${timer.id}`, body)
@@ -917,6 +919,11 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
             </select>
           <//>
         </div>
+        <${Field} label="Template narrative (optional)"
+          hint="Every entry this timer creates starts with this text — finish or extend it at close-out.">
+          <textarea rows="2" value=${template} placeholder="e.g. Attend weekly all-hands call with Meridian and Calloway teams regarding"
+            onInput=${(e) => setTemplate(e.target.value)}></textarea>
+        <//>
         ${error ? html`<div class="error-box">${error}</div>` : null}
         <div class="row-end">
           <button type="button" class="btn" onClick=${onClose}>Cancel</button>

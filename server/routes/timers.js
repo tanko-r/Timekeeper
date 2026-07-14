@@ -19,7 +19,7 @@ import { containsTimeAmounts } from '../lib/timeAmounts.js';
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
   group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since,
-  pinned, draft_narrative`;
+  pinned, draft_narrative, narrative_template`;
 
 const TENTH_SECONDS = 360;
 
@@ -70,10 +70,14 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       const cm = timer.cm_id
         ? db.prepare('SELECT id, billable FROM matters WHERE id=?').get(timer.cm_id)
         : null;
+      // Every entry this timer creates STARTS with its template narrative
+      // (2026-07-13 feedback); any stashed text follows it.
+      const seedNarrative = [timer.narrative_template, timer.draft_narrative]
+        .filter(Boolean).join(' ').trim();
       const info = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'draft', ?, 'timer', ?, ?)`)
-        .run(dateStr, timer.cm_id ?? null, timer.draft_narrative || '',
+        .run(dateStr, timer.cm_id ?? null, seedNarrative,
           cm ? cm.billable : 1, hours, nowIso, nowIso);
       db.prepare(
         'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
@@ -188,9 +192,10 @@ export function timersRouter({ db, clock }) {
     }
     const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
     const info = db.prepare(
-      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at, narrative_template) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(name, cm ? cm.id : null, b.task_code ? String(b.task_code) : null,
-      b.group_id ?? null, max + 1, todayLocal(clock()), now());
+      b.group_id ?? null, max + 1, todayLocal(clock()), now(),
+      String(b.narrative_template ?? '').trim() || null);
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
   });
 
@@ -294,7 +299,7 @@ export function timersRouter({ db, clock }) {
       : null;
     const associate = cmChanged && b.cm_id != null
       && linked && !linked.deleted_at && linked.status === 'draft' && linked.cm_id == null;
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, pinned=?, draft_narrative=? WHERE id=?').run(
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, pinned=?, draft_narrative=?, narrative_template=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
@@ -307,6 +312,9 @@ export function timersRouter({ db, clock }) {
       b.draft_narrative !== undefined
         ? (String(b.draft_narrative ?? '').trim() || null)
         : timer.draft_narrative,
+      b.narrative_template !== undefined
+        ? (String(b.narrative_template ?? '').trim() || null)
+        : timer.narrative_template,
       timer.id);
 
     let entry = null;
@@ -348,9 +356,9 @@ export function timersRouter({ db, clock }) {
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
     const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
     const info = db.prepare(
-      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO timers (name, cm_id, task_code, group_id, sort_order, last_reset_date, created_at, narrative_template) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     ).run(`${timer.name} (copy)`, timer.cm_id, timer.task_code, timer.group_id,
-      max + 1, todayLocal(clock()), now());
+      max + 1, todayLocal(clock()), now(), timer.narrative_template);
     res.status(201).json(withElapsed(getTimer.get(info.lastInsertRowid)));
   });
 
