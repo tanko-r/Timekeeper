@@ -31,6 +31,12 @@ export function validateEntry(entry, settings = {}) {
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = entry.total_override != null ? Number(entry.total_override) : sum;
 
+  // Matterless entries (quick timers) hold time legitimately, but they can't
+  // leave as billing records until a client/matter is assigned.
+  if (!entry.cm) {
+    add('block', 'no_matter', 'No client/matter assigned — associate one before finalizing.');
+  }
+
   if (tasks.length === 0) {
     add('block', 'no_task_lines', 'Entry has no task lines.');
   }
@@ -98,7 +104,9 @@ export function canFinalize(entry, settings = {}) {
   const blocks = findings.filter((f) => f.level === 'block');
   const warns = findings.filter((f) => f.level === 'warn');
 
-  if (!validateCmNumber(entry.cm && entry.cm.cm_number)) {
+  // a MISSING matter already blocks as no_matter above — this catches a
+  // present-but-malformed number only
+  if (entry.cm && !validateCmNumber(entry.cm.cm_number)) {
     blocks.push({ level: 'block', code: 'invalid_cm', message: 'Client/Matter number is not valid.' });
   }
 

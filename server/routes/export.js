@@ -12,12 +12,20 @@ export const CSV_HEADER = [
 ];
 
 export function buildExport(db, { from, to, includeDrafts = false }) {
+  // Matterless entries are never exportable — there is nothing to key them
+  // under in the billing system. They can only be drafts (finalize blocks on
+  // no_matter), so this bites only in includeDrafts previews; the count is
+  // returned so the UI can say what was left out.
   const rows = db.prepare(`
     SELECT * FROM entries
-    WHERE deleted_at IS NULL AND date >= ? AND date <= ?
+    WHERE deleted_at IS NULL AND date >= ? AND date <= ? AND cm_id IS NOT NULL
       ${includeDrafts ? '' : "AND status='finalized'"}
     ORDER BY date, cm_id, id
   `).all(from, to);
+  const unassociated = db.prepare(`
+    SELECT COUNT(*) c FROM entries
+    WHERE deleted_at IS NULL AND date >= ? AND date <= ? AND cm_id IS NULL
+  `).get(from, to).c;
   const entries = rows.map((r) => enrich(db, r));
   const increment = (getSetting(db, 'rounding') || {}).increment || 0.1;
 
@@ -45,6 +53,7 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
 
   return {
     count: entries.length,
+    unassociated,
     entry_ids: entries.map((e) => e.id),
     entries,
     csv: toCsv(CSV_HEADER, csvRows),

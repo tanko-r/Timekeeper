@@ -26,10 +26,13 @@ export function statsRouter({ db }) {
       total += e.total;
       if (e.billable) billable += e.total;
 
-      const cmKey = e.cm.id;
+      // matterless (quick-timer) entries bucket together until associated
+      const cmKey = e.cm ? e.cm.id : null;
       if (!byCm.has(cmKey)) {
         byCm.set(cmKey, {
-          cm_id: e.cm.id, cm_number: e.cm.cm_number, short_name: e.cm.short_name,
+          cm_id: cmKey,
+          cm_number: e.cm ? e.cm.cm_number : null,
+          short_name: e.cm ? e.cm.short_name : 'No matter yet',
           hours: 0, billableHours: 0, entries: 0,
         });
       }

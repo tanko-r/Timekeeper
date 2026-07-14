@@ -212,14 +212,14 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   const { path, cleanup } = tempDbPath();
   const db1 = openDb(path);
   // fake a db from just before this migration: undo everything added by the
-  // last eight migrations (matter_people, phase-3's shortcuts, phase-3's
+  // last nine migrations (matter_people, phase-3's shortcuts, phase-3's
   // timers column, entry-editor-rework's clients.task_billing column, Task
-  // 4's entries.narrative_manual column, the quick-timer timers rebuild
-  // — which needs no undo SQL: replaying the rebuild is schema-idempotent,
-  // its only effect is making cm_id nullable — the timers.held_since
-  // column, and the AOT-window timers.pinned/draft_narrative columns) and
-  // roll user_version back by eight (positional — no hardcoded version
-  // numbers)
+  // 4's entries.narrative_manual column, the quick-timer timers rebuild and
+  // the entries rebuild — which need no undo SQL: replaying a rebuild is
+  // schema-idempotent, its only effect is making cm_id nullable — the
+  // timers.held_since column, and the AOT-window timers.pinned/
+  // draft_narrative columns) and roll user_version back by nine (positional
+  // — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
     ALTER TABLE timers DROP COLUMN draft_narrative;
@@ -231,7 +231,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 8}`);
+  db1.pragma(`user_version = ${v - 9}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -297,4 +297,45 @@ test('entry-editor-rework Task 4 migration: entries gain narrative_manual, defau
   assert.equal(
     db.prepare('SELECT narrative_manual FROM entries WHERE id=?').get(e.lastInsertRowid).narrative_manual, 0);
   db.close();
+});
+
+test('entries-rebuild migration: cm_id nullable, data + task lines survive, held_since cleared', () => {
+  const { path, cleanup } = tempDbPath();
+  const db1 = openDb(path);
+  // Populate a realistic pre-migration state, then roll user_version back by
+  // one and replay: the rebuild is schema-idempotent, so replaying it against
+  // live rows proves data survives the DROP TABLE round-trip (entry_tasks
+  // would be emptied by the ON DELETE CASCADE if the backup step regressed).
+  db1.prepare("INSERT INTO matters (cm_number, short_name, billable) VALUES ('100001-000012', 'Acme lease', 1)").run();
+  const eid = db1.prepare(`INSERT INTO entries (date, cm_id, narrative, status, source, total_override)
+    VALUES ('2026-07-10', 1, 'Reviewed lease.', 'draft', 'timer', 0.5)`).run().lastInsertRowid;
+  db1.prepare("INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, 'Review', 0.5, 'lease', 0)").run(eid);
+  db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
+    VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
+  const v = db1.pragma('user_version', { simple: true });
+  db1.pragma(`user_version = ${v - 1}`);
+  db1.close();
+
+  const db2 = openDb(path);
+  assert.equal(db2.prepare('PRAGMA table_info(entries)').all()
+    .find((c) => c.name === 'cm_id').notnull, 0, 'entries.cm_id is nullable');
+  const e = db2.prepare('SELECT * FROM entries WHERE id=?').get(eid);
+  assert.equal(e.narrative, 'Reviewed lease.');
+  assert.equal(e.total_override, 0.5);
+  const tasks = db2.prepare('SELECT * FROM entry_tasks WHERE entry_id=?').all(eid);
+  assert.equal(tasks.length, 1, 'task lines survived the rebuild');
+  assert.equal(tasks[0].fragment, 'lease');
+  assert.equal(db2.prepare('SELECT held_since FROM timers WHERE id=1').get().held_since, null,
+    'held_since retired — the held-time model is gone');
+  // matterless entries are now legal; bogus matters still are not
+  db2.prepare("INSERT INTO entries (date, cm_id, narrative, status, source) VALUES ('2026-07-13', NULL, '', 'draft', 'timer')").run();
+  assert.throws(() => db2.prepare(
+    "INSERT INTO entries (date, cm_id, narrative, status, source) VALUES ('2026-07-13', 999, '', 'draft', 'timer')").run(), /FOREIGN KEY/);
+  // the rebuilt table kept its indexes and the entry_tasks cascade
+  const idx = db2.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='entries'").all().map((r) => r.name);
+  assert.ok(idx.includes('idx_entries_date') && idx.includes('idx_entries_cm'), 'indexes recreated');
+  db2.prepare('DELETE FROM entries WHERE id=?').run(eid);
+  assert.equal(db2.prepare('SELECT COUNT(*) c FROM entry_tasks WHERE entry_id=?').get(eid).c, 0, 'cascade intact');
+  db2.close();
+  cleanup();
 });

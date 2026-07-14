@@ -169,3 +169,27 @@ Requested by David after first use:
 - **Transport icons.** The Start/Stop text buttons are now bordered icon
   buttons: solid green play triangle (start) / solid red square (stop),
   lucide shapes inlined like the pin glyph.
+
+## Addendum (2026-07-13, later): entry-backed matterless timers replace held time
+
+Directed by David; supersedes §3's "no linked entry" case and the held-time
+carry described in §2/§5:
+
+- **Every started timer files into an entry**, matter or not. A matterless
+  start creates an entry with `cm_id NULL` (consuming `draft_narrative` as its
+  initial narrative); stops and the midnight rollover bank into it exactly
+  like a matter timer's. The timer clock resets at midnight; the ENTRY now
+  carries the time (dated the day it was worked), so `held_since` and the
+  carry-the-clock rollover branch are retired (migration clears the column).
+- **Unassociated entries cannot leave**: `validateEntry` blocks with
+  `no_matter` (so they surface in the dashboard invalid/backlog alerts and
+  the close-out blocked list), and exports exclude `cm_id IS NULL` rows,
+  returning an `unassociated` count the Export view surfaces.
+- **Association is in-place**: assigning a matter to the timer updates its
+  linked matterless draft entry (keeping time + narrative, inheriting the
+  matter's billable flag); assigning a matter to the ENTRY (editor or bulk
+  set_cm) glues the linked matterless timer's `cm_id` in return, so the pair
+  never splits and nothing double-files.
+- The PiP window's stash (`draft_narrative`) is now only a pre-first-start
+  vehicle — after a start the narrative field edits the (matterless) entry
+  directly via the ordinary `entry` mode.

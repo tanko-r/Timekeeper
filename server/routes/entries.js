@@ -29,7 +29,8 @@ export function enrich(db, row) {
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
   const entry = {
-    ...row, tasks, cm, total,
+    // cm is null (not undefined) for a matterless entry so it survives JSON
+    ...row, tasks, cm: cm || null, total,
     narrative_auto: substantiveCount(tasks) >= 2 && !row.narrative_manual,
   };
   entry.validation = validateEntry(entry, getSetting(db, 'validation'));
@@ -76,7 +77,7 @@ export function syncNarrative(db, entryId) {
   const client = db.prepare(`
     SELECT COALESCE(clients.task_billing, 1) AS task_billing, entries.narrative_manual AS narrative_manual
     FROM entries
-    JOIN matters ON matters.id = entries.cm_id
+    LEFT JOIN matters ON matters.id = entries.cm_id
     LEFT JOIN clients ON clients.id = matters.client_id
     WHERE entries.id = ?
   `).get(entryId);
@@ -197,6 +198,11 @@ export function entriesRouter({ db, clock }) {
             db.transaction(() => {
               db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm_id, now(), id);
               touchCm(db, cm_id, now());
+              // same association glue as PATCH: a matterless timer follows
+              if (row.cm_id == null) {
+                db.prepare('UPDATE timers SET cm_id=?, suggested_narrative=NULL WHERE linked_entry_id=? AND cm_id IS NULL')
+                  .run(cm_id, id);
+              }
               recordAudit(db, row, { cm_id }, now());
               rebuildMatterPeople(db, cm_id);
               if (cm_id !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
@@ -306,6 +312,13 @@ export function entriesRouter({ db, clock }) {
       if (norm) writeTasks(db, row.id, norm.tasks);
       syncNarrative(db, row.id);
       if (cmId !== row.cm_id) touchCm(db, cmId, now());
+      // Association glue (2026-07-13): a matterless timer feeding this entry
+      // follows the entry's new matter, so the link — and the no-relink,
+      // no-double-file guarantee — survives the association.
+      if (row.cm_id == null && cmId != null) {
+        db.prepare('UPDATE timers SET cm_id=?, suggested_narrative=NULL WHERE linked_entry_id=? AND cm_id IS NULL')
+          .run(cmId, row.id);
+      }
       recordAudit(db, row, req.body, now());
       rebuildMatterPeople(db, cmId);
       if (cmId !== row.cm_id) rebuildMatterPeople(db, row.cm_id);

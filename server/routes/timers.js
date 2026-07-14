@@ -32,7 +32,10 @@ function minIncrement(db) {
 }
 
 // File `hours` into the timer's linked entry for `dateStr`, creating and
-// (re)linking as needed. Returns { entryId, relinked, previousTotal }.
+// (re)linking as needed. Works for MATTERLESS timers too (2026-07-13): the
+// entry is created with cm_id NULL and carries the time — it just can't
+// finalize or export until a matter is assigned. Returns
+// { entryId, relinked, previousTotal }.
 function syncToEntry(db, timer, hours, dateStr, nowIso) {
   let relinked = false;
   let previousTotal = null;
@@ -64,11 +67,13 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       syncNarrative(db, entry.id);
       entryId = entry.id;
     } else {
-      const cm = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(timer.cm_id);
+      const cm = timer.cm_id
+        ? db.prepare('SELECT id, billable FROM matters WHERE id=?').get(timer.cm_id)
+        : null;
       const info = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'draft', ?, 'timer', ?, ?)`)
-        .run(dateStr, timer.cm_id, timer.draft_narrative || '',
+        .run(dateStr, timer.cm_id ?? null, timer.draft_narrative || '',
           cm ? cm.billable : 1, hours, nowIso, nowIso);
       db.prepare(
         'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'
@@ -78,8 +83,10 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       db.prepare('UPDATE timers SET linked_entry_id=?, draft_narrative=NULL WHERE id=?')
         .run(entryId, timer.id);
     }
-    db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
-    rebuildMatterPeople(db, timer.cm_id);
+    if (timer.cm_id) {
+      db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
+      rebuildMatterPeople(db, timer.cm_id);
+    }
   })();
 
   return { entryId, relinked, previousTotal };
@@ -112,20 +119,9 @@ export function applyRollovers(db, clock) {
   const nowIso = clock().toISOString();
   for (const timer of stale) {
     const r = rollover(timer, today);
-    if (!timer.cm_id) {
-      // Unassigned quick timer: nowhere to bank — carry the clock forward
-      // across midnight so the held time survives until a matter is
-      // assigned (it then files, dated the day of the next stop).
-      // held_since stamps the day the held time came from (first carry
-      // only) so the UI can explain the leftover timer instead of leaving
-      // it looking orphaned (2026-07-11 feedback).
-      const heldSince = timer.held_since
-        || (r.bankSeconds > 0 ? timer.last_reset_date : null);
-      db.prepare(
-        'UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_reset_date=?, held_since=? WHERE id=?'
-      ).run(r.bankSeconds, timer.running ? r.restartIso : null, today, heldSince, timer.id);
-      continue;
-    }
+    // Matterless timers bank like any other (2026-07-13): the time lives in
+    // a matterless entry dated the day it was worked, and the clock resets —
+    // the old carry-the-clock/held_since model is retired.
     const hours = secondsToHours(r.bankSeconds, rounding);
     if (hours >= minInc - 1e-9 && hours > 0) {
       syncToEntry(db, timer, hours, r.bankDate, nowIso);
@@ -178,8 +174,8 @@ export function timersRouter({ db, clock }) {
     const b = req.body || {};
     let name = String(b.name || '').trim();
     // Quick timers: no client/matter — just time and an optional caption.
-    // A matter can be assigned later (PATCH); until then stops hold the
-    // clock instead of filing.
+    // Starts/stops file into a MATTERLESS entry like any other timer; a
+    // matter assigned later (PATCH) associates that entry in place.
     let cm = null;
     if (b.cm_id != null) {
       cm = db.prepare('SELECT id FROM matters WHERE id=?').get(b.cm_id);
@@ -288,39 +284,51 @@ export function timersRouter({ db, clock }) {
     const name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cmChanged = b.cm_id !== undefined && (b.cm_id ?? null) !== (timer.cm_id ?? null);
-    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, held_since=?, pinned=?, draft_narrative=? WHERE id=?').run(
+    // Quick-timer completion (2026-07-13, entry-backed): if the timer's
+    // linked entry is a matterless draft, assigning a matter ASSOCIATES that
+    // entry in place — same entry, same time, same narrative, now finalizable.
+    // Only a real matter→matter change orphans the old entry (it belonged to
+    // the old matter).
+    const linked = timer.linked_entry_id
+      ? db.prepare('SELECT id, cm_id, status, deleted_at FROM entries WHERE id=?').get(timer.linked_entry_id)
+      : null;
+    const associate = cmChanged && b.cm_id != null
+      && linked && !linked.deleted_at && linked.status === 'draft' && linked.cm_id == null;
+    db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, pinned=?, draft_narrative=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
       b.group_id !== undefined ? b.group_id : timer.group_id,
-      cmChanged ? null : timer.linked_entry_id, // new CM → old entry no longer its home
+      cmChanged && !associate ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
-      cmChanged ? null : timer.held_since, // assigned → the held time files below
       b.pinned !== undefined ? (b.pinned ? 1 : 0) : timer.pinned,
-      // user text — deliberately SURVIVES cmChanged; the assignment's
-      // syncToEntry below is exactly where the stash gets consumed
+      // user text — deliberately SURVIVES cmChanged; the next entry the
+      // timer creates is where the stash gets consumed
       b.draft_narrative !== undefined
         ? (String(b.draft_narrative ?? '').trim() || null)
         : timer.draft_narrative,
       timer.id);
 
-    // Quick-timer completion (stop → assign → narrate): giving a PAUSED
-    // timer a matter files its held clock right now instead of waiting for
-    // the next stop; the entry rides along in the response so the client
-    // can open the narrative editor. A RUNNING timer links its entry
-    // immediately too (feedback 2026-07-10) — the total settles at stop.
     let entry = null;
     const fresh = getTimer.get(timer.id);
+    if (associate) {
+      db.transaction(() => {
+        const cmRow = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(fresh.cm_id);
+        // billable was a placeholder default on the matterless entry — the
+        // matter's flag takes over now that one is known
+        db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
+          .run(fresh.cm_id, cmRow ? cmRow.billable : 1, now(), linked.id);
+        db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(now(), fresh.cm_id);
+        rebuildMatterPeople(db, fresh.cm_id);
+      })();
+      entry = loadEntry(db, linked.id);
+    }
     if (cmChanged && fresh.cm_id) {
+      // Settle the clock into the (new or just-associated) entry: a RUNNING
+      // timer links its entry immediately (feedback 2026-07-10) — the total
+      // settles at stop; a PAUSED one files its settled clock right now.
       const hours = secondsToHours(elapsedSeconds(fresh, clock().getTime()), roundingCfg(db));
-      if (fresh.running) {
-        // Running: the entry exists the moment the matter is known — the
-        // snapshot total settles at the next stop.
-        const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
-        entry = loadEntry(db, synced.entryId);
-      } else if (hours >= minIncrement(db) - 1e-9 && hours > 0) {
-        // Paused: files the settled held time (stop → assign → narrate);
-        // below-increment still holds without filing.
+      if (fresh.running || (hours >= minIncrement(db) - 1e-9 && hours > 0)) {
         const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
         entry = loadEntry(db, synced.entryId);
       }
@@ -368,13 +376,8 @@ export function timersRouter({ db, clock }) {
     db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
       .run(seconds, now(), timer.id);
 
-    // Quick timer with no matter yet: nowhere to file — hold the whole
-    // clock until one is assigned (never lose the time, never invent an
-    // entry). The next stop after assignment files the full day total.
-    if (!timer.cm_id) {
-      return { entry: null, hours: 0, seconds, unassigned: true, timer: withElapsed(getTimer.get(timer.id)) };
-    }
-
+    // No matter yet? Doesn't matter (2026-07-13): the time files into the
+    // timer's matterless entry, which holds it until a matter is assigned.
     const hours = secondsToHours(seconds, roundingCfg(db));
     if (hours < minIncrement(db) - 1e-9 || hours <= 0) {
       return { entry: null, hours: 0, seconds, timer: withElapsed(getTimer.get(timer.id)) };
@@ -445,10 +448,11 @@ export function timersRouter({ db, clock }) {
 
     // Feedback 2026-07-10: the entry exists from the moment the timer starts,
     // so Today's entries always shows what's accruing. Created at the current
-    // clock value — 0.0 for a fresh timer; the first stop lifts it.
+    // clock value — 0.0 for a fresh timer; the first stop lifts it. Matterless
+    // timers included (2026-07-13): their entry is simply unassociated.
     let entry = null;
     let relink = null;
-    if (startMs != null && timer.cm_id) {
+    if (startMs != null) {
       const freshTimer = getTimer.get(timer.id);
       const hours = secondsToHours(elapsedSeconds(freshTimer, clock().getTime()), roundingCfg(db));
       const synced = syncToEntry(db, freshTimer, hours, todayLocal(clock()), now());
@@ -501,7 +505,7 @@ export function timersRouter({ db, clock }) {
         const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
         const info = db.prepare(
           'INSERT INTO timers (name, cm_id, task_code, sort_order, last_reset_date, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(entry.cm.short_name, entry.cm_id,
+        ).run(entry.cm ? entry.cm.short_name : 'Quick timer', entry.cm_id,
           (entry.tasks[0] && entry.tasks[0].task_code) || null,
           max + 1, todayLocal(clock()), now());
         timer = getTimer.get(info.lastInsertRowid);
@@ -531,12 +535,12 @@ export function timersRouter({ db, clock }) {
     // an untouched empty entry isn't "kept" — it never had anything to keep
     deleteIfUntouched(db, timer.linked_entry_id, now());
     db.prepare(
-      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL, held_since=NULL WHERE id=?'
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
     ).run(timer.running ? now() : null, timer.id);
-    // invariant: a RUNNING matter timer always has a linked entry
+    // invariant: a RUNNING timer always has a linked entry (matterless too)
     let entry = null;
     const freshTimer = getTimer.get(timer.id);
-    if (freshTimer.running && freshTimer.cm_id) {
+    if (freshTimer.running) {
       const synced = syncToEntry(db, freshTimer, 0, todayLocal(clock()), now());
       entry = loadEntry(db, synced.entryId);
     }
@@ -567,9 +571,8 @@ export function timersRouter({ db, clock }) {
     }
     const snapped = Math.max(0, Math.round(target / TENTH_SECONDS) * TENTH_SECONDS);
 
-    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=?, held_since=? WHERE id=?')
-      .run(snapped, timer.running ? now() : null,
-        snapped === 0 ? null : timer.held_since, timer.id);
+    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?')
+      .run(snapped, timer.running ? now() : null, timer.id);
 
     let entry = null;
     const fresh = getTimer.get(timer.id);

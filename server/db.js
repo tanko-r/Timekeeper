@@ -231,6 +231,51 @@ const MIGRATIONS = [
   // exists (consumed by the next entry the timer creates).
   `ALTER TABLE timers ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE timers ADD COLUMN draft_narrative TEXT;`,
+  // Entry-backed quick timers (2026-07-13): a timer files into an entry even
+  // with no matter yet — the entry carries the time (and can't finalize or
+  // export until a matter is assigned), and the timer resets at midnight like
+  // any other. That needs entries.cm_id nullable; SQLite can't drop NOT NULL
+  // in place, so rebuild. CAREFUL: with foreign_keys ON, DROP TABLE entries
+  // fires an implicit DELETE that CASCADEs into entry_tasks — park the task
+  // lines in a constraint-free copy first and restore them after the rename.
+  // held_since is retired: held time now files through the normal path on the
+  // next stop/rollover, so the hint would just be stale.
+  `
+  CREATE TABLE entries_new (
+    id             INTEGER PRIMARY KEY,
+    date           TEXT NOT NULL CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+    cm_id          INTEGER REFERENCES matters(id),
+    narrative      TEXT NOT NULL DEFAULT '',
+    billable       INTEGER NOT NULL DEFAULT 1,
+    status         TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','finalized')),
+    total_override REAL,
+    source         TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','timer')),
+    ack_validation INTEGER NOT NULL DEFAULT 0,
+    ever_finalized INTEGER NOT NULL DEFAULT 0,
+    exported_at    TEXT,
+    finalized_at   TEXT,
+    deleted_at     TEXT,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    narrative_manual INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO entries_new (id, date, cm_id, narrative, billable, status, total_override,
+    source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
+    created_at, updated_at, narrative_manual)
+    SELECT id, date, cm_id, narrative, billable, status, total_override,
+      source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
+      created_at, updated_at, narrative_manual
+    FROM entries;
+  CREATE TABLE entry_tasks_park AS SELECT * FROM entry_tasks;
+  DROP TABLE entries;
+  ALTER TABLE entries_new RENAME TO entries;
+  INSERT INTO entry_tasks (id, entry_id, task_code, duration, fragment, sort_order)
+    SELECT id, entry_id, task_code, duration, fragment, sort_order FROM entry_tasks_park;
+  DROP TABLE entry_tasks_park;
+  CREATE INDEX idx_entries_date ON entries(date);
+  CREATE INDEX idx_entries_cm ON entries(cm_id);
+  UPDATE timers SET held_since = NULL;
+  `,
 ];
 
 const SEED_SETTINGS = {

@@ -306,10 +306,11 @@ test('duplicate timer copies binding, zero clock', () =>
   }));
 
 // Quick timers: no client/matter — just time and an optional caption. The
-// clock runs normally; stops HOLD the time (nothing files, nothing is lost)
-// until a matter is assigned, and midnight carries the clock forward instead
-// of banking it nowhere.
-test('quick timer: created without cm or name, runs, stop holds the clock without filing', () =>
+// timer is entry-backed like any other (2026-07-13): starting creates a
+// MATTERLESS entry, stops file the day total into it, and the entry carries
+// the time forward — it just can't finalize or export until a matter is
+// assigned.
+test('quick timer: start creates a matterless entry; stop files the time into it', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const r = await t.fetchJson('POST', '/api/timers', {});
     assert.equal(r.status, 201);
@@ -317,18 +318,25 @@ test('quick timer: created without cm or name, runs, stop holds the clock withou
     assert.equal(r.body.name, 'Quick timer');
     const timer = r.body;
 
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.ok(started.entry, 'entry exists from the moment the timer starts');
+    assert.equal(started.entry.cm_id, null);
+    assert.equal(started.entry.cm, null, 'enriched entry carries cm: null, not a crash');
+
     clock.advance(3600);
     const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(stop.entry, null);
-    assert.equal(stop.unassigned, true);
+    assert.ok(stop.entry, 'the time lives in the entry now');
+    assert.equal(stop.entry.id, started.entry.id);
+    assert.equal(stop.entry.total, 1.0);
     assert.equal(stop.seconds, 3600);
 
     const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
     assert.equal(row.running, 0);
-    assert.equal(row.elapsed_seconds, 3600, 'time held on the clock');
+    assert.equal(row.linked_entry_id, stop.entry.id);
     const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
-    assert.equal(entries.length, 0, 'nothing filed without a matter');
+    assert.equal(entries.length, 1, 'the matterless entry is a real entry');
+    assert.ok(entries[0].validation.some((v) => v.code === 'no_matter'),
+      'flagged as needing association');
   }));
 
 test('quick timer: caption only (no cm) is honored', () =>
@@ -339,60 +347,63 @@ test('quick timer: caption only (no cm) is honored', () =>
     assert.equal(r.body.cm_id, null);
   }));
 
-test('quick timer: assigning a matter later files the held time on the next stop', () =>
+test('quick timer: assigning a matter ASSOCIATES the existing entry in place (paused)', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
-    clock.advance(3600); // 1.0h held
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    clock.advance(3600); // 1.0h in the matterless entry
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
 
-    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.equal(patched.cm_id, cm.id);
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.ok(r.entry, 'the associated entry rides along in the response');
+    assert.equal(r.entry.id, stop.entry.id, 'SAME entry — associated, not replaced');
+    assert.equal(r.entry.cm_id, cm.id);
+    assert.equal(r.entry.total, 1.0, 'time unchanged by association');
+    assert.equal(r.linked_entry_id, stop.entry.id, 'link survives');
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 1, 'no duplicate entry from the assignment');
+    assert.ok(!entries[0].validation.some((v) => v.code === 'no_matter'));
 
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(1800); // +0.5h
-    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.ok(stop.entry, 'held time files once a matter exists');
-    assert.equal(stop.entry.total, 1.5);
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop2.entry.id, stop.entry.id, 'later stops keep filing the same entry');
+    assert.equal(stop2.entry.total, 1.5);
   }));
 
-test('quick timer: assigning a matter to a PAUSED timer files the held time immediately', () =>
+test('quick timer: assigning a matter while RUNNING associates the live entry', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
-    clock.advance(3600); // 1.0h held
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-
-    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.ok(r.entry, 'held time files on assignment, not on the next stop');
-    assert.equal(r.entry.total, 1.0);
-    assert.equal(r.linked_entry_id, r.entry.id);
-    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
-    assert.equal(entries.length, 1);
-  }));
-
-test('quick timer: assigning a matter while RUNNING creates the entry immediately', () =>
-  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
-    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
     clock.advance(3600);
     const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.ok(r.entry, 'entry exists as soon as the running timer has a matter');
-    assert.equal(r.entry.total, 1.0, 'created at the current snapshot');
-    assert.equal(r.linked_entry_id, r.entry.id);
+    assert.equal(r.entry.id, started.entry.id, 'the start-created entry gets the matter');
+    assert.equal(r.entry.cm_id, cm.id);
+    assert.equal(r.entry.total, 1.0, 'snapshot total at assignment');
     clock.advance(1800);
     const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(stop.entry.id, r.entry.id, 'stop settles the SAME entry');
+    assert.equal(stop.entry.id, started.entry.id, 'stop settles the SAME entry');
     assert.equal(stop.entry.total, 1.5);
   }));
 
-test('quick timer: assignment below the minimum increment holds without filing', () =>
+test('quick timer: association inherits the matter’s billable flag', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const nb = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '100001-000099', short_name: 'Firm admin', billable: 0,
+    })).body;
+    const timer = (await t.fetchJson('POST', '/api/timers', {})).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: nb.id })).body;
+    assert.equal(r.entry.billable, 0, 'matterless default (billable) gives way to the matter');
+  }));
+
+test('quick timer: assigning a matter to a NEVER-STARTED timer files nothing', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
-    // 2 tenths of a minute — under 0.1h even after rounding? 100s rounds UP
-    // to 0.1h, so use a clock edit to zero instead: just don't run it at all.
     const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.equal(r.entry ?? null, null, 'zero clock — nothing to file');
+    assert.equal(r.entry ?? null, null, 'zero clock, no entry — nothing to associate');
     assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 0);
   }));
 
@@ -407,19 +418,41 @@ test('quick timer: un-assigning the matter is allowed and unlinks the entry', ()
     assert.equal(patched.linked_entry_id, null, 'old entry is no longer this timer’s home');
   }));
 
-test('quick timer: midnight carries unassigned time forward instead of dropping it', () =>
+test('quick timer: midnight banks the time in its matterless entry and RESETS the clock', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(2 * 3600);
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
 
     clock.set('2026-07-07T10:00:00-07:00'); // next day
     const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.elapsed_seconds, 7200, 'clock survives the rollover');
-    assert.equal(row.last_reset_date, '2026-07-07', 'rollover bookkeeping still advances');
+    assert.equal(row.elapsed_seconds, 0, 'the entry holds the time now — the clock resets');
+    assert.equal(row.last_reset_date, '2026-07-07');
+    assert.equal(row.linked_entry_id, null, 'unlinked — the next stop files a new day’s entry');
+    assert.equal(row.held_since, null, 'held-time model retired');
     const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
-    assert.equal(entries.length, 0, 'nothing banked to an entry');
+    assert.equal(entries.length, 1, 'yesterday’s time is banked in yesterday’s entry');
+    assert.equal(entries[0].total, 2.0);
+    assert.equal(entries[0].cm_id, null, 'still awaiting association');
+    assert.equal(entries[0].id, stop.entry.id);
+  }));
+
+test('quick timer: RUNNING through midnight banks yesterday and opens a fresh entry today', () =>
+  withServer('2026-07-06T22:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Late call' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.set('2026-07-07T01:00:00-07:00'); // 2h yesterday + 1h today
+    const rows = (await t.fetchJson('GET', '/api/timers')).body;
+    const row = rows.find((x) => x.id === timer.id);
+    assert.equal(row.running, 1, 'keeps running through midnight');
+    assert.equal(row.elapsed_seconds, 3600, 'clock restarts at midnight');
+    const y = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(y.length, 1);
+    assert.equal(y[0].total, 2.0, 'yesterday banked into yesterday’s matterless entry');
+    const today = (await t.fetchJson('GET', '/api/entries?date=2026-07-07')).body;
+    assert.equal(today.length, 1, 'today’s entry exists from the first moment');
+    assert.equal(row.linked_entry_id, today[0].id);
   }));
 
 // Exclusive timers: one running timer at a time. Starting a timer stops-and-
@@ -731,12 +764,10 @@ test('finalizing the linked entry zeroes and unlinks its timer (stopped and runn
     assert.notEqual(stop3.entry.id, stop2.entry.id);
   }));
 
-// Held-over surfacing (2026-07-11 feedback: "these timers were orphaned from
-// yesterday — not sure why"): carrying an unassigned quick timer's clock
-// across midnight is deliberate (nowhere to bank), but the UI must SAY so.
-// held_since records the (first) day the held time came from; assigning a
-// matter or zeroing the clock clears it.
-test('quick timer: midnight carry-over stamps held_since with the day the time came from', () =>
+// Unassociated-entry surfacing (2026-07-13, replaces the held_since banner):
+// a matterless entry from an earlier day is a validation-blocked draft, so it
+// shows up through the ordinary backlog alert — nothing timer-side to flag.
+test('unassociated entries from earlier days surface in the dashboard backlog alert', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
@@ -744,66 +775,48 @@ test('quick timer: midnight carry-over stamps held_since with the day the time c
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
 
     clock.set('2026-07-07T10:00:00-07:00');
-    let row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.held_since, '2026-07-06');
-
-    // a second midnight keeps the ORIGINAL day, not the latest
-    clock.set('2026-07-08T10:00:00-07:00');
-    row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.held_since, '2026-07-06');
-
-    // dashboard surfaces the count so the banner can point at it
     const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
-    assert.equal(dash.alerts.heldTimers.length, 1);
-    assert.equal(dash.alerts.heldTimers[0].id, timer.id);
-    assert.equal(dash.alerts.heldTimers[0].held_since, '2026-07-06');
+    assert.equal(dash.alerts.heldTimers, undefined, 'held-timer alert retired');
+    assert.equal(dash.alerts.backlog.length, 1, 'yesterday’s matterless entry needs attention');
+    assert.equal(dash.alerts.backlog[0].cm_number, null);
+    assert.ok(dash.alerts.backlog[0].codes.includes('no_matter'));
   }));
 
-test('quick timer: a zero-clock timer crossing midnight does NOT get held_since', () =>
-  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
-    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Idle' })).body;
-    clock.set('2026-07-07T10:00:00-07:00');
-    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.held_since, null);
-  }));
-
-test('quick timer: assigning a matter clears held_since (the time files)', () =>
+test('quick timer: "fresh" discards an untouched matterless entry like any other', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(2 * 3600);
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    clock.set('2026-07-07T10:00:00-07:00');
-
-    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.equal(patched.held_since, null);
-    assert.ok(patched.entry, 'held time filed on assignment');
-  }));
-
-test('quick timer: zeroing the clock clears held_since (nothing held anymore)', () =>
-  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
-    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
-    clock.advance(2 * 3600);
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    clock.set('2026-07-07T10:00:00-07:00');
-
-    await t.fetchJson('PUT', `/api/timers/${timer.id}/clock`, { hours: 0 });
-    let row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.held_since, null);
-  }));
-
-test('quick timer: "fresh" also clears held_since', () =>
-  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
-    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
-    clock.advance(2 * 3600);
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    clock.set('2026-07-07T10:00:00-07:00');
 
     await t.fetchJson('POST', `/api/timers/${timer.id}/fresh`);
     const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
-    assert.equal(row.held_since, null);
+    assert.equal(row.elapsed_seconds, 0);
+    assert.equal(row.linked_entry_id, null);
+    // the 2.0h entry had time on it, so it is NOT auto-deleted — the time is kept
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].total, 2.0);
+  }));
+
+test('associating the ENTRY (editor/bulk path) glues the linked matterless timer too', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+
+    await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, { cm_id: cm.id });
+    const row = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(row.cm_id, cm.id, 'timer follows its entry’s association');
+    assert.equal(row.linked_entry_id, stop.entry.id, 'still linked — no relink/double-file risk');
+
+    // and the next stop keeps filing the same entry
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop2.entry.id, stop.entry.id);
+    assert.equal(stop2.entry.total, 1.5);
   }));
 
 // Start-timer-from-entry (2026-07-11 feedback: entry cards get a start
@@ -937,22 +950,22 @@ test('stash: start on a matter timer creates the entry WITH the stashed narrativ
     assert.equal(got.draft_narrative, null, 'stash consumed');
   }));
 
-test('stash: quick-timer flow — stop holds, assign files held time with the stash', () =>
+test('stash: quick-timer flow — text typed before the start seeds the matterless entry', () =>
   withServer('2026-07-13T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', {})).body; // no matter
-    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
       draft_narrative: 'Call with client re scheduling order.',
     });
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    assert.ok(started.entry, 'matterless start creates the entry');
+    assert.equal(started.entry.narrative, 'Call with client re scheduling order.');
+    const got = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === timer.id);
+    assert.equal(got.draft_narrative, null, 'stash consumed by the new entry');
+
     clock.advance(1800);
     const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(stop.unassigned, true);
-    assert.equal(stop.entry, null, 'no matter yet — time held, no entry');
-
-    const assigned = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
-    assert.ok(assigned.entry, 'held time files on assignment');
-    assert.equal(assigned.entry.narrative, 'Call with client re scheduling order.');
-    assert.equal(assigned.draft_narrative, null);
+    assert.equal(stop.entry.id, started.entry.id);
+    assert.equal(stop.entry.narrative, 'Call with client re scheduling order.');
   }));
 
 test('stash: NOT applied to an existing linked entry; stays until a new entry consumes it', () =>
@@ -999,4 +1012,40 @@ test('timer list exposes linked-entry narrative + substantive line count', () =>
     got = (await t.fetchJson('GET', '/api/timers')).body.find((x) => x.id === quick.id);
     assert.equal(got.entry_narrative, null);
     assert.equal(got.entry_substantive_lines, 0, 'unlinked timer counts zero lines');
+  }));
+
+// The other half of the 2026-07-13 model: a matterless entry is a first-class
+// draft, but it can NOT leave the building — finalize blocks on no_matter and
+// exports skip it (with a count so the UI can say so).
+test('unassociated entry: finalize blocks, finalize-day skips, export excludes with a count', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Mystery call' })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, {
+      narrative: 'Call with potential client regarding new engagement.',
+    });
+
+    const fin = await t.fetchJson('POST', `/api/entries/${stop.entry.id}/finalize`, { ack: true });
+    assert.equal(fin.status, 422, 'cannot finalize without a matter');
+    assert.ok(fin.body.blocks.some((b) => b.code === 'no_matter'));
+
+    const day = (await t.fetchJson('POST', '/api/finalize-day', { date: '2026-07-06', ack: true })).body;
+    assert.equal(day.finalized.length, 0);
+    assert.equal(day.blocked.length, 1, 'finalize-day reports it as blocked, not silently skipped');
+
+    // a draft preview export must not crash on (or emit) the matterless entry
+    const prev = (await t.fetchJson('GET', '/api/export/preview?from=2026-07-06&to=2026-07-06&includeDrafts=1')).body;
+    assert.equal(prev.count, 0, 'nothing exportable');
+    assert.equal(prev.unassociated, 1, 'the skipped matterless entry is counted');
+
+    // associate → finalize → export works end to end
+    await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, { cm_id: cm.id });
+    const fin2 = await t.fetchJson('POST', `/api/entries/${stop.entry.id}/finalize`, { ack: true });
+    assert.equal(fin2.status, 200);
+    const out = (await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' })).body;
+    assert.equal(out.count, 1);
+    assert.equal(out.unassociated, 0);
+    assert.ok(out.csv.includes('100001-000012'));
   }));
