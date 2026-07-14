@@ -213,7 +213,7 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
               ${(info?.entries || []).map((e) => html`
                 <div key=${e.id} class="week-entry" title=${e.narrative}
                   onClick=${() => openEditor({ id: e.id })}>
-                  <span class="mono">${fmtHours(e.total)}</span> ${e.cm.short_name}
+                  <span class="mono">${fmtHours(e.total)}</span> ${e.cm ? e.cm.short_name : 'No matter yet'}
                 </div>`)}
             </div>`;
         })}

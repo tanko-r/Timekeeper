@@ -39,7 +39,7 @@ export function CloseOut({ onClose, openEditor }) {
 
   // Ghost-text suggestions for the current card's matter (Task 4's phrasebook,
   // same component the entry editor uses); expand wired exactly like it too.
-  const phrases = useMatterSuggestions(current && !current.narrative_auto ? current.cm.id : null);
+  const phrases = useMatterSuggestions(current && !current.narrative_auto ? (current.cm?.id ?? null) : null);
   const shortcuts = useShortcuts();
   const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
 
@@ -260,7 +260,7 @@ export function CloseOut({ onClose, openEditor }) {
   } else if (phase === 'sweep') {
     // the dashboard's cm object carries no client_name (see enrich()); the
     // short name alone matches how EntryList labels entries today
-    const label = current.cm.short_name;
+    const label = current.cm ? current.cm.short_name : 'No matter yet';
     body = html`
       <div class="closeout-card">
         <div class="closeout-dots">
@@ -299,7 +299,7 @@ export function CloseOut({ onClose, openEditor }) {
           <div class="closeout-warnlist">
             ${warnInfo.warnOnly.map((b) => html`
               <div key=${b.id} class="closeout-warnitem">
-                <strong>${cardById[b.id]?.cm.short_name || `entry #${b.id}`}</strong>
+                <strong>${cardById[b.id]?.cm?.short_name || `entry #${b.id}`}</strong>
                 <${ValidationList} findings=${b.warns} compact />
               </div>`)}
           </div>
@@ -310,7 +310,7 @@ export function CloseOut({ onClose, openEditor }) {
               day, so accepting now would finalize them unseen).
               <div class="closeout-warnlist" style=${{ marginTop: '6px' }}>
                 ${warnInfo.newDrafts.map((e) => html`
-                  <span key=${e.id} class="small">${e.cm.short_name} · ${fmtHours(e.total)}h</span>`)}
+                  <span key=${e.id} class="small">${e.cm ? e.cm.short_name : 'No matter yet'} · ${fmtHours(e.total)}h</span>`)}
               </div>
               <div class="row-end">
                 <button class="btn btn-primary" onClick=${restartSweep}>Restart the sweep</button>
@@ -326,7 +326,7 @@ export function CloseOut({ onClose, openEditor }) {
           <div class="closeout-warnlist">
             ${warnInfo.hard.map((b) => html`
               <div key=${b.id} class="closeout-warnitem">
-                <span>${cardById[b.id]?.cm.short_name || `entry #${b.id}`}</span>
+                <span>${cardById[b.id]?.cm?.short_name || `entry #${b.id}`}</span>
                 <${ValidationList} findings=${b.blocks} compact />
                 <button class="btn btn-sm" onClick=${() => editBlocked(b.id)}>Edit</button>
               </div>`)}

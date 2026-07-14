@@ -186,13 +186,17 @@ export function EntryEditor({ spec, settings, onClose }) {
     const l = localRef.current;
     const e = entryRef.current;
     if (!l || l.status === 'finalized') return e;
-    if (!l.cm || !l.date) return e;
+    if (!l.date) return e;
+    // A brand-new entry still needs a matter before the first save; an
+    // EXISTING matterless one (quick-timer entry) saves fine — cm_id is
+    // simply omitted until the picker assigns one (2026-07-13).
+    if (!l.cm && !e) return e;
     const substantiveTasks = l.tasks
       .filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0)
       .map((t) => ({ task_code: t.task_code, duration: Number(t.duration) || 0, fragment: t.fragment }));
     const body = {
       date: l.date,
-      cm_id: l.cm.id,
+      ...(l.cm ? { cm_id: l.cm.id } : {}),
       billable: l.billable ? 1 : 0,
       narrative: l.narrative,
       total_override: l.total > 0 ? tenth(l.total) : null,

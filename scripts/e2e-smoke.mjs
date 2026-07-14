@@ -373,7 +373,7 @@ await step('exclusive timers: starting a second timer stops & files the first (c
   await waitFor('.timer-card');
 });
 
-await step('quick timer: start → stop → assign modal → narrative editor', async () => {
+await step('quick timer: stop files a matterless entry → assign from the entry card', async () => {
   const entriesBefore = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
   await clickText('button', 'Quick');
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
@@ -386,37 +386,52 @@ await step('quick timer: start → stop → assign modal → narrative editor', 
   const favRunning = await page.evaluate(() =>
     document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'));
   if (!favRunning) throw new Error('favicon did not switch to the running variant');
-  await sleep(2200); // past the misclick grace so the stop is a real hold
+  await sleep(2200); // past the misclick grace so the stop files for real
   await page.evaluate(() => {
     const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('Quick timer'));
     card.querySelector('button[title="Stop & file time"]').click();
   });
-  // stop of a no-matter timer opens the TIMER modal (assign the matter now)
-  await waitFor('.modal .cmpicker input');
-  if (await page.$('.stop-chips')) throw new Error('unassigned stop must not offer chips (nothing filed)');
-  // stopped → title and favicon revert (modal being open is irrelevant)
+  // 2026-07-13 model: the stop FILES a matterless entry — chips pop like any
+  // other stop, with the "no matter yet" label instead of a matter name
+  await waitFor('.stop-chips');
+  const chipsHead = await page.$eval('.stop-chips-head', (el) => el.textContent);
+  if (!chipsHead.includes('no matter yet')) throw new Error(`chips head missing no-matter label: "${chipsHead}"`);
+  await page.click('.stop-chips button[title^="Dismiss"]');
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+  // stopped → title and favicon revert
   await page.waitForFunction(() => document.title === 'Timekeeper', { timeout: 10000 });
-  const favIdle = await page.evaluate(() =>
-    !document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'));
-  if (!favIdle) throw new Error('favicon did not revert after stop');
+  await page.waitForFunction(() =>
+    !document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'),
+  { timeout: 10000 }).catch(() => { throw new Error('favicon did not revert after stop'); });
 
-  // assigning a matter files the held time and flows into the entry editor
-  await page.click('.modal .cmpicker input');
+  // the entry is real but blocked — its card carries the Assign matter button
+  await page.waitForFunction(() => [...document.querySelectorAll('.entry-card')]
+    .some((c) => c.textContent.includes('No matter yet')), { timeout: 5000 });
+  await clickText('.entry-card button', 'Assign matter');
+  await waitFor('.modal-wide .cmpicker input');
+  await page.click('.modal-wide .cmpicker input');
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Acme');
-  await clickText('.modal button', 'Save');
-  await waitFor('.modal-wide .narrative-preview textarea');
+  await sleep(600); // autosave associates the entry in place
   await clickText('.modal-wide button', 'Save & close');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 
-  // cleanup: the scratch entry the assignment filed + the quick timer itself
+  // association reached the entry AND the timer followed it (server glue)
   const entriesAfter = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
-  for (const e of entriesAfter.filter((x) => !entriesBefore.some((b) => b.id === x.id))) {
+  const scratch = entriesAfter.filter((x) => !entriesBefore.some((b) => b.id === x.id));
+  if (!scratch.some((e) => e.cm && e.cm.short_name.includes('Acme'))) {
+    throw new Error('assignment did not associate the matterless entry');
+  }
+  const timersNow = await (await fetch(`${base}/api/timers`)).json();
+  const qt = timersNow.find((x) => x.name === 'Quick timer');
+  if (!qt || !qt.cm_id) throw new Error('timer did not follow its entry’s association');
+
+  // cleanup: the scratch entries + the quick timer itself
+  for (const e of scratch) {
     const del = await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
     if (!del.ok) throw new Error(`scratch entry cleanup failed: ${del.status}`);
   }
-  const timers = await (await fetch(`${base}/api/timers`)).json();
-  for (const t of timers.filter((x) => x.name === 'Quick timer')) {
+  for (const t of timersNow.filter((x) => x.name === 'Quick timer')) {
     const del = await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' });
     if (!del.ok) throw new Error(`quick timer cleanup failed: ${del.status}`);
   }

@@ -104,7 +104,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
   async function del(entry) {
     await api.del(`/api/entries/${entry.id}`);
     onChanged();
-    emitToast(`Deleted ${fmtHours(entry.total, increment)}h entry for ${entry.cm.short_name}`, {
+    emitToast(`Deleted ${fmtHours(entry.total, increment)}h ${entry.cm ? `entry for ${entry.cm.short_name}` : 'unassociated entry'}`, {
       actionLabel: 'Undo',
       action: async () => { await api.post(`/api/entries/${entry.id}/restore`); onChanged(); },
     });
@@ -138,8 +138,12 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
           <div class="body">
             <div class="entry-meta">
               ${showDate ? html`<strong>${e.date}</strong>` : null}
-              <strong>${e.cm.short_name}</strong>
-              <span class="muted mono small">${e.cm.cm_number}</span>
+              ${e.cm ? html`
+                <strong>${e.cm.short_name}</strong>
+                <span class="muted mono small">${e.cm.cm_number}</span>` : html`
+                <strong class="muted">No matter yet</strong>
+                <button class="btn btn-sm" title="Assign a client/matter — required before this entry can finalize or export"
+                  onClick=${() => openEditor({ id: e.id })}>Assign matter</button>`}
               <${BillableBadge} billable=${e.billable} />
               <${StatusChip} entry=${e} />
               ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>

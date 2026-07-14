@@ -164,7 +164,6 @@ input.input-narrow { width: 90px; }
   animation: tk-running-pulse 2s ease-in-out infinite;
 }
 @keyframes tk-running-pulse { 50% { opacity: 0.55; } }
-.entry-card.running-ghost { border-style: dashed; opacity: 0.9; }
 .star { cursor: pointer; color: var(--text-muted); background: none; border: 0; font-size: 16px; padding: 2px; }
 .star.on { color: var(--nonbillable); }
 
@@ -276,7 +275,6 @@ table.tk tr.client-row td {
 .timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
 .idle-nudge { color: var(--status-serious); }
 /* unassigned quick timer holding time carried over from an earlier day */
-.held-over { color: var(--status-warning); }
 /* pinned to the always-on-top float window */
 .timer-flag.pinned { color: var(--accent); }
 /* entry card start/stop-timer button — accent while its timer runs */

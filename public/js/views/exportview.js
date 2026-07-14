@@ -79,6 +79,11 @@ export function ExportView({ refreshKey, bumpRefresh }) {
         Only finalized entries export by default. The .TIM file imports directly into
         DTE Axiom/TimeSaver (constants in Settings). Exporting stamps each entry — re-export any time.
       </p>
+      ${data && data.unassociated > 0 ? html`
+        <p class="small" style=${{ marginBottom: 0, color: 'var(--danger)' }}>
+          ${data.unassociated} ${data.unassociated === 1 ? 'entry in this range has' : 'entries in this range have'} no
+          client/matter and can’t export — assign ${data.unassociated === 1 ? 'one' : 'them'} from the entry list first.
+        </p>` : null}
     </div>
 
     ${error ? html`<${ErrorBox} error=${error} />` : loading && !data ? html`<${Spinner} />` : html`

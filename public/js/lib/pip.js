@@ -24,9 +24,9 @@ export function pipSupported() {
   return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
 }
 
-// Which timers earn a row: running, any clock time today (includes held time
-// carried from earlier days), or pinned (timers.pinned — the whole point of
-// pinning is surviving the midnight reset). Running first; otherwise the
+// Which timers earn a row: running, any clock time today, or pinned
+// (timers.pinned — the whole point of pinning is surviving the midnight
+// reset). Running first; otherwise the
 // server's dashboard order is preserved — never time-sorted, rows must not
 // jump while the user watches. Pure — unit-tested in test/pip.test.js.
 export function buildPipRows(timers) {
@@ -326,9 +326,7 @@ export async function toggleTimerPip() {
     cap.className = 'cap';
     cap.textContent = t.cm_id
       ? `${t.cm_short_name} · ${t.cm_number}`
-      : (t.held_since
-        ? `no matter yet — holding time since ${t.held_since}`
-        : 'no matter yet — narrative is stashed until one is assigned');
+      : 'no matter yet — time files to an entry that needs one before it can finalize';
     detail.appendChild(cap);
 
     if (narrativeMode(t) === 'readonly') {
@@ -362,7 +360,7 @@ export async function toggleTimerPip() {
     time.append('Stopped at ', clock);
     time.append(t.cm_id
       ? ` · ${t.cm_short_name} · ${t.cm_number}`
-      : ' · no matter yet — narrative is kept until one is assigned');
+      : ' · no matter yet — assign one in the app to finalize');
 
     const done = doc.createElement('button');
     done.className = 'done';

@@ -137,8 +137,8 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
                 </td>
                 <td class="mono small" onClick=${() => openEditor({ id: e.id })}>${e.date}</td>
                 <td onClick=${() => openEditor({ id: e.id })}>
-                  <div>${e.cm.short_name}</div>
-                  <div class="muted small mono">${e.cm.cm_number}</div>
+                  <div>${e.cm ? e.cm.short_name : html`<em class="muted">no matter yet</em>`}</div>
+                  <div class="muted small mono">${e.cm ? e.cm.cm_number : ''}</div>
                 </td>
                 <td onClick=${() => openEditor({ id: e.id })}>
                   <div style=${{ maxWidth: '420px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}

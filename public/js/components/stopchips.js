@@ -22,7 +22,8 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   const offerChips = !entry.narrative_auto && String(entry.narrative || '').trim() === '';
 
   useEffect(() => {
-    if (!offerChips) { setChips([]); return undefined; }
+    // matterless stop: no phrasebook to draw from — the entry still filed
+    if (!offerChips || !timer.cm_id) { setChips([]); return undefined; }
     let alive = true;
     api.get(`/api/matters/${timer.cm_id}/suggestions`)
       .then((r) => { if (alive) setChips(dedupe(clean([timer.suggested_narrative, ...r.phrases.map((p) => p.text)]).map(formatSuggestion))); })
@@ -80,7 +81,7 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
       <div class="stop-chips-head">
         <${Icon} name="check" size=${14} />
         <strong>${fmtHours(result.hours)}h filed</strong>
-        <span class="muted">— ${entry.cm.short_name}</span>
+        <span class="muted">— ${entry.cm ? entry.cm.short_name : 'no matter yet'}</span>
         <span class="spacer" style=${{ flex: 1 }}></span>
         <button class="btn btn-ghost btn-sm" title="Dismiss (Esc) — the draft is saved either way"
           onClick=${() => onClose(false)}><${Icon} name="x" size=${14} /></button>

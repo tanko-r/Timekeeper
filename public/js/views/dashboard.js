@@ -39,16 +39,15 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   if (loading && !data) return html`<${Spinner} />`;
   const d = data;
 
-  // entries whose timer is running right now get the pulsing "running" chip;
-  // running quick timers with no matter yet render as ghost rows below
+  // entries whose timer is running right now get the pulsing "running" chip.
+  // (Running quick timers used to render as ghost rows here — their entry is
+  // a REAL matterless entry in the list now, 2026-07-13.)
   const runningEntryIds = new Set((d.timers || [])
     .filter((t) => t.running && t.linked_entry_id).map((t) => t.linked_entry_id));
-  const unassignedRunning = (d.timers || []).filter((t) => t.running && !t.cm_id);
 
   const alerts = d.alerts;
-  const heldTimers = alerts.heldTimers || [];
   const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0
-    || alerts.unexportedFinalized > 0 || heldTimers.length > 0;
+    || alerts.unexportedFinalized > 0;
 
   // Two-step finalize: warnings must be seen before they're acknowledged.
   async function finalizeToday(ack = false) {
@@ -108,7 +107,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
           ${alerts.invalidDrafts.map((a) => html`
             <button key=${a.id} class="alert-pill" title=${a.codes.join(', ')}
               onClick=${() => openEditor({ id: a.id })}>
-              ${a.short_name} — ${a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
+              ${a.short_name ?? 'No matter yet'} — ${a.codes.includes('no_matter') ? 'assign a matter'
+                : a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
             </button>`)}
           ${alerts.backlogCount > 0 ? html`
             <button class="alert-pill" onClick=${() => nav('#/search')}>
@@ -118,12 +118,6 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
             <button class="alert-pill" onClick=${() => nav('#/export')}>
               ${alerts.unexportedFinalized} finalized ${alerts.unexportedFinalized === 1 ? 'entry' : 'entries'} not yet exported
             </button>` : null}
-          ${heldTimers.map((t) => html`
-            <button key=${'held-' + t.id} class="alert-pill"
-              title="Unassigned quick-timer time carries across midnight (nowhere to file it). Assign a matter to file, or zero the clock to discard."
-              onClick=${() => window.dispatchEvent(new CustomEvent('tk:edit-timer', { detail: { id: t.id } }))}>
-              “${t.name}” holds ${fmtHours(Math.round(t.elapsed_seconds / 360) / 10)}h from ${t.held_since} — assign a matter
-            </button>`)}
         </div>
       </div>` : null}
 
@@ -141,23 +135,6 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         <h2>Today’s entries</h2>
         <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
       </div>
-      ${unassignedRunning.map((t) => html`
-        <div key=${'ghost-' + t.id} class="entry-card running-ghost">
-          <div class="body">
-            <div class="entry-meta">
-              <span class="chip chip-running"><${Icon} name="timer" size=${12} /> running</span>
-              <strong>${t.name}</strong>
-            </div>
-            <p class="narrative"><em class="muted">No matter yet — this time becomes an entry once one is assigned.</em></p>
-          </div>
-          <div style=${{ textAlign: 'right' }}>
-            <div class="hours muted">${fmtHours(Math.ceil((t.elapsed_seconds / 3600) * 10) / 10)}</div>
-            <button class="btn btn-sm"
-              onClick=${() => window.dispatchEvent(new CustomEvent('tk:edit-timer', { detail: { id: t.id } }))}>
-              Assign matter
-            </button>
-          </div>
-        </div>`)}
       <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
         settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} />
     </div>

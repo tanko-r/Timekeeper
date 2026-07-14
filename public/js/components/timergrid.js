@@ -171,8 +171,6 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       if (s.entry) {
         setStopPopup({ timer: s.timer, result: s });
         onEntryChanged();
-      } else if (s.unassigned) {
-        emitToast(`⏸ ${s.timer.name} paused — assign a matter to file its time.`);
       } else if (!s.discarded) {
         emitToast(`⏸ ${s.timer.name} paused — nothing to file yet (${fmtClock(s.seconds)}).`);
       }
@@ -205,15 +203,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     const result = await api.post(`/api/timers/${timer.id}/stop`);
     await reload();
     if (result.entry) {
+      // matterless timers file a real (unassociated) entry too now — the
+      // stop popup, entry list, and alerts carry the assign-a-matter nudge
       setStopPopup({ timer, result });
       onEntryChanged();
     } else if (result.discarded) {
       emitToast('Misclick (under 2s) — nothing recorded.');
-    } else if (result.unassigned) {
-      // Stop of a no-matter timer: open the timer modal so the matter gets
-      // assigned right now — saving files the held time and the entry
-      // editor follows for the narrative (see the editing onDone below).
-      setEditing(result.timer);
     } else {
       emitToast(`Nothing to file yet — clock keeps counting (${fmtClock(result.seconds)}).`);
     }
@@ -764,7 +759,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
           if (wasNew && saved && saved.id) reveal(saved.id);
           if (saved && saved.entry) {
             onEntryChanged();
-            // paused assign filed its settled held time — flow straight into
+            // paused assign associated/settled its entry — flow straight into
             // the narrative editor; a RUNNING assign just linked the entry
             // (total settles at stop), so let it ride
             if (!saved.running) openEditor({ id: saved.entry.id });
@@ -825,7 +820,7 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
   // (and task code) live in the tooltip; unassigned = hatched, not labeled
   const cardTitle = timer.cm_id
     ? `${timer.name} — ${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''} — ${fmtClock(secs)} elapsed`
-    : `${timer.name} — no matter yet (stops hold the time; Edit timer to assign one) — ${fmtClock(secs)} elapsed`;
+    : `${timer.name} — no matter yet (time files to an unassociated entry; Edit timer to assign one) — ${fmtClock(secs)} elapsed`;
 
   return html`
     <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '') + (timer.cm_id ? '' : ' unassigned')}
@@ -846,10 +841,6 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
         <button class="timer-name" tabIndex=${-1} title=${`${timer.name} — click to rename`}
           onClick=${() => { setNameText(timer.name); setEditingName(true); }}>${timer.name}</button>`}
       ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
-      ${timer.held_since && !timer.cm_id ? html`
-        <span class="timer-flag held-over"
-          title=${`Holding ${fmtClock(secs)} carried over since ${timer.held_since} — quick-timer time survives midnight until a matter is assigned. Assign one to file it (dated the day of the next stop), or zero the clock to discard.`}>
-          <${Icon} name="history" size=${12} /></span>` : null}
       ${timer.pinned ? html`
         <span class="timer-flag pinned"
           title="Pinned to the always-on-top float window — it stays there across days">
