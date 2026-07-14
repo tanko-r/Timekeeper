@@ -13,11 +13,13 @@ export function msUntilNextSecond(nowMs, anchorMs, epsilonMs = 25) {
 
 // Self-rescheduling aligned ticker. Calls onTick just after every boundary;
 // returns a cancel function. Re-create whenever the anchor changes.
-export function startAlignedTick(anchorMs, onTick) {
+// `host` supplies setTimeout/clearTimeout — the PiP float passes its own
+// window, whose timers stay unthrottled while the opener tab is hidden.
+export function startAlignedTick(anchorMs, onTick, host = globalThis) {
   let handle;
   const schedule = () => {
-    handle = setTimeout(() => { onTick(); schedule(); }, msUntilNextSecond(Date.now(), anchorMs));
+    handle = host.setTimeout(() => { onTick(); schedule(); }, msUntilNextSecond(Date.now(), anchorMs));
   };
   schedule();
-  return () => clearTimeout(handle);
+  return () => host.clearTimeout(handle);
 }

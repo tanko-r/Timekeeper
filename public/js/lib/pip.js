@@ -19,6 +19,9 @@
 // the browser-absolute '/js/api.js' specifier, and the pure helpers below
 // (buildPipRows, fmtClock, …) are unit-tested (test/pip.test.js) — same reason
 // lib/titlebar.js and lib/narrativesync.js keep their imports at zero.
+// tick.js is zero-dep and sits beside this file, so a RELATIVE specifier
+// resolves under both the browser and node:test.
+import { startAlignedTick } from './tick.js';
 
 export function pipSupported() {
   return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
@@ -325,8 +328,18 @@ export async function toggleTimerPip() {
 
   const showErr = (e) => { errEl.textContent = e.message; errEl.hidden = false; };
 
+  // Each poll re-anchors the second boundary (secsOf counts from fetchedAt),
+  // so the aligned ticker is rebuilt per poll — same no-stutter scheme as the
+  // dashboard grid (lib/tick.js), but on the PiP window's own timers: the
+  // opener tab's get throttled once it's hidden, which is exactly when the
+  // float is in use.
+  let stopTick = () => {};
   const poll = () => api.get('/api/timers')
-    .then((t) => { timers = t; fetchedAt = Date.now(); errEl.hidden = true; render(); })
+    .then((t) => {
+      timers = t; fetchedAt = Date.now(); errEl.hidden = true; render();
+      stopTick();
+      stopTick = startAlignedTick(fetchedAt, tick, pipWin);
+    })
     .catch((e) => showErr(new Error(`Can’t reach server — ${e.message}`)));
 
   // Save the draft for timer id. Looks the timer up fresh: by save time a
@@ -675,10 +688,9 @@ export async function toggleTimerPip() {
 
   await poll();
   const p = pipWin.setInterval(poll, 5000);
-  const k = pipWin.setInterval(tick, 1000);
   pipWin.addEventListener('pagehide', () => {
     pipWin.clearInterval(p);
-    pipWin.clearInterval(k);
+    stopTick();
     themeObs.disconnect();
     pipWin = null;
   });
