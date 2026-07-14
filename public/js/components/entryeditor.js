@@ -415,6 +415,8 @@ export function EntryEditor({ spec, settings, onClose }) {
       await streamNdjson('/api/ai/narrate', {
         mode, brief: seed, narrative: seed,
         cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
+        // grounding (2026-07-14): the prose must scale to the recorded time
+        totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
       }, (m) => {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.error) throw new Error(m.message || m.error);

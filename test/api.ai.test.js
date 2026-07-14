@@ -331,3 +331,36 @@ test('ai narrate/expand carry matter people + phrases so informal names can reso
     assert.doesNotMatch(stub.state.lastChat.messages[1].content, /J\. Larson/);
   } finally { await t.close(); await stub.close(); }
 });
+
+// 2026-07-14 feedback: a 0.1h entry was narrated like a multi-hour work
+// block. When the caller knows the recorded time, every AI narrative call
+// carries a grounding rule so the prose scales to the hours.
+test('ai narrate/expand ground the prompt in the recorded time', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+
+    const r = await t.fetchJson('POST', '/api/ai/narrate', {
+      mode: 'draft', brief: 'quick call re lease', totalHours: 0.1,
+    });
+    assert.equal(r.status, 200);
+    let sys = stub.state.lastChat.messages[0].content;
+    assert.match(sys, /0\.1 hours \(6 minutes\)/, 'grounding rule carries the exact time');
+    assert.match(sys, /plausibly/i, 'grounding rule instructs scaling');
+
+    // rewrite modes ground too
+    await t.fetchJson('POST', '/api/ai/narrate', {
+      mode: 'shorter', narrative: 'Reviewed and revised the lease agreement.', totalHours: 0.2,
+    });
+    assert.match(stub.state.lastChat.messages[0].content, /0\.2 hours \(12 minutes\)/);
+
+    // no time known → no invented grounding
+    await t.fetchJson('POST', '/api/ai/narrate', { mode: 'draft', brief: 'misc work' });
+    assert.doesNotMatch(stub.state.lastChat.messages[0].content, /recorded time/i);
+
+    // /ai/expand gets the same rule in its system prompt
+    await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work', totalHours: 1.5 });
+    assert.match(stub.state.lastChat.messages[0].content, /1\.5 hours \(90 minutes\)/);
+  } finally { await t.close(); await stub.close(); }
+});

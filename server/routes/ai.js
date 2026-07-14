@@ -60,12 +60,22 @@ export function matterAiContext(db, cmId, today) {
 
 const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
 
+// Ground the prose in the entry's recorded hours (2026-07-14 feedback: a
+// 0.1h entry must not read like a multi-hour work block). Returns '' when
+// the caller doesn't know the time, so nothing is ever invented.
+export function timeGroundingRule(totalHours) {
+  const h = Number(totalHours);
+  if (!Number.isFinite(h) || h <= 0) return '';
+  const mins = Math.round(h * 60);
+  return `\n\nThe recorded time for this entry is ${h} hours (${mins} minutes). The narrative must describe only what could plausibly be done in that time: under half an hour is a single brief action in one short sentence; only longer entries justify multiple actions or extended detail.`;
+}
+
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
-export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context }) {
+export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${context ? NAME_RESOLUTION_RULE : ''}`;
+  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
   let user;
   if (mode === 'shorter') {
     user = [context, `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`].filter(Boolean).join('\n\n');
@@ -156,7 +166,7 @@ export function aiRouter({ db }) {
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
-            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
             {
               role: 'user',
               content: [
@@ -225,6 +235,7 @@ export function aiRouter({ db }) {
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
     const messages = buildNarrateMessages({
       instructions: cfg.systemPrompt, brief, narrative, mode,
+      totalHours: b.totalHours,
       context: [b.context ? String(b.context).slice(0, 2000) : null, matterCtx]
         .filter(Boolean).join('\n\n') || null,
     });
