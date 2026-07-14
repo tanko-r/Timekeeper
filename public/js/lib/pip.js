@@ -79,6 +79,13 @@ export function fmtClock(totalSeconds) {
 // preference, and the app's explicit Settings theme wins through the
 // data-theme attribute mirrored from the main document in toggleTimerPip.
 const PIP_CSS = `
+  @font-face {
+    font-family: 'InterVariable';
+    src: url('/vendor/inter/InterVariable.woff2') format('woff2');
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+  }
   :root {
     --surface-1: #fcfcfb; --surface-2: #efefec; --border: #dddcd6;
     --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8b8a84;
@@ -99,7 +106,7 @@ const PIP_CSS = `
   * { margin: 0; box-sizing: border-box; }
   [hidden] { display: none !important; }
   body {
-    font: 12px/1.35 system-ui, sans-serif;
+    font: 12px/1.35 'InterVariable', system-ui, sans-serif;
     background: var(--surface-1); color: var(--text-primary);
     height: 100vh; display: flex; flex-direction: column;
     border-left: 4px solid var(--border); user-select: none;
@@ -135,7 +142,7 @@ const PIP_CSS = `
   .detail { padding: 0 8px 8px 23px; }
   .cap { color: var(--text-muted); font-size: 11px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   textarea {
-    width: 100%; font: 12px/1.35 system-ui, sans-serif; color: var(--text-primary);
+    width: 100%; font: 12px/1.35 'InterVariable', system-ui, sans-serif; color: var(--text-primary);
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
     padding: 4px 6px; resize: none;
   }
@@ -150,7 +157,7 @@ const PIP_CSS = `
   .foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid var(--border); }
   .total { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size: 11px; }
   .quick {
-    font: 700 14px/1 system-ui, sans-serif; color: var(--text-primary);
+    font: 700 14px/1 'InterVariable', system-ui, sans-serif; color: var(--text-primary);
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
     width: 24px; height: 22px; cursor: pointer;
   }
@@ -165,7 +172,7 @@ const PIP_CSS = `
   .closeout textarea { flex: 1; min-height: 48px; }
   .co-foot { display: flex; align-items: center; justify-content: space-between; }
   .done {
-    font: 600 11px system-ui, sans-serif; color: #fff;
+    font: 600 11px 'InterVariable', system-ui, sans-serif; color: #fff;
     background: var(--accent); border: 1px solid var(--accent); border-radius: 5px;
     padding: 3px 14px; cursor: pointer;
   }
