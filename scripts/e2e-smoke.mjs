@@ -1112,6 +1112,21 @@ await step('add-todo button: sidebar → note box → TODO entry filed (no scree
   if (!line.includes('no screenshot')) throw new Error(`add-todo entry should record "no screenshot": ${line}`);
 });
 
+// The float's "Open entry" button (2026-07-15 feedback) rides this event —
+// pip.js dispatches it on the main window, which owns the editor modal.
+// Document PiP itself can't open in headless Chromium, so exercise the
+// main-window half of the contract directly.
+await step('tk:open-entry event opens the entry editor (float → main app)', async () => {
+  const entries = await (await fetch(`${base}/api/entries?from=2020-01-01&to=2099-12-31`)).json();
+  if (!entries.length) throw new Error('no entries to open');
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await page.evaluate((id) =>
+    window.dispatchEvent(new CustomEvent('tk:open-entry', { detail: { id } })), entries[0].id);
+  await waitFor('.modal-wide');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 4000 });
+});
+
 // Regression (2026-07-15 feedback): the day view's "Finalize day" button was
 // wired as onClick=${finalizeDay}, so the click event landed in the ack
 // parameter and JSON.stringify(body) died on the circular DOM structure

@@ -168,6 +168,15 @@ function App() {
     return () => window.removeEventListener('tk:entries-changed', bumpRefresh);
   }, [bumpRefresh]);
 
+  // The float's "Open entry" button (2026-07-15 feedback): pip.js dispatches
+  // this on the main window — the editor modal is app-level state, so it has
+  // to open from here.
+  useEffect(() => {
+    const onOpenEntry = (e) => setEditor({ id: e.detail.id });
+    window.addEventListener('tk:open-entry', onOpenEntry);
+    return () => window.removeEventListener('tk:open-entry', onOpenEntry);
+  }, []);
+
   // Running-timer presence in the OS chrome: the tab title (which is also the
   // installed PWA's taskbar hover preview) carries the live clock + timer
   // name, and the favicon gains a red recording dot. App-level (not

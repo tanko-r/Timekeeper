@@ -188,6 +188,15 @@ const PIP_CSS = `
   textarea:focus { outline: none; border-color: var(--accent); }
   .ro { color: var(--text-secondary); }
   .hint { color: var(--text-muted); font-size: 10px; margin-top: 2px; }
+  .detail-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; }
+  .openapp {
+    display: inline-flex; align-items: center; gap: 4px; flex: none;
+    font: 600 11px 'InterVariable', system-ui, sans-serif; color: var(--text-secondary);
+    background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
+    padding: 3px 8px; cursor: pointer;
+  }
+  .openapp:hover { border-color: var(--text-muted); color: var(--text-primary); }
+  .openapp svg { width: 11px; height: 11px; }
   .saved { color: var(--good); font-size: 11px; opacity: 0; transition: opacity 0.2s; }
   .saved.show { opacity: 1; }
   .rowerr { color: var(--danger); font-size: 11px; margin-top: 3px; }
@@ -247,6 +256,12 @@ const PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
   + '<path d="M12 17v5" /><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5'
   + ' 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0'
   + ' 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" /></svg>';
+
+// lucide "edit" (same path as icons.js) for the open-in-app button
+const EDIT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+  + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+  + '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321'
+  + ' 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" /><path d="m15 5 4 4" /></svg>';
 
 // lucide "play" (same path as icons.js) and "square", filled solid so they
 // read as the classic green-go / red-stop transport glyphs at 11px.
@@ -449,6 +464,25 @@ export async function toggleTimerPip() {
     return { ta, saved, rowErr };
   }
 
+  // "Open entry" jumps to the full editor in the main app window (2026-07-15
+  // feedback): the float shares the opener tab's JS context, so this is just
+  // an event on the MAIN window plus a focus() to bring it forward. Any
+  // pending narrative draft is flushed first — the editor loads the entry
+  // fresh and must not read a stale narrative.
+  const buildOpenBtn = (t) => {
+    const b = doc.createElement('button');
+    b.className = 'openapp';
+    b.innerHTML = EDIT_SVG;
+    b.append(' Open entry');
+    b.title = 'Open this entry in the main app window';
+    b.addEventListener('click', async () => {
+      await saveNarrative(t.id);
+      window.dispatchEvent(new CustomEvent('tk:open-entry', { detail: { id: t.linked_entry_id } }));
+      window.focus();
+    });
+    return b;
+  };
+
   function buildDetail(t) {
     const detail = doc.createElement('div');
     detail.className = 'detail';
@@ -466,12 +500,24 @@ export async function toggleTimerPip() {
       const hint = doc.createElement('div');
       hint.className = 'hint';
       hint.textContent = 'split entry — edit in app';
-      detail.append(ro, hint);
+      const foot = doc.createElement('div');
+      foot.className = 'detail-foot';
+      foot.append(hint, buildOpenBtn(t));
+      detail.append(ro, foot);
       return detail;
     }
 
     const f = buildNarrativeField(t, () => { expandedId = null; });
-    detail.append(f.ta, f.saved, f.rowErr);
+    detail.append(f.ta);
+    if (t.linked_entry_id) {
+      const foot = doc.createElement('div');
+      foot.className = 'detail-foot';
+      foot.append(f.saved, buildOpenBtn(t));
+      detail.append(foot);
+    } else {
+      detail.append(f.saved);
+    }
+    detail.append(f.rowErr);
     return detail;
   }
 
@@ -500,6 +546,11 @@ export async function toggleTimerPip() {
     const foot = doc.createElement('div');
     foot.className = 'co-foot';
 
+    const btns = doc.createElement('span');
+    btns.className = 'foot-btns';
+    if (t.linked_entry_id) btns.append(buildOpenBtn(t));
+    btns.append(done);
+
     const kids = [title, time];
     if (narrativeMode(t) === 'readonly') {
       const ro = doc.createElement('div');
@@ -509,12 +560,12 @@ export async function toggleTimerPip() {
       hint.className = 'hint';
       hint.textContent = 'split entry — edit in app';
       kids.push(ro, hint);
-      foot.append(doc.createElement('span'), done);
+      foot.append(doc.createElement('span'), btns);
     } else {
       const f = buildNarrativeField(t, () => { closeoutId = null; });
       f.ta.placeholder = 'What did you do? Saved automatically.';
       kids.push(f.ta, f.rowErr);
-      foot.append(f.saved, done);
+      foot.append(f.saved, btns);
     }
     kids.push(foot);
     closeoutEl.replaceChildren(...kids);
