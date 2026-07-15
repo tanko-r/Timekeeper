@@ -24,10 +24,10 @@ export function fmtHours(h, increment = 0.1) {
 
 export function fmtClock(totalSeconds) {
   const s = Math.max(0, Math.floor(totalSeconds));
-  const hh = Math.floor(s / 3600);
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
-  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+  return `${hh}:${mm}:${ss}`;
 }
 
 const pad = (n) => String(n).padStart(2, '0');

@@ -318,12 +318,12 @@ await step('timer clock is editable in place', async () => {
   await page.waitForFunction(
     () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
     { timeout: 4000 });
-  // compact card shows the raw clock (display-only) beside the editable
-  // tenths: 1.4h = 1:24:00 and 1.4
+  // compact card shows the raw clock (display-only, always HH:MM:SS) beside the
+  // editable tenths: 1.4h = 01:24:00 and 1.4
   await page.waitForFunction(() => {
     const pair = document.querySelector('.timer-clock-pair');
     return pair
-      && pair.querySelector('.timer-clock-raw')?.textContent.trim() === '1:24:00'
+      && pair.querySelector('.timer-clock-raw')?.textContent.trim() === '01:24:00'
       && pair.querySelector('.timer-clock')?.textContent.trim() === '1.4';
   }, { timeout: 4000 });
 });

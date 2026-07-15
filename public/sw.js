@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v40';
+const CACHE = 'timekeeper-v41';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -21,6 +21,8 @@ const SHELL = [
   './css/app.css',
   './vendor/inter/InterVariable.woff2',
   './vendor/inter/InterVariable-Italic.woff2',
+  './vendor/clockface/NotoSansNum-Regular.woff2',
+  './vendor/clockface/NotoSansNum-Bold.woff2',
   './vendor/htm.module.js',
   './vendor/react-dom.production.min.js',
   './vendor/react.production.min.js',

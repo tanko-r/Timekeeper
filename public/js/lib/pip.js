@@ -87,10 +87,10 @@ export function fmtDayTotal(totalSeconds) {
 // importable here for the same reason lib/titlebar.js copies it)
 export function fmtClock(totalSeconds) {
   const s = Math.max(0, Math.floor(totalSeconds));
-  const hh = Math.floor(s / 3600);
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
-  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+  return `${hh}:${mm}:${ss}`;
 }
 
 // Mirrors app.css's design tokens (copied by hand — stylesheets are NOT
@@ -104,6 +104,18 @@ const PIP_CSS = `
     font-weight: 100 900;
     font-style: normal;
     font-display: swap;
+  }
+  /* ClockFace: clean plain-zero numerals for the float clocks — matches the
+     main app timer view (see app.css). */
+  @font-face {
+    font-family: 'ClockFace';
+    src: url('/vendor/clockface/NotoSansNum-Regular.woff2') format('woff2');
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: 'ClockFace';
+    src: url('/vendor/clockface/NotoSansNum-Bold.woff2') format('woff2');
+    font-weight: 700; font-style: normal; font-display: swap;
   }
   :root {
     --surface-1: #fcfcfb; --surface-2: #efefec; --border: #dddcd6;
@@ -137,7 +149,7 @@ const PIP_CSS = `
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
   .row.running .dot { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
-  .clock { font-family: ui-monospace, monospace; font-weight: 700; font-size: 14px; flex: none; min-width: 54px; }
+  .clock { font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; flex: none; min-width: 66px; }
   /* active counter is GREEN, matching the app (2026-07-14 design vocabulary) */
   .row.running .clock { color: var(--good); }
   .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
@@ -174,7 +186,7 @@ const PIP_CSS = `
   .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); padding: 12px; text-align: center; }
   .err { color: var(--danger); font-size: 11px; padding: 4px 8px; }
   .foot { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border-top: 1px solid var(--border); }
-  .total { color: var(--text-secondary); font-family: ui-monospace, monospace; font-size: 11px; }
+  .total { color: var(--text-secondary); font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 11px; }
   .quick {
     font: 700 14px/1 'InterVariable', system-ui, sans-serif; color: var(--text-primary);
     background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px;
@@ -187,7 +199,7 @@ const PIP_CSS = `
   }
   .co-title { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .co-time { color: var(--text-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .co-time b { font-family: ui-monospace, monospace; color: var(--text-primary); }
+  .co-time b { font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--text-primary); }
   .closeout textarea { flex: 1; min-height: 48px; }
   .co-foot { display: flex; align-items: center; justify-content: space-between; }
   .foot-btns { display: flex; gap: 5px; }

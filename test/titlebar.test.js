@@ -25,18 +25,18 @@ test('running timer → just ▶ live clock + name (no app name), wall-clock tim
     { id: 2, name: 'Acme research', running: 1, elapsed_seconds: 5040 },
   ];
   const { title, running } = runningTitle(timers, T0 + 20_000, T0); // +20s of wall clock
-  assert.equal(title, '▶ 1:24:20 Acme research');
+  assert.equal(title, '▶ 01:24:20 Acme research');
   assert.equal(running, true);
 });
 
-test('clock under an hour renders MM:SS', () => {
+test('clock under an hour still renders full HH:MM:SS with leading zeros', () => {
   const { title } = runningTitle(
     [{ id: 1, name: 'Quick timer', running: 1, elapsed_seconds: 65 }], T0, T0);
-  assert.equal(title, '▶ 01:05 Quick timer');
+  assert.equal(title, '▶ 00:01:05 Quick timer');
 });
 
 test('clock never runs backwards on skewed timestamps', () => {
   const { title } = runningTitle(
     [{ id: 1, name: 'T', running: 1, elapsed_seconds: 60 }], T0 - 5_000, T0);
-  assert.equal(title, '▶ 01:00 T');
+  assert.equal(title, '▶ 00:01:00 T');
 });

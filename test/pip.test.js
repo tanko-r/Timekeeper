@@ -50,10 +50,11 @@ test('fmtDayTotal formats decimal hours', () => {
 });
 
 test('fmtClock matches the titlebar/ui format', () => {
-  assert.equal(fmtClock(0), '00:00');
-  assert.equal(fmtClock(75), '01:15');
-  assert.equal(fmtClock(3600), '1:00:00');
-  assert.equal(fmtClock(4271.9), '1:11:11');
+  // always hh:mm:ss with leading zeros (2026-07-14 feedback)
+  assert.equal(fmtClock(0), '00:00:00');
+  assert.equal(fmtClock(75), '00:01:15');
+  assert.equal(fmtClock(3600), '01:00:00');
+  assert.equal(fmtClock(4271.9), '01:11:11');
 });
 
 test('closeoutTimer: returns the stopped timer when there is something to narrate', () => {
