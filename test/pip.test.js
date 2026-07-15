@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClock, pipSupported, recentPickList,
-  closeoutTimer,
+  buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClockParts,
+  pipSupported, recentPickList, closeoutTimer,
 } from '../public/js/lib/pip.js';
 
 const T = (id, extra = {}) => ({
@@ -49,12 +49,18 @@ test('fmtDayTotal formats decimal hours', () => {
   assert.equal(fmtDayTotal(-5), '0.0h today');
 });
 
-test('fmtClock matches the titlebar/ui format', () => {
-  // always hh:mm:ss with leading zeros (2026-07-14 feedback)
-  assert.equal(fmtClock(0), '00:00:00');
-  assert.equal(fmtClock(75), '00:01:15');
-  assert.equal(fmtClock(3600), '01:00:00');
-  assert.equal(fmtClock(4271.9), '01:11:11');
+// 2026-07-15 feedback: the float clocks show ONE hour digit until 10h is on
+// the clock, and the leading hour/minute zeros render dimmed (dim = the
+// leading "0:" / "0:0" run; digits after it are significant).
+test('fmtClockParts: single hour digit, dim prefix covers leading zeros', () => {
+  assert.deepEqual(fmtClockParts(0), { dim: '0:0', rest: '0:00' });
+  assert.deepEqual(fmtClockParts(75), { dim: '0:0', rest: '1:15' });
+  assert.deepEqual(fmtClockParts(615), { dim: '0:', rest: '10:15' });
+  assert.deepEqual(fmtClockParts(3600), { dim: '', rest: '1:00:00' });
+  assert.deepEqual(fmtClockParts(4271.9), { dim: '', rest: '1:11:11' });
+  assert.deepEqual(fmtClockParts(35999), { dim: '', rest: '9:59:59' });
+  assert.deepEqual(fmtClockParts(36000), { dim: '', rest: '10:00:00' });
+  assert.deepEqual(fmtClockParts(-5), { dim: '0:0', rest: '0:00' });
 });
 
 test('closeoutTimer: returns the stopped timer when there is something to narrate', () => {

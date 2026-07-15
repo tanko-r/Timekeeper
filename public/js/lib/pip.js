@@ -83,14 +83,20 @@ export function fmtDayTotal(totalSeconds) {
   return `${(Math.max(0, totalSeconds) / 3600).toFixed(1)}h today`;
 }
 
-// mirrors ui.js fmtClock (which pulls in the React vendor bundle — not
-// importable here for the same reason lib/titlebar.js copies it)
-export function fmtClock(totalSeconds) {
+// The float's own clock shape (2026-07-15 feedback): the hour stays a single
+// digit until 10h is actually on the clock, and the leading zero run —
+// "0:" / "0:0" — is returned separately so it can render dimmed. A local
+// sibling of ui.js's fmtClock, which is not importable here (it pulls in the
+// React vendor bundle — same reason lib/titlebar.js keeps a copy). Pure —
+// unit-tested in test/pip.test.js.
+export function fmtClockParts(totalSeconds) {
   const s = Math.max(0, Math.floor(totalSeconds));
-  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const h = Math.floor(s / 3600);
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
-  return `${hh}:${mm}:${ss}`;
+  const str = `${h}:${mm}:${ss}`;
+  const dim = h > 0 ? 0 : (mm[0] === '0' ? 3 : 2);
+  return { dim: str.slice(0, dim), rest: str.slice(dim) };
 }
 
 // Mirrors app.css's design tokens (copied by hand — stylesheets are NOT
@@ -150,6 +156,8 @@ const PIP_CSS = `
   .row.running .dot { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .clock { font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; flex: none; min-width: 66px; }
+  /* leading hour/minute zeros recede (2026-07-15 feedback) */
+  .clock .dim, .co-time .dim { opacity: 0.4; }
   /* active counter is GREEN, matching the app (2026-07-14 design vocabulary) */
   .row.running .clock { color: var(--good); }
   .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
@@ -336,6 +344,18 @@ export async function toggleTimerPip() {
   let pendingRender = false; // a render was skipped to protect a focused textarea
 
   const secsOf = (t) => t.elapsed_seconds + (t.running ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0);
+  // every float clock renders through this: dim leading-zero run + the rest
+  const setClock = (el, secs) => {
+    const { dim, rest } = fmtClockParts(secs);
+    el.replaceChildren();
+    if (dim) {
+      const d = doc.createElement('span');
+      d.className = 'dim';
+      d.textContent = dim;
+      el.appendChild(d);
+    }
+    el.appendChild(doc.createTextNode(rest));
+  };
   const narrFocused = () => doc.activeElement && doc.activeElement.tagName === 'TEXTAREA';
 
   const showErr = (e) => { errEl.textContent = e.message; errEl.hidden = false; };
@@ -466,7 +486,7 @@ export async function toggleTimerPip() {
     const time = doc.createElement('div');
     time.className = 'co-time';
     const clock = doc.createElement('b');
-    clock.textContent = fmtClock(secsOf(t));
+    setClock(clock, secsOf(t));
     time.append('Stopped at ', clock);
     time.append(t.cm_id
       ? ` · ${t.cm_short_name} · ${t.cm_number}`
@@ -513,7 +533,7 @@ export async function toggleTimerPip() {
       <span class="name"></span>
       <button class="pin${t.pinned ? ' on' : ''}" data-pin></button>
       <button class="act" data-act></button>`;
-    bar.querySelector('[data-clock]').textContent = fmtClock(secsOf(t));
+    setClock(bar.querySelector('[data-clock]'), secsOf(t));
     bar.querySelector('.name').textContent = t.name;
     const pinBtn = bar.querySelector('[data-pin]');
     pinBtn.innerHTML = PIN_SVG;
@@ -676,7 +696,7 @@ export async function toggleTimerPip() {
     const rows = buildPipRows(timers, extras);
     for (const t of rows) {
       const el = rowsEl.querySelector(`.row[data-id="${t.id}"] [data-clock]`);
-      if (el) el.textContent = fmtClock(secsOf(t));
+      if (el) setClock(el, secsOf(t));
     }
     totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
   };
