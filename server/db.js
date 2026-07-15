@@ -297,6 +297,9 @@ const SEED_SETTINGS = {
   backup: { keep: 14 },
   auth: { mode: 'remote-only' },
   theme: 'auto',
+  // Always-on-top float: 'app' follows the main app's theme; 'light'/'dark'
+  // pin the float regardless of the app (2026-07-15 feedback).
+  pip: { theme: 'app' },
   // Local-LLM narrative assist (Ollama). Off until enabled in Settings.
   ai: { enabled: false, model: 'llama3.1:8b', url: 'http://127.0.0.1:11434' },
   // DTE Axiom / Intapp TimeSaver .TIM export constants (from David's prototype).

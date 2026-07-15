@@ -125,6 +125,13 @@ function GeneralCard({ settings, reloadSettings }) {
             <option value="dark">Dark</option>
           </select>
         <//>
+        <${Field} label="Float timer theme" hint="The always-on-top window can differ from the app">
+          <select value=${s.pip?.theme || 'app'} onChange=${(e) => save({ pip: { theme: e.target.value } }, reloadSettings)}>
+            <option value="app">Follow the app</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        <//>
         <${Field} label="Daily target (hours)" hint="Colors the calendar and dashboard meter">
           <input type="number" min="0" step="0.5" defaultValue=${s.targets?.dailyHours ?? 8}
             onBlur=${(e) => save({ targets: { dailyHours: Number(e.target.value) || 0 } }, reloadSettings)} />

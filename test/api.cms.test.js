@@ -226,6 +226,12 @@ test('settings: read and per-key deep merge', () => withServer(async (t) => {
   assert.equal(after.idleNudgeHours, 3);
   assert.equal(after.ai.enabled, false);
   assert.equal(after.tim.u2, 'GEN01');
+
+  // float theme override (2026-07-15 feedback): seeded default + round-trip
+  assert.equal(after.pip.theme, 'app');
+  const pipSet = await t.fetchJson('PATCH', '/api/settings', { pip: { theme: 'dark' } });
+  assert.equal(pipSet.status, 200);
+  assert.equal((await t.fetchJson('GET', '/api/settings')).body.pip.theme, 'dark');
 }));
 
 test('client_name locks to the number at creation — a later matter never renames the client', () => withServer(async (t) => {

@@ -41,10 +41,16 @@ const NAV = [
 
 // ---------- theme ----------
 
-function applyTheme(theme) {
+function applyTheme(settings) {
   const root = document.documentElement;
+  const theme = settings.theme;
   if (theme === 'dark' || theme === 'light') root.setAttribute('data-theme', theme);
   else root.removeAttribute('data-theme');
+  // The float's own theme override (Settings → Float timer theme) rides along
+  // as data-pip-theme — pip.js watches both attributes and prefers this one.
+  const pipTheme = settings.pip?.theme;
+  if (pipTheme === 'dark' || pipTheme === 'light') root.setAttribute('data-pip-theme', pipTheme);
+  else root.removeAttribute('data-pip-theme');
 }
 
 // ---------- toasts ----------
@@ -137,7 +143,7 @@ function App() {
       if (!status.authRequired || status.loggedIn) {
         const s = await api.get('/api/settings');
         setSettings(s);
-        applyTheme(s.theme);
+        applyTheme(s);
       }
     } catch (e) {
       if (e.status !== 401) setAuthState({ error: String(e.message) });
@@ -231,7 +237,7 @@ function App() {
   const reloadSettings = useCallback(async () => {
     const s = await api.get('/api/settings');
     setSettings(s);
-    applyTheme(s.theme);
+    applyTheme(s);
     return s;
   }, []);
 

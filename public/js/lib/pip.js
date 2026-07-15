@@ -301,15 +301,17 @@ export async function toggleTimerPip() {
   // Follow the app's theme: the OS preference flows in via the media query
   // in PIP_CSS; an explicit Settings choice lives as data-theme on the MAIN
   // document's root (app.js applyTheme) — copy it over and mirror changes.
+  // Settings → Float timer theme (data-pip-theme, 2026-07-15 feedback) pins
+  // the float regardless of the app and wins when set.
   const mainRoot = document.documentElement;
   const syncTheme = () => {
-    const t = mainRoot.getAttribute('data-theme');
+    const t = mainRoot.getAttribute('data-pip-theme') || mainRoot.getAttribute('data-theme');
     if (t) doc.documentElement.setAttribute('data-theme', t);
     else doc.documentElement.removeAttribute('data-theme');
   };
   syncTheme();
   const themeObs = new MutationObserver(syncTheme);
-  themeObs.observe(mainRoot, { attributes: true, attributeFilter: ['data-theme'] });
+  themeObs.observe(mainRoot, { attributes: true, attributeFilter: ['data-theme', 'data-pip-theme'] });
   doc.body.innerHTML = `
     <div class="rows" data-rows></div>
     <div class="closeout" data-closeout hidden></div>
