@@ -94,7 +94,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <button class="btn" title="Next day (])"
         onClick=${() => nav(`#/day/${addDays(d.date, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
       <div class="spacer"></div>
-      <button class="btn" onClick=${finalizeToday}><${Icon} name="lock" size=${16} /> Finalize today</button>
+      <button class="btn" onClick=${() => finalizeToday()}><${Icon} name="lock" size=${16} /> Finalize today</button>
       <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export today</button>
       <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
         <${Icon} name="plus" size=${16} /> New entry (n)</button>

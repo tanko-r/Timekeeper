@@ -1112,6 +1112,17 @@ await step('add-todo button: sidebar → note box → TODO entry filed (no scree
   if (!line.includes('no screenshot')) throw new Error(`add-todo entry should record "no screenshot": ${line}`);
 });
 
+// Regression (2026-07-15 feedback): the day view's "Finalize day" button was
+// wired as onClick=${finalizeDay}, so the click event landed in the ack
+// parameter and JSON.stringify(body) died on the circular DOM structure
+// before the request was ever sent. An empty far-past day keeps this
+// side-effect-free: the only success signal is the "Nothing to finalize" toast.
+await step('day view: Finalize day posts cleanly (no circular-JSON crash)', async () => {
+  await page.goto(`${base}/#/day/2020-01-01`, { waitUntil: 'networkidle0' });
+  await clickText('.page-head button', 'Finalize day');
+  await page.waitForFunction(() => document.body.textContent.includes('Nothing to finalize'), { timeout: 4000 });
+});
+
 // Last data-mutating step (per plan): finalizes and exports today's drafts,
 // so it runs after everything else that reads today's entry/timer state.
 await step('alt+drag feedback: select region → note box → TODO entry filed', async () => {

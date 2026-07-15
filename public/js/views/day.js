@@ -111,7 +111,7 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
       <button class="btn" title="Download finalized entries in view as CSV (marks them exported)"
         onClick=${exportRange}><${Icon} name="export" size=${16} /> Export</button>
       ${mode === 'day' ? html`
-        <button class="btn" onClick=${finalizeDay}><${Icon} name="lock" size=${16} /> Finalize day</button>
+        <button class="btn" onClick=${() => finalizeDay()}><${Icon} name="lock" size=${16} /> Finalize day</button>
         <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}><${Icon} name="plus" size=${16} /> Entry</button>` : null}
     </div>
     ${loading && !data ? html`<${Spinner} />` : html`
