@@ -12,6 +12,10 @@ import { html, useState, useEffect, Modal, Field, emitToast } from '/js/ui.js';
 // If capture is declined or unsupported, the note still files (region +
 // route recorded, no image) — the feedback must never be lost to a
 // permission dialog.
+//
+// The sidebar "Add todo" button dispatches `tk:add-todo`, which opens the
+// same note box with no screenshot — a quick way to jot a change onto the
+// same TODO.md list without dragging out a region.
 
 function normRegion(sel) {
   const x = Math.min(sel.x0, sel.x1);
@@ -68,9 +72,20 @@ async function captureTab(region) {
 
 export function FeedbackCapture() {
   const [drag, setDrag] = useState(null);      // live selection rectangle
-  const [pending, setPending] = useState(null); // { region, image|null } → note box
+  const [pending, setPending] = useState(null); // { region, image|null, mode } → note box
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Sidebar "Add todo": open the same note box, no screenshot, no region.
+  useEffect(() => {
+    const onAddTodo = () => {
+      if (document.querySelector('.feedback-note')) return; // note box already open
+      setNote('');
+      setPending({ region: null, image: null, mode: 'todo' });
+    };
+    window.addEventListener('tk:add-todo', onAddTodo);
+    return () => window.removeEventListener('tk:add-todo', onAddTodo);
+  }, []);
 
   useEffect(() => {
     const onDown = (e) => {
@@ -113,7 +128,9 @@ export function FeedbackCapture() {
       });
       emitToast(r.file
         ? `Feedback filed → TODO.md + feedback/${r.file}`
-        : 'Feedback filed → TODO.md (no screenshot)');
+        : pending.mode === 'todo'
+          ? 'Todo added → TODO.md'
+          : 'Feedback filed → TODO.md (no screenshot)');
       setPending(null);
     } catch (e) {
       emitToast(e.message, { error: true });
@@ -130,15 +147,20 @@ export function FeedbackCapture() {
         width: `${rect.w}px`, height: `${rect.h}px`,
       }}></div>` : null}
     ${pending ? html`
-      <${Modal} title="UI feedback" onClose=${() => setPending(null)}>
+      <${Modal} title=${pending.mode === 'todo' ? 'Add todo' : 'UI feedback'}
+        onClose=${() => setPending(null)}>
           ${pending.image
             ? html`<img class="feedback-shot" src=${pending.image} alt="Annotated screenshot" />`
-            : html`<p class="muted small" style=${{ marginTop: 0 }}>
-                No screenshot (capture declined or unsupported) — the note files on its own.
-              </p>`}
-          <${Field} label="What should be improved?">
+            : pending.mode === 'todo'
+              ? null
+              : html`<p class="muted small" style=${{ marginTop: 0 }}>
+                  No screenshot (capture declined or unsupported) — the note files on its own.
+                </p>`}
+          <${Field} label=${pending.mode === 'todo' ? 'What needs to change?' : 'What should be improved?'}>
             <textarea class="feedback-note" autoFocus rows="3" value=${note}
-              placeholder="e.g. This meter is too subtle — needs stronger color"
+              placeholder=${pending.mode === 'todo'
+                ? 'e.g. Add a keyboard shortcut for closing the day'
+                : 'e.g. This meter is too subtle — needs stronger color'}
               onInput=${(e) => setNote(e.target.value)}
               onKeyDown=${(e) => {
                 e.stopPropagation();
@@ -148,7 +170,7 @@ export function FeedbackCapture() {
           <div class="row-end">
             <button class="btn" onClick=${() => setPending(null)}>Cancel</button>
             <button class="btn btn-primary" disabled=${!note.trim() || busy} onClick=${save}>
-              Save feedback</button>
+              ${pending.mode === 'todo' ? 'Add todo' : 'Save feedback'}</button>
           </div>
       <//>` : null}
   `;

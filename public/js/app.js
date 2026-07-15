@@ -312,6 +312,10 @@ function App() {
             onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
             <${Icon} name=${icon} size=${18} /> ${label}
           </button>`)}
+        <button class="navlink" title="Jot a quick change onto TODO.md (no screenshot)"
+          onClick=${() => window.dispatchEvent(new CustomEvent('tk:add-todo'))}>
+          <${Icon} name="plus" size=${18} /> Add todo
+        </button>
         ${pipSupported() ? html`
           <button class="navlink" title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
             onClick=${() => toggleTimerPip().catch((e) =>

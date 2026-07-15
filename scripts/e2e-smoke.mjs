@@ -1093,6 +1093,25 @@ await step('dark mode applies', async () => {
   await shot('dashboard-dark');
 });
 
+await step('add-todo button: sidebar → note box → TODO entry filed (no screenshot)', async () => {
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await waitFor('.timer-board');
+  await clickText('.navlink', 'Add todo');
+  await waitFor('.feedback-note', 4000);
+  // No screenshot preview on this path — the note files on its own.
+  const hasShot = await page.evaluate(() => !!document.querySelector('.feedback-shot'));
+  if (hasShot) throw new Error('add-todo path should not show a screenshot preview');
+  await page.type('.feedback-note', 'E2E: quick todo from the button', { delay: 5 });
+  await clickText('.modal button', 'Add todo');
+  await page.waitForFunction(() => document.body.textContent.includes('Todo added'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.feedback-note'), { timeout: 4000 });
+  const todo = readFileSync(join(dir, 'TODO.md'), 'utf8');
+  if (!todo.includes('## UI feedback (screenshots)')) throw new Error('feedback section missing from TODO.md');
+  if (!todo.includes('E2E: quick todo from the button')) throw new Error('todo note not appended to TODO.md');
+  const line = todo.split('\n').find((l) => l.includes('E2E: quick todo from the button')) || '';
+  if (!line.includes('no screenshot')) throw new Error(`add-todo entry should record "no screenshot": ${line}`);
+});
+
 // Last data-mutating step (per plan): finalizes and exports today's drafts,
 // so it runs after everything else that reads today's entry/timer state.
 await step('alt+drag feedback: select region → note box → TODO entry filed', async () => {
