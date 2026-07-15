@@ -744,6 +744,31 @@ export async function toggleTimerPip() {
     if (recentOpen) closeRecent(); else openRecent();
   });
 
+  // Alt+↑/↓ nudges the clock ±0.1h (Shift: ±0.2h) — the grid's chord, live
+  // in the float too (2026-07-15 feedback). Alt chords never type into the
+  // narrative textarea, so this stays active while writing. Targets the
+  // surface the user is on: the close-out pane's timer, else the expanded
+  // row, else the running timer.
+  doc.addEventListener('keydown', async (e) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    e.preventDefault();
+    const id = closeoutId ?? expandedId ?? timers.find((t) => t.running)?.id;
+    if (id == null) return;
+    const deltaHours = (e.shiftKey ? 0.2 : 0.1) * (e.key === 'ArrowUp' ? 1 : -1);
+    try {
+      const r = await api.put(`/api/timers/${id}/clock`, { deltaHours });
+      // a nudge that lands on a linked entry changes entry data too — announce
+      // it like the grid's clockDelta does, so the main window's lists refresh
+      if (r.entry) window.dispatchEvent(new CustomEvent('tk:entries-changed'));
+      await poll();
+      // a focused narrative defers render() — repaint the close-out clock by
+      // hand (row clocks repaint on the next 1s tick regardless)
+      const t = timers.find((x) => x.id === id);
+      const co = doc.querySelector('.closeout .co-time b');
+      if (co && closeoutId === id && t) setClock(co, secsOf(t));
+    } catch (err) { showErr(err); }
+  });
+
   // 1s tick: clocks + total only — no DOM rebuild, so typing is undisturbed
   const tick = () => {
     const rows = buildPipRows(timers, extras);
