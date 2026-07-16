@@ -97,10 +97,14 @@ For the three scenarios sharing `settings.ai.systemPrompt` (expand, narrate,
 timer-suggestion — not quick-capture, which has no such field), a "Save this
 instructions text to app Settings" button writes directly to the real
 `settings` table, identical to what Settings → AI assist's textarea does.
-This is the one deliberate, user-initiated write the tool makes to the real
-DB; every other operation (seed picking, context preview, running against
-Ollama) is read-only. Skip this if it turns out to add meaningful complexity
-— the read-only tool is already useful without it.
+Because all three scenarios read the *same* field in the real app, saving
+from any one card's instructions box changes the instructions used by all
+three — there is no per-scenario override in the real app today, so the
+audit tool doesn't invent one. This is the one deliberate, user-initiated
+write the tool makes to the real DB; every other operation (seed picking,
+context preview, running against Ollama) is read-only. Skip this if it turns
+out to add meaningful complexity — the read-only tool is already useful
+without it.
 
 ## File layout
 
