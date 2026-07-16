@@ -4,6 +4,7 @@ import { isValidDate } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
+import { loadEffectiveFields } from './customfields.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
@@ -28,9 +29,15 @@ export function enrich(db, row) {
   `).get(row.cm_id);
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
+  const customFields = loadEffectiveFields(db, row.cm_id);
+  const customValues = {};
+  for (const v of db.prepare('SELECT field_id, value FROM entry_custom_values WHERE entry_id=?').all(row.id)) {
+    customValues[v.field_id] = v.value;
+  }
   const entry = {
     // cm is null (not undefined) for a matterless entry so it survives JSON
     ...row, tasks, cm: cm || null, total,
+    custom_fields: customFields, custom_values: customValues,
     narrative_auto: substantiveCount(tasks) >= 2 && !row.narrative_manual,
   };
   entry.validation = validateEntry(entry, getSetting(db, 'validation'));
@@ -61,6 +68,36 @@ export function writeTasks(db, entryId, tasks) {
   const ins = db.prepare(
     'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, ?)');
   tasks.forEach((t, i) => ins.run(entryId, t.task_code, t.duration, t.fragment, i));
+}
+
+// custom_values request shape: { [field_id]: value }. Keys that don't apply
+// to the entry's matter (matter changed underneath an autosave, field
+// deactivated) are SKIPPED, not errors — the editor keeps whatever keys it
+// has in flight. Empty string deletes the stored value.
+export function normalizeCustomValues(db, matterId, values) {
+  if (values === undefined) return { ops: null };
+  if (values === null || typeof values !== 'object' || Array.isArray(values)) {
+    return { error: 'custom_values must be an object of { field_id: value }.' };
+  }
+  const effective = new Set(loadEffectiveFields(db, matterId).map((f) => f.id));
+  const ops = [];
+  for (const [k, raw] of Object.entries(values)) {
+    const fieldId = Number(k);
+    if (!Number.isInteger(fieldId) || !effective.has(fieldId)) continue;
+    ops.push({ fieldId, value: String(raw ?? '').trim() });
+  }
+  return { ops };
+}
+
+export function applyCustomValues(db, entryId, ops) {
+  if (!ops) return;
+  const del = db.prepare('DELETE FROM entry_custom_values WHERE entry_id=? AND field_id=?');
+  const up = db.prepare(`INSERT INTO entry_custom_values (entry_id, field_id, value) VALUES (?, ?, ?)
+    ON CONFLICT(entry_id, field_id) DO UPDATE SET value=excluded.value`);
+  for (const o of ops) {
+    if (o.value === '') del.run(entryId, o.fieldId);
+    else up.run(entryId, o.fieldId, o.value);
+  }
 }
 
 // Regenerate the stored narrative when the entry is multi-line. Consolidation
@@ -256,6 +293,8 @@ export function entriesRouter({ db, clock }) {
     if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
     const norm = normalizeTasks(b.tasks || []);
     if (norm.error) return res.status(400).json({ error: norm.error });
+    const cv = normalizeCustomValues(db, cm.id, b.custom_values);
+    if (cv.error) return res.status(400).json({ error: cv.error });
 
     const billable = b.billable !== undefined ? (b.billable ? 1 : 0) : cm.billable;
     const totalOverride = b.total_override != null ? Number(b.total_override) : null;
@@ -267,6 +306,7 @@ export function entriesRouter({ db, clock }) {
         .run(b.date, cm.id, String(b.narrative || ''), billable, totalOverride,
           b.source === 'timer' ? 'timer' : 'manual', narrativeManual, now(), now());
       writeTasks(db, i.lastInsertRowid, norm.tasks);
+      applyCustomValues(db, i.lastInsertRowid, cv.ops);
       syncNarrative(db, i.lastInsertRowid);
       touchCm(db, cm.id, now());
       rebuildMatterPeople(db, cm.id);
@@ -296,6 +336,8 @@ export function entriesRouter({ db, clock }) {
       norm = normalizeTasks(b.tasks);
       if (norm.error) return res.status(400).json({ error: norm.error });
     }
+    const cv = normalizeCustomValues(db, cmId, b.custom_values);
+    if (cv.error) return res.status(400).json({ error: cv.error });
 
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
@@ -310,6 +352,7 @@ export function entriesRouter({ db, clock }) {
         b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
         now(), row.id);
       if (norm) writeTasks(db, row.id, norm.tasks);
+      applyCustomValues(db, row.id, cv.ops);
       syncNarrative(db, row.id);
       if (cmId !== row.cm_id) touchCm(db, cmId, now());
       // Association glue (2026-07-13): a matterless timer feeding this entry
@@ -355,6 +398,9 @@ export function entriesRouter({ db, clock }) {
         .run(date, src.cm_id, src.narrative, src.billable, src.total_override,
           src.narrative_manual ? 1 : 0, now(), now());
       writeTasks(db, i.lastInsertRowid, src.tasks);
+      db.prepare(`INSERT INTO entry_custom_values (entry_id, field_id, value)
+        SELECT ?, field_id, value FROM entry_custom_values WHERE entry_id=?`)
+        .run(i.lastInsertRowid, src.id);
       touchCm(db, src.cm_id, now());
       rebuildMatterPeople(db, src.cm_id);
       return i;

@@ -193,3 +193,34 @@ test('bulk delete skips finalized entries; bulk unlock skips drafts; bulk finali
     const fi = (await t.fetchJson('POST', '/api/entries/bulk', { ids: [gone.id], action: 'finalize', ack: true })).body;
     assert.equal(fi.done.length, 0, 'soft-deleted entries must not be finalized');
   }));
+
+test('finalize: required custom field blocks until filled; format mismatch is ack-able', () =>
+  withServer(async (t) => {
+    const { body: cm } = await t.fetchJson('POST', '/api/cms', { cm_number: '333444-000001', short_name: 'CF Gate' });
+    const { body: req } = await t.fetchJson('POST', '/api/custom-fields', {
+      matter_id: cm.id, name: 'Task', pattern: 'A\\d{3}', pattern_hint: 'A###', required: true,
+    });
+    const { body: entry } = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-15', cm_id: cm.id,
+      narrative: 'A long enough narrative describing real substantive work.',
+      tasks: [{ duration: 0.5, fragment: 'real work' }],
+    });
+
+    const blocked = await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`, {});
+    assert.equal(blocked.status, 422);
+    assert.equal(blocked.body.blocks.some((b) => b.code === 'custom_required'), true);
+
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, { custom_values: { [req.id]: 'WRONG' } });
+    const warned = await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`, {});
+    assert.equal(warned.status, 422);
+    assert.equal(warned.body.blocks.length, 0);
+    assert.equal(warned.body.warns.some((w) => w.code === 'custom_format'), true);
+
+    const acked = await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`, { ack: true });
+    assert.equal(acked.status, 200); // warn is ack-able
+
+    await t.fetchJson('POST', `/api/entries/${entry.id}/unlock`, {});
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, { custom_values: { [req.id]: 'A103' }, ack_validation: 0 });
+    const clean = await t.fetchJson('POST', `/api/entries/${entry.id}/finalize`, {});
+    assert.equal(clean.status, 200);
+  }));

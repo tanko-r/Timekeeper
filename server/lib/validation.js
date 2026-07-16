@@ -1,6 +1,8 @@
 // Entry validation. Everything returns findings; nothing throws.
 // level 'block' = cannot finalize at all; 'warn' = needs one-click ack.
 
+import { validateFieldValues } from './customfields.js';
+
 export const CM_RE = /^\d{6}-\d{6}$/;
 
 // Matches a parenthetical time allocation like "(0.5)" or "(1)" — the
@@ -89,6 +91,11 @@ export function validateEntry(entry, settings = {}) {
     add('warn', 'missing_allocations',
       'This client requires task billing — add per-task time allocations, e.g. "(0.5)".');
   }
+
+  // Client/matter custom fields (2026-07-15): a required field with no value
+  // blocks finalize (the billing system would bounce the entry); format and
+  // dropdown-option mismatches warn (ack-able).
+  findings.push(...validateFieldValues(entry.custom_fields || [], entry.custom_values || {}));
 
   return findings;
 }

@@ -346,3 +346,38 @@ test('names in task fragments count too, once per entry', () =>
       'SELECT name, count FROM matter_people WHERE matter_id=?').all(cm.id);
     assert.deepEqual(rows, [{ name: 'B. Novak', count: 1 }]); // per-entry dedupe
   }));
+
+test('custom_values: round-trip, empty-string delete, non-applicable keys skipped', () =>
+  withServer(async (t) => {
+    const { body: cm } = await t.fetchJson('POST', '/api/cms', { cm_number: '222333-000001', short_name: 'CF Matter' });
+    const clientId = t.db.prepare("SELECT id FROM clients WHERE client_number='222333'").get().id;
+    const { body: field } = await t.fetchJson('POST', '/api/custom-fields', {
+      client_id: clientId, name: 'Phase', type: 'select', options: ['P100', 'P200'],
+    });
+
+    const created = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-15', cm_id: cm.id, narrative: 'CF round trip narrative',
+      tasks: [{ duration: 0.5 }],
+      custom_values: { [field.id]: 'P100', 424242: 'ignored' }, // unknown id silently skipped
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.custom_values[field.id], 'P100');
+    assert.equal(created.body.custom_fields.some((f) => f.id === field.id), true);
+    assert.equal(created.body.custom_values[424242], undefined);
+
+    const patched = await t.fetchJson('PATCH', `/api/entries/${created.body.id}`,
+      { custom_values: { [field.id]: 'P200' } });
+    assert.equal(patched.body.custom_values[field.id], 'P200');
+
+    const cleared = await t.fetchJson('PATCH', `/api/entries/${created.body.id}`,
+      { custom_values: { [field.id]: '' } });
+    assert.equal(cleared.body.custom_values[field.id], undefined);
+
+    const bad = await t.fetchJson('PATCH', `/api/entries/${created.body.id}`, { custom_values: ['nope'] });
+    assert.equal(bad.status, 400);
+
+    // copy duplicates values
+    await t.fetchJson('PATCH', `/api/entries/${created.body.id}`, { custom_values: { [field.id]: 'P100' } });
+    const copy = await t.fetchJson('POST', `/api/entries/${created.body.id}/copy`, { date: '2026-07-16' });
+    assert.equal(copy.body.custom_values[field.id], 'P100');
+  }));
