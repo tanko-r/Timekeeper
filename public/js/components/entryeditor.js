@@ -76,6 +76,20 @@ export function EntryEditor({ spec, settings, onClose }) {
   // for the picked matter; Tab accepts. No LLM anywhere in this path.
   const phrases = useMatterSuggestions(local?.cm?.id);
 
+  // Custom fields for the picked matter (client-level + matter-level —
+  // spec 2026-07-15). Values live in local.custom_values keyed by field id
+  // and ride the normal autosave.
+  const [customFields, setCustomFields] = useState([]);
+  useEffect(() => {
+    const mid = local?.cm?.id;
+    if (!mid) { setCustomFields([]); return undefined; }
+    let alive = true;
+    api.get(`/api/custom-fields/effective/${mid}`)
+      .then((f) => { if (alive) setCustomFields(f); })
+      .catch(() => { if (alive) setCustomFields([]); });
+    return () => { alive = false; };
+  }, [local?.cm?.id]);
+
   // Text-expansion shortcuts (spec §6): deterministic inline expansion in
   // fragment/narrative fields + in-flow capture from a text selection.
   const shortcuts = useShortcuts();
@@ -114,6 +128,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             tasks: [blankLine()],
             status: 'draft',
             ack_validation: 0,
+            custom_values: {},
           });
         }
       } catch (e) {
@@ -137,6 +152,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       tasks: e.tasks.length ? e.tasks.map((t) => ({ ...t })) : [blankLine()],
       status: e.status,
       ack_validation: e.ack_validation,
+      custom_values: { ...(e.custom_values || {}) },
     };
   }
 
@@ -209,6 +225,7 @@ export function EntryEditor({ spec, settings, onClose }) {
       // regenerating it. A single-line entry has no AUTO box to detach from,
       // so it always stays 0 (matches narrative_auto's own ≥2-line gate).
       narrative_manual: l.auto ? 0 : (substantiveTasks.length >= 2 ? 1 : 0),
+      custom_values: l.custom_values || {},
     };
     setSaveState('saving');
     try {
@@ -519,6 +536,22 @@ export function EntryEditor({ spec, settings, onClose }) {
           Billable
         </label>
       </div>
+
+      ${customFields.length > 0 ? html`
+        <div class="custom-fields-row">
+          ${customFields.map((f) => html`
+            <${Field} key=${f.id} label=${f.name + (f.required ? ' *' : '')}>
+              ${f.type === 'select' ? html`
+                <select value=${local.custom_values?.[f.id] || ''} disabled=${finalized}
+                  onChange=${(e) => update({ custom_values: { ...local.custom_values, [f.id]: e.target.value } })}>
+                  <option value=""></option>
+                  ${f.options.map((o) => html`<option key=${o} value=${o}>${o}</option>`)}
+                </select>` : html`
+                <input type="text" value=${local.custom_values?.[f.id] || ''} disabled=${finalized}
+                  placeholder=${f.pattern_hint || ''}
+                  onInput=${(e) => update({ custom_values: { ...local.custom_values, [f.id]: e.target.value } })} />`}
+            <//>`)}
+        </div>` : null}
 
       <div class="section-title">
         <h3 style=${{ margin: 0 }}>Task lines</h3>

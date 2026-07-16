@@ -843,3 +843,10 @@ tr.import-skip td { opacity: 0.55; }
 }
 .subnavlink:hover { background: var(--surface-2); }
 .subnavlink.active { background: var(--accent-soft); color: var(--text-primary); }
+
+/* Entry editor: custom client/matter fields (Phase, Task, …) — a compact
+   row between the header grid and the task lines. */
+.custom-fields-row {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px; margin: 10px 0 4px;
+}
