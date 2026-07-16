@@ -359,6 +359,7 @@ export async function toggleTimerPip() {
   const drafts = new Map(); // timer id → unsaved narrative text
   const debounces = new Map(); // timer id → save debounce handle
   let pendingRender = false; // a render was skipped to protect a focused textarea
+  let pointerHeld = false; // mouse/touch is down — a rebuild now would swallow the click
 
   const secsOf = (t) => t.elapsed_seconds + (t.running ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0);
   // every float clock renders through this: dim leading-zero run + the rest
@@ -374,6 +375,17 @@ export async function toggleTimerPip() {
     el.appendChild(doc.createTextNode(rest));
   };
   const narrFocused = () => doc.activeElement && doc.activeElement.tagName === 'TEXTAREA';
+
+  // Clicking a button while the narrative textarea is focused fires blur
+  // BETWEEN mousedown and mouseup; if the blur flush (or the autosave's poll)
+  // rebuilt the DOM right then, the pressed button would be replaced and the
+  // click would never fire — buttons appeared to need two clicks (2026-07-15
+  // feedback). So renders also defer while the pointer is down, and flush
+  // after the click lands (the doc-level bubble listener runs last).
+  doc.addEventListener('pointerdown', () => { pointerHeld = true; }, true);
+  doc.addEventListener('pointerup', () => { pointerHeld = false; }, true);
+  doc.addEventListener('pointercancel', () => { pointerHeld = false; }, true);
+  doc.addEventListener('click', () => { if (pendingRender) render(); });
 
   const showErr = (e) => { errEl.textContent = e.message; errEl.hidden = false; };
 
@@ -447,7 +459,8 @@ export async function toggleTimerPip() {
     });
     ta.addEventListener('blur', () => {
       saveNarrative(t.id);
-      if (pendingRender) { pendingRender = false; render(); }
+      // render() re-defers if this blur is part of an in-flight click
+      if (pendingRender) render();
     });
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -636,8 +649,10 @@ export async function toggleTimerPip() {
   }
 
   function render() {
-    // never rebuild under a focused textarea — the blur handler re-renders
-    if (narrFocused()) { pendingRender = true; return; }
+    // never rebuild under a focused textarea (blur flushes) or while a
+    // pointer is pressed (the doc-level click listener flushes)
+    if (narrFocused() || pointerHeld) { pendingRender = true; return; }
+    pendingRender = false;
     const rows = buildPipRows(timers, extras);
     localStorage.setItem('tk:pipRows', String(rows.length || 1));
     if (expandedId !== null && !rows.some((t) => t.id === expandedId)) expandedId = null;
