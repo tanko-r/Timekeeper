@@ -8,6 +8,7 @@ import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
+import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -453,28 +454,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ];
   }
 
-  // ---------- activity tabs (2026-07-10 feedback) ----------
-  // "Today" / "Week" show timers that actually RAN in the period; "Recent"
-  // is the rolling two-week working set, so stale timers fall out of it.
-  // Activity = the last time the timer started or stopped (running = now);
-  // views sort alphabetically (2026-07-11 feedback — was most-recent-first,
-  // which made cards shuffle around as timers ran).
+  // ---------- activity tabs (2026-07-10 feedback; +Yesterday 2026-07-15) ----------
+  // "Today" / "Yesterday" / "Week" show timers that actually RAN in the
+  // period; "Recent" is the rolling two-week working set. Window math lives
+  // in lib/activity.js (pure, unit-tested); views sort alphabetically
+  // (2026-07-11 feedback — most-recent-first made cards shuffle while
+  // timers ran).
   const nowMs = Date.now();
-  const lastActivityMs = (t) => {
-    if (t.running) return nowMs;
-    return Math.max(
-      t.last_stopped_at ? Date.parse(t.last_stopped_at) : 0,
-      t.last_started_at ? Date.parse(t.last_started_at) : 0);
-  };
-  const dayStart = new Date(nowMs); dayStart.setHours(0, 0, 0, 0);
-  const weekStart = new Date(dayStart); weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7)); // Monday
-  const ACTIVITY = {
-    'act-today': { label: 'Today', since: dayStart.getTime() },
-    'act-week': { label: 'Week', since: weekStart.getTime() },
-    'act-recent': { label: 'Recent', since: nowMs - 14 * 86400000 },
-  };
+  const ACTIVITY = activityWindows(nowMs);
   const activityList = (key) => shown
-    .filter((t) => lastActivityMs(t) >= ACTIVITY[key].since)
+    .filter((t) => inWindow(lastActivityMs(t, nowMs), ACTIVITY[key]))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   // ---------- tabs (by-group / by-client modes only; flat keeps one grid) ----------
@@ -669,7 +658,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
           <span key=${tab.key} class=${'timer-tab-wrap' + (effectiveTab === tab.key ? ' on' : '') + (tab.key === 'act-today' ? ' activity-start' : '') + (tab.key === 'act-recent' ? ' activity-end' : '')}>
             <button class=${'timer-tab' + (effectiveTab === tab.key ? ' on' : '')}
               role="tab" aria-selected=${effectiveTab === tab.key}
-              title=${tab.activity ? { 'act-today': 'Timers that ran today', 'act-week': 'Timers that ran this week (Mon–)', 'act-recent': 'Timers used in the last two weeks' }[tab.key] : undefined}
+              title=${tab.activity ? { 'act-today': 'Timers that ran today', 'act-yesterday': 'Timers last used yesterday (not yet today)', 'act-week': 'Timers that ran this week (Mon–)', 'act-recent': 'Timers used in the last two weeks' }[tab.key] : undefined}
               onClick=${() => setActiveTab(tab.key)}
               onDragOver=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => e.preventDefault() : undefined}
               onDrop=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: tab.group ? tab.group.id : null })); } : undefined}>

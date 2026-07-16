@@ -1093,6 +1093,16 @@ await step('dark mode applies', async () => {
   await shot('dashboard-dark');
 });
 
+await step('timer activity tabs include Yesterday', async () => {
+  await page.emulateMediaFeatures([]);
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await waitFor('.timer-tabs');
+  const labels = await page.$$eval('.timer-tabs .timer-tab-label', (els) => els.map((e) => e.textContent));
+  for (const want of ['Today', 'Yesterday', 'Week', 'Recent']) {
+    if (!labels.includes(want)) throw new Error(`missing activity tab "${want}" — got: ${labels.join(', ')}`);
+  }
+});
+
 await step('add-todo button: sidebar → note box → TODO entry filed (no screenshot)', async () => {
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
   await waitFor('.timer-board');
