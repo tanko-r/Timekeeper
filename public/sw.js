@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v48';
+const CACHE = 'timekeeper-v49';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -32,6 +32,7 @@ const SHELL = [
   './js/ui.js',
   './js/components/closeout.js',
   './js/components/cmpicker.js',
+  './js/components/customfields.js',
   './js/components/entryeditor.js',
   './js/components/entrylist.js',
   './js/components/feedback.js',

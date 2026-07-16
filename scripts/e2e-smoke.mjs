@@ -1055,6 +1055,59 @@ await step('stats renders bars', async () => {
   await waitFor('.bar-row');
 });
 
+await step('custom fields: define on client, entry enforces + carries value', async () => {
+  // dedicated client/matter so the required field can't gate the later
+  // close-out sweeps (they finalize whole days on the Acme matters)
+  await page.evaluate(async () => {
+    await fetch('/api/cms', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cm_number: '777888-000001', short_name: 'CF Smoke', billable: 1 }),
+    });
+  });
+
+  // define a required dropdown "Phase" on the client, through the C&M UI
+  await page.goto(`${base}/#/cms`, { waitUntil: 'networkidle0' });
+  await waitFor('.client-row');
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.client-row')].find((r) => r.textContent.includes('777888'));
+    [...row.querySelectorAll('button')].find((b) => b.textContent.includes('Fields')).click();
+  });
+  await waitFor('.modal form input[placeholder="New field name, e.g. Phase"]');
+  await page.type('.modal form input[placeholder="New field name, e.g. Phase"]', 'Phase');
+  await page.select('.modal form select', 'select');
+  await waitFor('.modal form input[placeholder="options, comma-separated"]');
+  await page.type('.modal form input[placeholder="options, comma-separated"]', 'P100, P200');
+  await page.click('.modal form .checkbox-row input');
+  await clickText('.modal form button', 'Add');
+  await page.waitForFunction(() => document.querySelectorAll('.modal .custom-field-row').length >= 1, { timeout: 4000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+
+  // a new entry on the matter renders the field and gates finalize
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await waitFor('.timer-board');
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await page.type('.modal .cmpicker input', '777888', { delay: 5 });
+  await clickText('.cmpicker-item .name', 'CF Smoke');
+  await waitFor('.custom-fields-row select');
+  await page.evaluate(() => {
+    const total = document.querySelector('.modal-wide .total-input');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(total, '0.5');
+    total.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.type('.modal-wide textarea', 'Reviewed the phase-coded workstream in detail today.');
+  await page.waitForFunction(
+    () => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
+  await clickText('.modal-wide button', 'Finalize');
+  await page.waitForFunction(() => document.body.textContent.includes('"Phase" is required'), { timeout: 4000 });
+  await page.select('.custom-fields-row select', 'P100');
+  await clickText('.modal-wide button', 'Finalize');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+});
+
 await step('export view offers CSV, .TIM, and text', async () => {
   await page.goto(`${base}/#/export`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.textContent.includes('.TIM'));
@@ -1265,7 +1318,11 @@ server.close();
 db.close();
 rmSync(dir, { recursive: true, force: true });
 
-const real = problems.filter((p) => !p.includes('favicon'));
+// 422 responses are the finalize validation gate saying "not yet" — several
+// steps trigger one on purpose (required custom field, warn-ack flow), and
+// the browser logs every non-2xx fetch as a console error.
+const real = problems.filter((p) => !p.includes('favicon')
+  && !(p.startsWith('console.error:') && p.includes('status of 422')));
 if (real.length) {
   console.error(`\nE2E PROBLEMS (${real.length}):`);
   for (const p of real) console.error('  - ' + p);

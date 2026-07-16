@@ -3,11 +3,13 @@ import {
   html, useState, useAsync, Spinner, ErrorBox, emitToast, BillableBadge, fmtStamp, Icon, clientLabel, React,
 } from '/js/ui.js';
 import { NewCmModal } from '/js/components/cmpicker.js';
+import { CustomFieldsModal } from '/js/components/customfields.js';
 
 export function CmsView({ refreshKey, bumpRefresh }) {
   const [q, setQ] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState(null); // 'new' | cm
+  const [fieldsFor, setFieldsFor] = useState(null); // { owner: {client_id}|{matter_id}, title }
 
   const { loading, data, error, reload } = useAsync(
     () => api.get(`/api/cms?includeArchived=${showArchived ? 1 : 0}`),
@@ -85,7 +87,14 @@ export function CmsView({ refreshKey, bumpRefresh }) {
                 <tr class="client-row">
                   <td></td>
                   <td class="mono"><span class="muted small">Client</span> ${g.client_number || '—'}</td>
-                  <td colSpan="5"><${ClientNameCell} group=${g} onSaved=${() => { reload(); bumpRefresh(); }} /></td>
+                  <td colSpan="5"><${ClientNameCell} group=${g} onSaved=${() => { reload(); bumpRefresh(); }} />
+                    ${g.client_id != null ? html`
+                      <button class="btn btn-ghost btn-sm" title="Custom fields for every matter under this client"
+                        onClick=${() => setFieldsFor({
+                          owner: { client_id: g.client_id },
+                          title: `Custom fields — client ${clientLabel(g) || g.client_number}`,
+                        })}><${Icon} name="settings" size=${14} /> Fields</button>` : null}
+                  </td>
                 </tr>
                 ${g.matters.map((cm) => html`
                   <tr key=${cm.id} style=${{ opacity: cm.status === 'archived' ? 0.55 : 1 }}>
@@ -98,6 +107,11 @@ export function CmsView({ refreshKey, bumpRefresh }) {
                     <td class="small muted">${cm.last_used_at ? fmtStamp(cm.last_used_at) : '—'}</td>
                     <td>
                       <div class="row" style=${{ gap: '2px', flexWrap: 'nowrap', justifyContent: 'flex-end' }}>
+                        <button class="btn btn-ghost btn-sm" title="Custom fields for this matter only"
+                          onClick=${() => setFieldsFor({
+                            owner: { matter_id: cm.id },
+                            title: `Custom fields — ${cm.short_name || cm.cm_number}`,
+                          })}><${Icon} name="settings" size=${16} /></button>
                         <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => setEditing(cm)}><${Icon} name="edit" size=${16} /></button>
                         <button class="btn btn-ghost btn-sm" title=${cm.status === 'archived' ? 'Unarchive' : 'Archive'}
                           onClick=${() => toggleArchive(cm)}><${Icon} name=${cm.status === 'archived' ? 'archiveRestore' : 'archive'} size=${16} /></button>
@@ -119,6 +133,9 @@ export function CmsView({ refreshKey, bumpRefresh }) {
       <${NewCmModal} existing=${editing === 'new' ? null : editing}
         onCreated=${() => { setEditing(null); reload(); bumpRefresh(); }}
         onClose=${() => setEditing(null)} />` : null}
+    ${fieldsFor ? html`
+      <${CustomFieldsModal} owner=${fieldsFor.owner} title=${fieldsFor.title}
+        onClose=${() => { setFieldsFor(null); bumpRefresh(); }} />` : null}
   `;
 }
 
