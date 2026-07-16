@@ -76,20 +76,25 @@ export function quickCaptureRouter({ db }) {
   return r;
 }
 
-async function llmFill(cfg, line, parsed, taskCodes) {
+export function buildLlmFillMessages(line, parsed, taskCodes) {
   const system = `You extract structured billing data from an attorney's shorthand line.
 Respond with ONLY JSON: {"hours": number|null, "task_code": string|null, "person": string|null, "topic": string|null, "narrative": string|null}.
 task_code MUST be one of: ${taskCodes.join(', ')} (or null).
 Never include time amounts or parentheticals like "(0.5)" inside the narrative.`;
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: `Line: ${line}\nAlready determined (do not change): ${JSON.stringify({ hours: parsed.hours, task_code: parsed.task_code })}` },
+  ];
+}
+
+async function llmFill(cfg, line, parsed, taskCodes) {
+  const messages = buildLlmFillMessages(line, parsed, taskCodes);
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       model: cfg.model, stream: false, format: 'json', options: { temperature: 0.2 },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: `Line: ${line}\nAlready determined (do not change): ${JSON.stringify({ hours: parsed.hours, task_code: parsed.task_code })}` },
-      ],
+      messages,
     }),
     signal: AbortSignal.timeout(180_000),
   });
