@@ -560,9 +560,9 @@ export function buildNarrateMessages({ instructions, brief, narrative, mode = 'd
   if (mode === 'shorter') {
     user = `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`;
   } else if (mode === 'longer') {
-    user = `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${narrative}`;
+    user = `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents.  Include each distinct work component in the attorney's narrative.  If relevant, include context from previous entries, but be conservative.  The narrative to rewrite is:\n\n${narrative}`;
   } else {
-    user = [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
+    user = [context, `The attorney's manually entered narrative for the day is: ${brief}`].filter(Boolean).join('\n\n');
   }
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }
