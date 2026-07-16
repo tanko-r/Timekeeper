@@ -343,3 +343,35 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db2.close();
   cleanup();
 });
+
+test('v15 custom_fields: exactly one owner, unique name per owner, value cascade', () => {
+  const db = openDb(':memory:');
+  const clientId = db.prepare("INSERT INTO clients (client_number) VALUES ('123456')").run().lastInsertRowid;
+  const matterId = db.prepare(
+    "INSERT INTO matters (cm_number, client_id, matter_number) VALUES ('123456-000001', ?, '000001')"
+  ).run(clientId).lastInsertRowid;
+
+  // neither owner / both owners → CHECK violation
+  assert.throws(() => db.prepare("INSERT INTO custom_fields (name) VALUES ('Phase')").run());
+  assert.throws(() => db.prepare(
+    "INSERT INTO custom_fields (client_id, matter_id, name) VALUES (?, ?, 'Phase')").run(clientId, matterId));
+
+  const fieldId = db.prepare(
+    "INSERT INTO custom_fields (client_id, name, type, options) VALUES (?, 'Phase', 'select', '[\"P100\",\"P200\"]')"
+  ).run(clientId).lastInsertRowid;
+  // duplicate name on the same owner → UNIQUE violation; same name on the matter is fine (override)
+  assert.throws(() => db.prepare(
+    "INSERT INTO custom_fields (client_id, name) VALUES (?, 'Phase')").run(clientId));
+  db.prepare("INSERT INTO custom_fields (matter_id, name) VALUES (?, 'Phase')").run(matterId);
+
+  // entry values cascade with the entry
+  const entryId = db.prepare(
+    "INSERT INTO entries (date, cm_id) VALUES ('2026-07-15', ?)").run(matterId).lastInsertRowid;
+  db.prepare('INSERT INTO entry_custom_values (entry_id, field_id, value) VALUES (?, ?, ?)')
+    .run(entryId, fieldId, 'P100');
+  assert.throws(() => db.prepare( // one value per (entry, field)
+    'INSERT INTO entry_custom_values (entry_id, field_id, value) VALUES (?, ?, ?)').run(entryId, fieldId, 'P200'));
+  db.prepare('DELETE FROM entries WHERE id=?').run(entryId);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM entry_custom_values').get().c, 0);
+  db.close();
+});

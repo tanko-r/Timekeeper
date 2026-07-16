@@ -282,6 +282,41 @@ const MIGRATIONS = [
   `
   ALTER TABLE timers ADD COLUMN narrative_template TEXT;
   `,
+
+  // v15 — custom fields (2026-07-15 TODO): definitions live on a client
+  // (apply to every matter under it) or on one matter; values live on
+  // entries. Deleting a client/matter cascades its definitions; deleting an
+  // entry cascades its values. The API blocks hard-deleting a definition
+  // that has recorded values — deactivate instead (task-codes philosophy:
+  // config changes never rewrite past entries). options is a JSON array of
+  // strings; pattern is a JS regex source applied to text-type values.
+  `
+  CREATE TABLE custom_fields (
+    id           INTEGER PRIMARY KEY,
+    client_id    INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    matter_id    INTEGER REFERENCES matters(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    type         TEXT NOT NULL DEFAULT 'text' CHECK (type IN ('text','select')),
+    options      TEXT NOT NULL DEFAULT '[]',
+    pattern      TEXT,
+    pattern_hint TEXT,
+    required     INTEGER NOT NULL DEFAULT 0,
+    active       INTEGER NOT NULL DEFAULT 1,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    CHECK ((client_id IS NULL) <> (matter_id IS NULL))
+  );
+  CREATE UNIQUE INDEX idx_cf_client_name ON custom_fields(client_id, name) WHERE client_id IS NOT NULL;
+  CREATE UNIQUE INDEX idx_cf_matter_name ON custom_fields(matter_id, name) WHERE matter_id IS NOT NULL;
+
+  CREATE TABLE entry_custom_values (
+    id       INTEGER PRIMARY KEY,
+    entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+    field_id INTEGER NOT NULL REFERENCES custom_fields(id),
+    value    TEXT NOT NULL DEFAULT '',
+    UNIQUE(entry_id, field_id)
+  );
+  CREATE INDEX idx_ecv_entry ON entry_custom_values(entry_id);
+  `,
 ];
 
 const SEED_SETTINGS = {
