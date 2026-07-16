@@ -107,6 +107,8 @@ test('migration v3 flips a pre-existing rounding mode to up', () => {
   // against a column that's still there errors "duplicate column name".
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
   db1.exec(`
+    DROP TABLE entry_custom_values;
+    DROP TABLE custom_fields;
     ALTER TABLE entries DROP COLUMN narrative_manual;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
@@ -157,6 +159,8 @@ test('migration v4 backfills clients and links matters', () => {
   // survives untouched across all of this, so its later ADD COLUMN
   // (narrative_manual) must be dropped too or the replay errors on it.
   db1.exec(`
+    DROP TABLE entry_custom_values;
+    DROP TABLE custom_fields;
     ALTER TABLE entries DROP COLUMN narrative_manual;
     ALTER TABLE timers DROP COLUMN suggested_narrative;
     DROP TABLE shortcuts;
@@ -218,10 +222,13 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // the entries rebuild — which need no undo SQL: replaying a rebuild is
   // schema-idempotent, its only effect is making cm_id nullable — the
   // timers.held_since column, the AOT-window timers.pinned/
-  // draft_narrative columns, and the timers.narrative_template column) and
-  // roll user_version back by ten (positional — no hardcoded version numbers)
+  // draft_narrative columns, the timers.narrative_template column, and the
+  // v15 custom-fields tables) and roll user_version back by eleven
+  // (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    DROP TABLE entry_custom_values;
+    DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
     ALTER TABLE timers DROP COLUMN draft_narrative;
     ALTER TABLE timers DROP COLUMN pinned;
@@ -232,7 +239,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 10}`);
+  db1.pragma(`user_version = ${v - 11}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -313,11 +320,16 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db1.prepare("INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, 'Review', 0.5, 'lease', 0)").run(eid);
   db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
     VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
-  // narrative_template landed after the rebuild — undo it too so the replay
-  // window (rebuild + template column) applies cleanly
-  db1.exec('ALTER TABLE timers DROP COLUMN narrative_template');
+  // narrative_template and the v15 custom-fields tables landed after the
+  // rebuild — undo them too so the replay window (rebuild + template column
+  // + custom fields) applies cleanly
+  db1.exec(`
+    DROP TABLE entry_custom_values;
+    DROP TABLE custom_fields;
+    ALTER TABLE timers DROP COLUMN narrative_template;
+  `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 2}`);
+  db1.pragma(`user_version = ${v - 3}`);
   db1.close();
 
   const db2 = openDb(path);
