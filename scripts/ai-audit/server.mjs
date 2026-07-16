@@ -219,6 +219,13 @@ app.post('/api/run/quickcapture', async (req, res) => {
   });
 });
 
+app.post('/api/settings/ai/system-prompt', (req, res) => {
+  const cfg = getSetting(db, 'ai') || {};
+  const value = String((req.body || {}).systemPrompt ?? '').trim();
+  setSetting(db, 'ai', { ...cfg, systemPrompt: value });
+  res.json({ ok: true });
+});
+
 const PORT = Number(process.env.AI_AUDIT_PORT || 4748);
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`AI prompt audit tool listening on http://127.0.0.1:${PORT}`);
