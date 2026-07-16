@@ -516,7 +516,7 @@ await step('shortcuts: save-from-selection, inline expansion, settings list', as
   await clickText('.modal-wide button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   // settings shows the minimal list (no management screen beyond list/delete)
-  await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
+  await page.goto(`${base}/#/settings/codes`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.textContent.includes('Text-expansion shortcuts')
     && document.body.textContent.includes('Interconnect Agreement'), { timeout: 4000 });
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
@@ -1076,10 +1076,15 @@ await step('export view: This month preset sets from=1st, to=today', async () =>
   if (toVal !== today) throw new Error(`This month "to" should be today (${today}), got ${toVal}`);
 });
 
-await step('settings shows AI + .TIM cards', async () => {
+await step('settings pages: bare route = General; submenu reaches AI / .TIM / codes', async () => {
   await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
+  await waitFor('.subnav'); // Settings navlink expanded into category links
+  await page.waitForFunction(() => document.body.textContent.includes('Theme')); // default page = General
+  await page.click('.subnavlink:nth-child(2)'); // AI assist
   await page.waitForFunction(() => document.body.textContent.includes('AI narrative assist'));
+  await page.goto(`${base}/#/settings/export`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.textContent.includes('.TIM export'));
+  await page.goto(`${base}/#/settings/codes`, { waitUntil: 'networkidle0' });
   await page.waitForFunction(() => document.body.textContent.includes('Task codes'));
   await shot('settings');
 });

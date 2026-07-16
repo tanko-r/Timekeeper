@@ -2,19 +2,35 @@ import { api } from '/js/api.js';
 import { html, useState, useEffect, Field, emitToast } from '/js/ui.js';
 import { useShortcuts, refreshShortcuts } from '/js/components/shortcuts.js';
 
-export function SettingsView({ settings, reloadSettings, authState, reloadAuth }) {
+// Category pages (2026-07-15 feedback): the sidebar's Settings entry expands
+// into these; each page renders one or two of the existing cards. Exported
+// for app.js's submenu. Bare #/settings (old links) falls back to general.
+export const SETTINGS_CATEGORIES = [
+  ['general', 'General'],
+  ['ai', 'AI assist'],
+  ['export', '.TIM export'],
+  ['codes', 'Codes & shortcuts'],
+  ['validation', 'Validation'],
+  ['server', 'Remote & backups'],
+];
+
+export function SettingsView({ page, settings, reloadSettings, authState, reloadAuth }) {
+  const key = SETTINGS_CATEGORIES.some(([k]) => k === page) ? page : 'general';
+  const pages = {
+    general: [html`<${GeneralCard} key="general" settings=${settings} reloadSettings=${reloadSettings} />`],
+    ai: [html`<${AiCard} key="ai" settings=${settings} reloadSettings=${reloadSettings} />`],
+    export: [html`<${TimCard} key="tim" settings=${settings} reloadSettings=${reloadSettings} />`],
+    codes: [html`<${TaskCodesCard} key="codes" />`, html`<${ShortcutsCard} key="shortcuts" />`],
+    validation: [html`<${ValidationCard} key="validation" settings=${settings} reloadSettings=${reloadSettings} />`],
+    server: [
+      html`<${RemoteCard} key="remote" authState=${authState} reloadAuth=${reloadAuth} />`,
+      html`<${BackupCard} key="backup" settings=${settings} reloadSettings=${reloadSettings} />`,
+    ],
+  };
+  const label = SETTINGS_CATEGORIES.find(([k]) => k === key)[1];
   return html`
-    <div class="page-head"><h1>Settings</h1></div>
-    <div class="grid" style=${{ maxWidth: '760px' }}>
-      <${GeneralCard} settings=${settings} reloadSettings=${reloadSettings} />
-      <${AiCard} settings=${settings} reloadSettings=${reloadSettings} />
-      <${TimCard} settings=${settings} reloadSettings=${reloadSettings} />
-      <${TaskCodesCard} />
-      <${ShortcutsCard} />
-      <${ValidationCard} settings=${settings} reloadSettings=${reloadSettings} />
-      <${RemoteCard} authState=${authState} reloadAuth=${reloadAuth} />
-      <${BackupCard} settings=${settings} reloadSettings=${reloadSettings} />
-    </div>`;
+    <div class="page-head"><h1>Settings</h1><span class="muted" style=${{ fontSize: '15px' }}>· ${label}</span></div>
+    <div class="grid" style=${{ maxWidth: '760px' }}>${pages[key]}</div>`;
 }
 
 function AiCard({ settings, reloadSettings }) {

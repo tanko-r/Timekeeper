@@ -658,6 +658,7 @@ kbd {
   .sidebar .foot { display: none; }
   .main { padding: 14px; }
   .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
+  .subnav { flex-direction: row; flex-wrap: wrap; border-left: 0; margin-left: 0; }
 }
 
 /* ---------- ghost-text autocomplete ---------- */
@@ -827,3 +828,18 @@ tr.import-skip td { opacity: 0.55; }
 @media (max-width: 700px) {
   .setting-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* Settings sub-navigation: the Settings navlink expands into category pages
+   while the route is active (2026-07-15 feedback). */
+.subnav {
+  display: flex; flex-direction: column;
+  margin: 0 0 4px 22px; padding-left: 6px;
+  border-left: 2px solid var(--surface-2);
+}
+.subnavlink {
+  display: block; text-align: left; padding: 5px 10px;
+  border: 0; background: none; border-radius: 7px;
+  color: var(--text-secondary); font-size: 13px; cursor: pointer;
+}
+.subnavlink:hover { background: var(--surface-2); }
+.subnavlink.active { background: var(--accent-soft); color: var(--text-primary); }

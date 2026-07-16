@@ -7,7 +7,7 @@ import { DayView } from '/js/views/day.js';
 import { CalendarView } from '/js/views/calendar.js';
 import { SearchView } from '/js/views/search.js';
 import { StatsView } from '/js/views/stats.js';
-import { SettingsView } from '/js/views/settings.js';
+import { SettingsView, SETTINGS_CATEGORIES } from '/js/views/settings.js';
 import { CmsView } from '/js/views/cms.js';
 import { ExportView } from '/js/views/exportview.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
@@ -310,7 +310,7 @@ function App() {
     calendar: () => html`<${CalendarView} ...${ctx} />`,
     search: () => html`<${SearchView} ...${ctx} />`,
     stats: () => html`<${StatsView} ...${ctx} />`,
-    settings: () => html`<${SettingsView} ...${ctx} authState=${authState} reloadAuth=${reloadAuth} />`,
+    settings: () => html`<${SettingsView} page=${route.args[0]} ...${ctx} authState=${authState} reloadAuth=${reloadAuth} />`,
     cms: () => html`<${CmsView} ...${ctx} />`,
     export: () => html`<${ExportView} ...${ctx} />`,
   }[route.path] || (() => html`<div class="card">Not found. <a href="#/">Go home</a></div>`);
@@ -322,11 +322,20 @@ function App() {
       <nav class="sidebar">
         <div class="brand"><${Icon} name="timer" size=${21} /> Time<span>keeper</span></div>
         ${NAV.map(([path, label, icon]) => html`
-          <button key=${path}
-            class=${'navlink' + (active === path ? ' active' : '')}
-            onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
-            <${Icon} name=${icon} size=${18} /> ${label}
-          </button>`)}
+          <${React.Fragment} key=${path}>
+            <button
+              class=${'navlink' + (active === path ? ' active' : '')}
+              onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
+              <${Icon} name=${icon} size=${18} /> ${label}
+            </button>
+            ${path === 'settings' && active === 'settings' ? html`
+              <div class="subnav">
+                ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
+                  <button key=${key}
+                    class=${'subnavlink' + ((route.args[0] || 'general') === key ? ' active' : '')}
+                    onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
+              </div>` : null}
+          <//>`)}
         <button class="navlink" title="Jot a quick change onto TODO.md (no screenshot)"
           onClick=${() => window.dispatchEvent(new CustomEvent('tk:add-todo'))}>
           <${Icon} name="plus" size=${18} /> Add todo
