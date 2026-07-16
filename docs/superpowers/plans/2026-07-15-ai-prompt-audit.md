@@ -40,18 +40,25 @@ the frontend — no new npm packages, no build step.
 
 ---
 
-### Task 1: Export `systemPrompt`/`formatContract`/`NAME_RESOLUTION_RULE` from ai.js
+### Task 1: Export `systemPrompt`/`formatContract`/`NAME_RESOLUTION_RULE`/`checkOllamaReachable` from ai.js
 
 **Files:**
 - Modify: `server/routes/ai.js:30` (`formatContract`), `server/routes/ai.js:41`
-  (`systemPrompt`), `server/routes/ai.js:61` (`NAME_RESOLUTION_RULE`)
+  (`systemPrompt`), `server/routes/ai.js:61` (`NAME_RESOLUTION_RULE`),
+  `server/routes/ai.js:127-144` (the `/ai/status` handler — extract its
+  reachability probe into a reusable function)
 - Test: `test/ai.builders.test.js` (new file)
 
 **Interfaces:**
 - Produces: `export function formatContract(codes: string[]): string`,
   `export function systemPrompt(codes: string[], custom: string|undefined): string`,
-  `export const NAME_RESOLUTION_RULE: string` — all three importable from
-  `../server/routes/ai.js` by later tasks.
+  `export const NAME_RESOLUTION_RULE: string`,
+  `export async function checkOllamaReachable(url: string): Promise<{reachable: boolean, models: string[]}>` —
+  all four importable from `../server/routes/ai.js` by later tasks. The
+  audit tool (Task 3) needs its own reachability check for the Settings
+  panel, identical to what the real `/ai/status` route does — extracting it
+  here means Task 3 reuses the real code instead of duplicating this
+  try/catch/fetch block.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -84,12 +91,46 @@ test('NAME_RESOLUTION_RULE mentions informal name resolution', () => {
 });
 ```
 
+Also add, in the same file, a test for the extracted reachability check
+(uses a stub HTTP server rather than a real Ollama, same pattern as
+`test/api.ai.test.js`'s `startStubOllama`):
+
+```js
+import { createServer } from 'node:http';
+import { checkOllamaReachable } from '../server/routes/ai.js';
+
+function startStubTags(models) {
+  return new Promise((resolve) => {
+    const srv = createServer((req, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ models: models.map((name) => ({ name })) }));
+    });
+    srv.listen(0, '127.0.0.1', () => resolve({ srv, url: `http://127.0.0.1:${srv.address().port}` }));
+  });
+}
+
+test('checkOllamaReachable reports reachable + model list on success', async () => {
+  const { srv, url } = await startStubTags(['llama3.1:8b', 'gemma4:12b']);
+  try {
+    const result = await checkOllamaReachable(url);
+    assert.deepEqual(result, { reachable: true, models: ['llama3.1:8b', 'gemma4:12b'] });
+  } finally {
+    srv.close();
+  }
+});
+
+test('checkOllamaReachable reports unreachable when nothing is listening', async () => {
+  const result = await checkOllamaReachable('http://127.0.0.1:1');
+  assert.deepEqual(result, { reachable: false, models: [] });
+});
+```
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test test/ai.builders.test.js`
-Expected: FAIL — `systemPrompt`/`formatContract`/`NAME_RESOLUTION_RULE` are
-not exported (import gives `undefined`, calling them throws
-`TypeError: systemPrompt is not a function`).
+Expected: FAIL — `systemPrompt`/`formatContract`/`NAME_RESOLUTION_RULE`/
+`checkOllamaReachable` are not exported (import gives `undefined`, calling
+them throws `TypeError: systemPrompt is not a function` etc.).
 
 - [ ] **Step 3: Add the exports**
 
@@ -120,12 +161,65 @@ to:
 export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
 ```
 
-No other lines change — these are purely additive `export` keywords.
+Then extract the reachability probe out of the `/ai/status` handler. Change:
+
+```js
+  r.get('/ai/status', async (req, res) => {
+    const cfg = getSetting(db, 'ai') || {};
+    let reachable = false;
+    let models = [];
+    try {
+      const resp = await fetch(`${cfg.url}/api/tags`, { signal: AbortSignal.timeout(2500) });
+      if (resp.ok) {
+        const data = await resp.json();
+        models = (data.models || []).map((m) => m.name);
+        reachable = true;
+      }
+    } catch { /* ollama down — reported below */ }
+    res.json({
+      enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
+      systemPrompt: cfg.systemPrompt || '',
+      defaultPrompt: DEFAULT_AI_INSTRUCTIONS,
+    });
+  });
+```
+
+to:
+
+```js
+  r.get('/ai/status', async (req, res) => {
+    const cfg = getSetting(db, 'ai') || {};
+    const { reachable, models } = await checkOllamaReachable(cfg.url);
+    res.json({
+      enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
+      systemPrompt: cfg.systemPrompt || '',
+      defaultPrompt: DEFAULT_AI_INSTRUCTIONS,
+    });
+  });
+```
+
+and add the extracted function above `aiRouter`'s definition (right after
+`NAME_RESOLUTION_RULE`'s declaration):
+
+```js
+export async function checkOllamaReachable(url) {
+  try {
+    const resp = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(2500) });
+    if (resp.ok) {
+      const data = await resp.json();
+      return { reachable: true, models: (data.models || []).map((m) => m.name) };
+    }
+  } catch { /* ollama down */ }
+  return { reachable: false, models: [] };
+}
+```
+
+No other lines change.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `node --test test/ai.builders.test.js`
-Expected: PASS (4 tests)
+Expected: PASS (6 tests)
 
 - [ ] **Step 5: Run the full existing suite to confirm no regression**
 
@@ -137,11 +231,11 @@ behavior changed (only `export` keywords were added).
 
 ```bash
 git add server/routes/ai.js test/ai.builders.test.js
-git commit -m "refactor(ai): export systemPrompt/formatContract/NAME_RESOLUTION_RULE
+git commit -m "refactor(ai): export prompt builders + extract checkOllamaReachable
 
 Additive exports only, no behavior change — lets the AI audit tool
 (scripts/ai-audit/, next commits) reuse the real prompt-building code
-instead of duplicating it."
+and reachability check instead of duplicating them."
 ```
 
 ---
@@ -252,8 +346,8 @@ prompt construction instead of duplicating it."
 **Interfaces:**
 - Consumes: `loadConfig` from `server/config.js`, `openDb`/`getSetting` from
   `server/db.js`, `todayLocal` from `server/lib/dates.js`,
-  `DEFAULT_AI_INSTRUCTIONS`/`matterAiContext` from `server/routes/ai.js`
-  (all already exported before this task).
+  `DEFAULT_AI_INSTRUCTIONS`/`matterAiContext`/`checkOllamaReachable` from
+  `server/routes/ai.js` (all exported by Task 1).
 - Produces: a running HTTP server on `127.0.0.1:4748` with `GET /`,
   `GET /api/seed/entries`, `GET /api/seed/matters`,
   `GET /api/context/:matterId`, `GET /api/settings/ai` — all consumed by
@@ -285,7 +379,7 @@ import { dirname, join } from 'node:path';
 import { loadConfig } from '../../server/config.js';
 import { openDb, getSetting } from '../../server/db.js';
 import { todayLocal } from '../../server/lib/dates.js';
-import { DEFAULT_AI_INSTRUCTIONS, matterAiContext } from '../../server/routes/ai.js';
+import { DEFAULT_AI_INSTRUCTIONS, matterAiContext, checkOllamaReachable } from '../../server/routes/ai.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const config = loadConfig();
@@ -326,16 +420,7 @@ app.get('/api/context/:matterId', (req, res) => {
 
 app.get('/api/settings/ai', async (req, res) => {
   const cfg = getSetting(db, 'ai') || {};
-  let reachable = false;
-  let models = [];
-  try {
-    const resp = await fetch(`${cfg.url}/api/tags`, { signal: AbortSignal.timeout(2500) });
-    if (resp.ok) {
-      const data = await resp.json();
-      models = (data.models || []).map((m) => m.name);
-      reachable = true;
-    }
-  } catch { /* ollama down — reported below */ }
+  const { reachable, models } = await checkOllamaReachable(cfg.url);
   res.json({
     enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
     systemPrompt: cfg.systemPrompt || '',
@@ -424,7 +509,7 @@ At the top of `scripts/ai-audit/server.mjs`, change:
 ```js
 import { openDb, getSetting } from '../../server/db.js';
 import { todayLocal } from '../../server/lib/dates.js';
-import { DEFAULT_AI_INSTRUCTIONS, matterAiContext } from '../../server/routes/ai.js';
+import { DEFAULT_AI_INSTRUCTIONS, matterAiContext, checkOllamaReachable } from '../../server/routes/ai.js';
 ```
 
 to:
@@ -437,7 +522,7 @@ import { containsTimeAmounts } from '../../server/lib/timeAmounts.js';
 import { parseQuickCapture } from '../../server/lib/quickcapture.js';
 import {
   DEFAULT_AI_INSTRUCTIONS, matterAiContext, systemPrompt,
-  NAME_RESOLUTION_RULE, timeGroundingRule, buildNarrateMessages,
+  NAME_RESOLUTION_RULE, timeGroundingRule, buildNarrateMessages, checkOllamaReachable,
 } from '../../server/routes/ai.js';
 import { buildLlmFillMessages } from '../../server/routes/quickcapture.js';
 ```
