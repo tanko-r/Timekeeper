@@ -807,3 +807,23 @@ tr.import-skip td { opacity: 0.55; }
   .tf-total.bump { animation: tk-bump 250ms ease-out 1; }
   @keyframes tk-bump { 30% { transform: scale(1.05); } }
 }
+
+/* Settings: compact stacked rows (2026-07-15 feedback) — label left, control
+   right, hint under the label. Replaces the airy two-column Field grid. */
+.setting-rows { display: flex; flex-direction: column; }
+.setting-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 14px; align-items: center; padding: 8px 0;
+  border-bottom: 1px solid var(--surface-2);
+}
+.setting-row:first-child { padding-top: 0; }
+.setting-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.setting-label {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+}
+.setting-label .field-hint { font-weight: 400; }
+.setting-row > select, .setting-row > input:not([type="checkbox"]) { width: 100%; }
+@media (max-width: 700px) {
+  .setting-row { grid-template-columns: 1fr; gap: 4px; }
+}

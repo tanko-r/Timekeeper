@@ -56,14 +56,16 @@ function AiCard({ settings, reloadSettings }) {
             onChange=${async (e) => { await save({ ai: { enabled: e.target.checked } }, reloadSettings); reload(); }} />
           Enable AI assist
         </label>
-        <${Field} label="Model">
-          <select value=${cfg.model} style=${{ minWidth: '190px' }}
+      </div>
+      <div class="setting-rows">
+        <${SettingRow} label="Model">
+          <select value=${cfg.model}
             onChange=${(e) => save({ ai: { model: e.target.value } }, reloadSettings)}>
             ${models.map((m) => html`<option key=${m} value=${m}>${m}</option>`)}
           </select>
         <//>
-        <${Field} label="Ollama URL">
-          <input type="text" defaultValue=${cfg.url} style=${{ minWidth: '220px' }}
+        <${SettingRow} label="Ollama URL">
+          <input type="text" defaultValue=${cfg.url}
             onBlur=${(e) => save({ ai: { url: e.target.value.trim() } }, reloadSettings).then(reload)} />
         <//>
       </div>
@@ -86,7 +88,7 @@ function AiCard({ settings, reloadSettings }) {
 function TimCard({ settings, reloadSettings }) {
   const cfg = settings.tim || {};
   const field = (key, label, hint) => html`
-    <${Field} label=${label} hint=${hint}>
+    <${SettingRow} label=${label} hint=${hint}>
       <input type="text" defaultValue=${cfg[key] || ''}
         onBlur=${(e) => save({ tim: { [key]: e.target.value.trim() } }, reloadSettings)} />
     <//>`;
@@ -97,7 +99,7 @@ function TimCard({ settings, reloadSettings }) {
         The Export page can generate a .TIM import file alongside the CSV, using these
         firm constants on every line.
       </p>
-      <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+      <div class="setting-rows">
         ${field('email', 'Timekeeper email', 'lmb / op fields')}
         ${field('timekeeperId', 'Timekeeper ID', 'tk field')}
         ${field('u2', 'U2 code', '')}
@@ -112,35 +114,47 @@ async function save(patch, reloadSettings) {
   emitToast('Saved');
 }
 
+// One compact setting: label (+hint under it) left, control right
+// (2026-07-15 feedback — "stacked and more compact").
+function SettingRow({ label, hint, children }) {
+  return html`
+    <label class="setting-row">
+      <span class="setting-label">${label}
+        ${hint ? html`<span class="field-hint">${hint}</span>` : null}
+      </span>
+      ${children}
+    </label>`;
+}
+
 function GeneralCard({ settings, reloadSettings }) {
   const s = settings;
   return html`
     <div class="card">
       <h2>General</h2>
-      <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-        <${Field} label="Theme">
+      <div class="setting-rows">
+        <${SettingRow} label="Theme">
           <select value=${s.theme || 'auto'} onChange=${(e) => save({ theme: e.target.value }, reloadSettings)}>
             <option value="auto">Follow system</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
         <//>
-        <${Field} label="Float timer theme" hint="The always-on-top window can differ from the app">
+        <${SettingRow} label="Float timer theme" hint="The always-on-top window can differ from the app">
           <select value=${s.pip?.theme || 'app'} onChange=${(e) => save({ pip: { theme: e.target.value } }, reloadSettings)}>
             <option value="app">Follow the app</option>
             <option value="light">Light</option>
             <option value="dark">Dark</option>
           </select>
         <//>
-        <${Field} label="Daily target (hours)" hint="Colors the calendar and dashboard meter">
+        <${SettingRow} label="Daily target (hours)" hint="Colors the calendar and dashboard meter">
           <input type="number" min="0" step="0.5" defaultValue=${s.targets?.dailyHours ?? 8}
             onBlur=${(e) => save({ targets: { dailyHours: Number(e.target.value) || 0 } }, reloadSettings)} />
         <//>
-        <${Field} label="Idle timer nudge (hours)" hint="Flag a running timer after this long">
+        <${SettingRow} label="Idle timer nudge (hours)" hint="Flag a running timer after this long">
           <input type="number" min="0.5" step="0.5" defaultValue=${s.idleNudgeHours ?? 3}
             onBlur=${(e) => save({ idleNudgeHours: Number(e.target.value) || 3 }, reloadSettings)} />
         <//>
-        <${Field} label="Rounding">
+        <${SettingRow} label="Rounding">
           <select value=${s.rounding?.enabled ? s.rounding.mode : 'off'}
             onChange=${(e) => {
               const v = e.target.value;
@@ -151,7 +165,7 @@ function GeneralCard({ settings, reloadSettings }) {
             <option value="off">No rounding (raw hours)</option>
           </select>
         <//>
-        <${Field} label="Increment (hours)" hint="0.1 = 6-minute units">
+        <${SettingRow} label="Increment (hours)" hint="0.1 = 6-minute units">
           <input type="number" min="0.01" step="0.01" defaultValue=${s.rounding?.increment ?? 0.1}
             onBlur=${(e) => save({ rounding: { increment: Number(e.target.value) || 0.1 } }, reloadSettings)} />
         <//>
@@ -237,16 +251,16 @@ function ValidationCard({ settings, reloadSettings }) {
   return html`
     <div class="card">
       <h2>Narrative validation</h2>
-      <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-        <${Field} label="Min narrative length" hint="warn under N characters">
+      <div class="setting-rows">
+        <${SettingRow} label="Min narrative length" hint="warn under N characters">
           <input type="number" min="0" defaultValue=${v.minNarrativeChars}
             onBlur=${(e) => save({ validation: { minNarrativeChars: Number(e.target.value) || 0 } }, reloadSettings)} />
         <//>
-        <${Field} label="Block-billing threshold" hint="warn on a single line over N hours">
+        <${SettingRow} label="Block-billing threshold" hint="warn on a single line over N hours">
           <input type="number" min="0.5" step="0.5" defaultValue=${v.blockBillingHours}
             onBlur=${(e) => save({ validation: { blockBillingHours: Number(e.target.value) || 3 } }, reloadSettings)} />
         <//>
-        <${Field} label="Minimum increment" hint="warn on durations under this">
+        <${SettingRow} label="Minimum increment" hint="warn on durations under this">
           <input type="number" min="0.01" step="0.01" defaultValue=${v.minIncrement}
             onBlur=${(e) => save({ validation: { minIncrement: Number(e.target.value) || 0.1 } }, reloadSettings)} />
         <//>
@@ -357,8 +371,10 @@ function BackupCard({ settings, reloadSettings }) {
       <div class="row">
         <a class="btn" href="/api/backup/db">⬇ Download database (.db)</a>
         <a class="btn" href="/api/backup/json">⬇ Download JSON dump</a>
-        <${Field} label="Keep N nightly backups">
-          <input type="number" min="1" style=${{ width: '90px' }} defaultValue=${settings.backup?.keep ?? 14}
+      </div>
+      <div class="setting-rows">
+        <${SettingRow} label="Keep N nightly backups">
+          <input type="number" min="1" defaultValue=${settings.backup?.keep ?? 14}
             onBlur=${(e) => save({ backup: { keep: Number(e.target.value) || 14 } }, reloadSettings)} />
         <//>
       </div>
