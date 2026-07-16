@@ -27,7 +27,7 @@ Rules for the narrative:
 - No client-confidential embellishment: only expand on what the user said; do not invent facts, names, or documents.
 - 1–3 sentences.`;
 
-function formatContract(codes) {
+export function formatContract(codes) {
   return `Rules for tasks:
 - Break the work into 1–5 component tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
@@ -38,7 +38,7 @@ Respond with ONLY this JSON, no other text:
 {"narrative": "...", "tasks": [{"task_code": "...", "fragment": "...", "share": 0.5}]}`;
 }
 
-function systemPrompt(codes, custom) {
+export function systemPrompt(codes, custom) {
   const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   return `${instructions}\n\n${formatContract(codes)}`;
 }
@@ -58,7 +58,18 @@ export function matterAiContext(db, cmId, today) {
   return parts.length ? parts.join('\n\n') : null;
 }
 
-const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
+export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
+
+export async function checkOllamaReachable(url) {
+  try {
+    const resp = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(2500) });
+    if (resp.ok) {
+      const data = await resp.json();
+      return { reachable: true, models: (data.models || []).map((m) => m.name) };
+    }
+  } catch { /* ollama down */ }
+  return { reachable: false, models: [] };
+}
 
 // Ground the prose in the entry's recorded hours (2026-07-14 feedback: a
 // 0.1h entry must not read like a multi-hour work block). Returns '' when
@@ -126,16 +137,7 @@ export function aiRouter({ db }) {
 
   r.get('/ai/status', async (req, res) => {
     const cfg = getSetting(db, 'ai') || {};
-    let reachable = false;
-    let models = [];
-    try {
-      const resp = await fetch(`${cfg.url}/api/tags`, { signal: AbortSignal.timeout(2500) });
-      if (resp.ok) {
-        const data = await resp.json();
-        models = (data.models || []).map((m) => m.name);
-        reachable = true;
-      }
-    } catch { /* ollama down — reported below */ }
+    const { reachable, models } = await checkOllamaReachable(cfg.url);
     res.json({
       enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
       systemPrompt: cfg.systemPrompt || '',
