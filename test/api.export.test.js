@@ -135,3 +135,28 @@ test('CSV emits stored durations exactly (no display re-rounding)', () =>
     const line = r.body.csv.split('\r\n')[1];
     assert.ok(line.includes(',Draft,1.25,'), `duration must stay 1.25, got: ${line}`);
   }));
+
+test('CSV grows field:<Name> columns; no fields = legacy header', () =>
+  withData(async (t) => {
+    const { body: cm } = await t.fetchJson('POST', '/api/cms', { cm_number: '555666-000001', short_name: 'CF Export' });
+    const clientId = t.db.prepare("SELECT id FROM clients WHERE client_number='555666'").get().id;
+    const { body: phase } = await t.fetchJson('POST', '/api/custom-fields',
+      { client_id: clientId, name: 'Phase', type: 'select', options: ['P100'] });
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2031-01-05', cm_id: cm.id, narrative: 'Exported with a phase code narrative.',
+      tasks: [{ duration: 0.3, fragment: 'phase-coded work' }],
+      custom_values: { [phase.id]: 'P100' },
+    });
+
+    const withField = await t.fetchJson('POST', '/api/export',
+      { from: '2031-01-05', to: '2031-01-05', includeDrafts: true, markExported: false });
+    const header = withField.body.csv.split('\r\n')[0];
+    assert.equal(header.endsWith(',field:Phase'), true);
+    assert.equal(withField.body.csv.includes('P100'), true);
+
+    // a range with no custom-field entries keeps the legacy header exactly
+    const plain = await t.fetchJson('POST', '/api/export',
+      { from: '2031-02-01', to: '2031-02-01', includeDrafts: true, markExported: false });
+    assert.equal(plain.body.csv.split('\r\n')[0],
+      'date,cm_number,cm_short_name,billable,task,duration,narrative,entry_total,entry_id');
+  }));

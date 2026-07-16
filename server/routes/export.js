@@ -29,9 +29,21 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
   const entries = rows.map((r) => enrich(db, r));
   const increment = (getSetting(db, 'rounding') || {}).increment || 0.1;
 
+  // Custom-field columns (2026-07-15): one per distinct effective-field name
+  // across the exported entries, "field:"-prefixed so a custom field named
+  // "task" can never collide with the fixed task column. Alphabetical for a
+  // stable layout; blank where a field doesn't apply to that entry's matter.
+  const fieldNames = [...new Set(entries.flatMap((e) => (e.custom_fields || []).map((f) => f.name)))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  const header = [...CSV_HEADER, ...fieldNames.map((n) => `field:${n}`)];
+
   const csvRows = [];
   for (const e of entries) {
     const billable = e.billable ? 'billable' : 'non-billable';
+    const custom = fieldNames.map((n) => {
+      const f = (e.custom_fields || []).find((x) => x.name === n);
+      return f ? (e.custom_values?.[f.id] ?? '') : '';
+    });
     const lines = e.tasks.length > 0
       ? e.tasks
       : [{ task_code: '', duration: e.total }];
@@ -42,6 +54,7 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
         e.date, e.cm.cm_number, e.cm.short_name, billable,
         t.task_code, Number(t.duration) || 0,
         e.narrative, Number(e.total) || 0, e.id,
+        ...custom,
       ]);
     }
   }
@@ -56,7 +69,7 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
     unassociated,
     entry_ids: entries.map((e) => e.id),
     entries,
-    csv: toCsv(CSV_HEADER, csvRows),
+    csv: toCsv(header, csvRows),
     text,
   };
 }
