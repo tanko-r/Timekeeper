@@ -49,18 +49,22 @@ test('fmtDayTotal formats decimal hours', () => {
   assert.equal(fmtDayTotal(-5), '0.0h today');
 });
 
-// 2026-07-15 feedback: the float clocks show ONE hour digit until 10h is on
-// the clock, and the leading hour/minute zeros render dimmed (dim = the
-// leading "0:" / "0:0" run; digits after it are significant).
-test('fmtClockParts: single hour digit, dim prefix covers leading zeros', () => {
-  assert.deepEqual(fmtClockParts(0), { dim: '0:0', rest: '0:00' });
+// 2026-07-22 feedback: the float clocks show ONE hour digit until 10h is on
+// the clock, and every position stays gray until it holds a recorded digit —
+// dim covers the whole run up to the first non-zero digit (so 0:00:00 is
+// entirely gray, and each of hr/min/sec lights up only as time reaches it).
+test('fmtClockParts: single hour digit, dim covers everything up to the first real digit', () => {
+  assert.deepEqual(fmtClockParts(0), { dim: '0:00:00', rest: '' });
+  assert.deepEqual(fmtClockParts(5), { dim: '0:00:0', rest: '5' });
+  assert.deepEqual(fmtClockParts(10), { dim: '0:00:', rest: '10' });
+  assert.deepEqual(fmtClockParts(65), { dim: '0:0', rest: '1:05' });
   assert.deepEqual(fmtClockParts(75), { dim: '0:0', rest: '1:15' });
   assert.deepEqual(fmtClockParts(615), { dim: '0:', rest: '10:15' });
   assert.deepEqual(fmtClockParts(3600), { dim: '', rest: '1:00:00' });
   assert.deepEqual(fmtClockParts(4271.9), { dim: '', rest: '1:11:11' });
   assert.deepEqual(fmtClockParts(35999), { dim: '', rest: '9:59:59' });
   assert.deepEqual(fmtClockParts(36000), { dim: '', rest: '10:00:00' });
-  assert.deepEqual(fmtClockParts(-5), { dim: '0:0', rest: '0:00' });
+  assert.deepEqual(fmtClockParts(-5), { dim: '0:00:00', rest: '' });
 });
 
 test('closeoutTimer: returns the stopped timer when there is something to narrate', () => {

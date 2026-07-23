@@ -95,7 +95,10 @@ export function fmtClockParts(totalSeconds) {
   const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
   const ss = String(s % 60).padStart(2, '0');
   const str = `${h}:${mm}:${ss}`;
-  const dim = h > 0 ? 0 : (mm[0] === '0' ? 3 : 2);
+  // Gray every position up to the first non-zero digit: 0:00:00 is wholly
+  // gray, and hr/min/sec each light up only once real time reaches them.
+  const first = str.search(/[1-9]/);
+  const dim = first === -1 ? str.length : first;
   return { dim: str.slice(0, dim), rest: str.slice(dim) };
 }
 
@@ -156,10 +159,13 @@ const PIP_CSS = `
   .row.running .dot { background: var(--good); animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
   .clock { font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-weight: 700; font-size: 14px; flex: none; min-width: 66px; }
-  /* leading hour/minute zeros recede (2026-07-15 feedback) */
-  .clock .dim, .co-time .dim { opacity: 0.4; }
+  /* positions with no recorded digit yet are flat gray, not a faded ghost
+     (2026-07-22 feedback: the dimmed leading zeros read as distracting) */
+  .clock .dim, .co-time .dim { color: var(--text-muted); }
   /* active counter is GREEN, matching the app (2026-07-14 design vocabulary) */
   .row.running .clock { color: var(--good); }
+  /* …but a running clock's not-yet-reached positions stay gray, not green */
+  .row.running .clock .dim { color: var(--text-muted); }
   .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
   .row.running .name { color: var(--text-primary); }
   .pin {
