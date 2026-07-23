@@ -645,7 +645,9 @@ kbd {
   position: absolute; top: 6px; right: 8px; font-size: 10.5px; font-weight: 700;
   color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px;
 }
-.section-title { display: flex; align-items: center; gap: 10px; margin: 22px 0 10px; }
+/* wrap so crowded toolbars (e.g. the Timers header on a phone) fall onto a
+   second row instead of overflowing the viewport horizontally */
+.section-title { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 8px; margin: 22px 0 10px; }
 .section-title h2 { margin: 0; }
 /* dashboard panels: bounding boxes around the timer area and the day's
    entries (visual cueing). Same treatment as .card; inner timer/entry cards
@@ -670,6 +672,9 @@ kbd {
   .main { padding: 14px; }
   .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
   .subnav { flex-direction: row; flex-wrap: wrap; border-left: 0; margin-left: 0; }
+  /* the filter takes its own full-width row so what you type is visible */
+  .timer-search-wrap { flex: 1 1 100%; }
+  .timer-search { width: 100%; box-sizing: border-box; }
 }
 
 /* ---------- ghost-text autocomplete ---------- */
@@ -759,7 +764,14 @@ tr.import-skip td { opacity: 0.55; }
   background: var(--surface-1); border-top: 1px solid var(--border);
 }
 @media (max-width: 760px) {
-  .today-footer { left: 0; }
+  /* full width, and drop the ambient extras (meter + "filed"/% labels) that
+     don't fit — total, the live clock, and Close stay; long timer names
+     truncate rather than shoving Close off-screen */
+  .today-footer { left: 0; padding: 8px 12px; gap: 8px; }
+  .today-footer > .muted { display: none; }
+  .today-footer .tf-meter { display: none; }
+  .tf-running { min-width: 0; }
+  .tf-running .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; }
   .dashboard-view { padding-bottom: 54px; }
 }
 .tf-total { font-size: 16px; font-weight: 600; }
