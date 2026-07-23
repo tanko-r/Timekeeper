@@ -11,11 +11,12 @@ export function addDaysStr(dateStr, n) {
   return toStr(new Date(y, m - 1, d + n, 12));
 }
 
-// {from, to} inclusive for the mode containing `anchor`. Weeks start Monday.
-export function rangeFor(mode, anchor) {
+// {from, to} inclusive for the mode containing `anchor`. weekStart: 0 = Sunday
+// (default), 1 = Monday — kept in sync with settings.calendar.weekStartsOn.
+export function rangeFor(mode, anchor, weekStart = 0) {
   if (mode === 'week') {
     const [y, m, d] = parse(anchor);
-    const dow = (new Date(y, m - 1, d, 12).getDay() + 6) % 7;
+    const dow = (new Date(y, m - 1, d, 12).getDay() - weekStart + 7) % 7;
     const from = addDaysStr(anchor, -dow);
     return { from, to: addDaysStr(from, 6) };
   }

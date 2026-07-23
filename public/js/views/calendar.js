@@ -10,10 +10,16 @@ const pad = (n) => String(n).padStart(2, '0');
 
 function monthOf(dateStr) { return dateStr.slice(0, 7); }
 
-function gridFor(yyyyMm) {
+const chunk7 = (cells) => Array.from({ length: cells.length / 7 }, (_, i) => cells.slice(i * 7, i * 7 + 7));
+
+// weekStart: 0 = Sunday (default), 1 = Monday — from settings.calendar.
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const dowLabels = (weekStart) => Array.from({ length: 7 }, (_, i) => DOW[(i + weekStart) % 7]);
+
+function gridFor(yyyyMm, weekStart = 0) {
   const [y, m] = yyyyMm.split('-').map(Number);
   const first = new Date(y, m - 1, 1, 12);
-  const startOffset = (first.getDay() + 6) % 7; // Monday start
+  const startOffset = (first.getDay() - weekStart + 7) % 7;
   const start = new Date(y, m - 1, 1 - startOffset, 12);
   const cells = [];
   for (let i = 0; i < 42; i++) {
@@ -28,11 +34,11 @@ function gridFor(yyyyMm) {
   return cells;
 }
 
-function weekFor(dateStr) {
+function weekFor(dateStr, weekStart = 0) {
   const [y, m, d] = dateStr.split('-').map(Number);
-  const dow = (new Date(y, m - 1, d, 12).getDay() + 6) % 7;
-  const monday = addDays(dateStr, -dow);
-  return Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const dow = (new Date(y, m - 1, d, 12).getDay() - weekStart + 7) % 7;
+  const first = addDays(dateStr, -dow);
+  return Array.from({ length: 7 }, (_, i) => addDays(first, i));
 }
 
 // Entries panel under the calendar (2026-07-13 feedback): a single click
@@ -43,10 +49,11 @@ function SelectedPanel({ selected, settings, openEditor, refreshKey, bumpRefresh
   const [mode, setMode] = useState('day'); // day | week | month | range
   const [customFrom, setCustomFrom] = useState(selected);
   const [customTo, setCustomTo] = useState(selected);
+  const weekStart = settings?.calendar?.weekStartsOn === 1 ? 1 : 0; // default Sunday
 
   const range = mode === 'range'
     ? (customFrom <= customTo ? { from: customFrom, to: customTo } : { from: customTo, to: customFrom })
-    : rangeFor(mode, selected);
+    : rangeFor(mode, selected, weekStart);
 
   const { loading, data } = useAsync(
     () => api.get(`/api/entries?from=${range.from}&to=${range.to}`),
@@ -112,9 +119,11 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
   const [anchor, setAnchor] = useState(todayStr());
   const [selected, setSelected] = useState(null);
 
+  const weekStart = settings?.calendar?.weekStartsOn === 1 ? 1 : 0; // default Sunday
+
   const range = mode === 'month'
-    ? { from: gridFor(monthOf(anchor))[0].date, to: gridFor(monthOf(anchor))[41].date }
-    : { from: weekFor(anchor)[0], to: weekFor(anchor)[6] };
+    ? { from: gridFor(monthOf(anchor), weekStart)[0].date, to: gridFor(monthOf(anchor), weekStart)[41].date }
+    : { from: weekFor(anchor, weekStart)[0], to: weekFor(anchor, weekStart)[6] };
 
   const { loading, data, error } = useAsync(
     () => api.get(`/api/entries?from=${range.from}&to=${range.to}`),
@@ -130,6 +139,16 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
     if (e.billable) d.billable += e.total; else d.nonbillable += e.total;
     d.entries.push(e);
   }
+
+  // Billed/total for the whole visible period — month (in-month days only) or
+  // week (2026-07-18 feedback: a per-month billed-hours total).
+  const inPeriod = mode === 'month'
+    ? (d) => monthOf(d) === monthOf(anchor)
+    : (() => { const wk = new Set(weekFor(anchor, weekStart)); return (d) => wk.has(d); })();
+  const periodTotals = (data || []).reduce((a, e) => {
+    if (inPeriod(e.date)) { a.total += e.total; if (e.billable) a.billable += e.total; }
+    return a;
+  }, { billable: 0, total: 0 });
 
   const target = settings?.targets?.dailyHours || 0;
   const statusFor = (day, info) => {
@@ -161,7 +180,7 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
   return html`
     <div class="page-head">
       <button class="btn" onClick=${() => shift(-1)}><${Icon} name="chevronLeft" size=${16} /></button>
-      <h1>${mode === 'month' ? monthLabel : `Week of ${weekFor(anchor)[0]}`}</h1>
+      <h1>${mode === 'month' ? monthLabel : `Week of ${weekFor(anchor, weekStart)[0]}`}</h1>
       <button class="btn" onClick=${() => shift(1)}><${Icon} name="chevronRight" size=${16} /></button>
       <button class="btn btn-sm" onClick=${() => { setAnchor(todayStr()); setSelected(todayStr()); }}>Today</button>
       <div class="spacer"></div>
@@ -175,33 +194,55 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
       <span><span class="dot dot-nonbillable"></span>Non-billable</span>
       ${target ? html`<span class="muted">✓ ≥${fmtHours(target)}h · ◐ ≥50% · ! under 50%</span>` : null}
       <span class="muted">Click a day to see its entries below · double-click opens it</span>
+      <span class="cal-period-total" style=${{ marginLeft: 'auto' }}>
+        <strong class="mono">${fmtHours(periodTotals.billable)}h</strong> billed ·
+        <strong class="mono">${fmtHours(periodTotals.total)}h</strong> total this ${mode}
+      </span>
     </div>
     ${loading && !data ? html`<${Spinner} />` : mode === 'month' ? html`
       <div class="cal-grid">
-        ${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => html`<div key=${d} class="cal-dow">${d}</div>`)}
-        ${gridFor(monthOf(anchor)).map((cell) => {
-          const info = byDay.get(cell.date);
-          const status = statusFor(cell, info);
-          const scale = Math.max(target || 0, info ? info.total : 0, 0.1);
-          return html`
-            <button key=${cell.date}
-              class=${'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '')
-                + (cell.date === todayStr() ? ' today' : '') + (cell.date === selected ? ' selected' : '')}
-              onClick=${() => pick(cell.date)}
-              onDoubleClick=${() => nav(`#/day/${cell.date}`)}>
-              <span class="cal-num">${cell.dayNum}</span>
-              ${status ? html`<span class=${'cal-status ' + status[0]} title=${'vs ' + fmtHours(target) + 'h target'}>${status[1]}</span>` : null}
-              ${info ? html`
-                <span class="cal-hours mono">${fmtHours(info.total)}</span>
-                <span class="cal-split" title=${`${fmtHours(info.billable)} billable / ${fmtHours(info.nonbillable)} non-billable`}>
-                  ${info.billable > 0 ? html`<span class="b" style=${{ width: `${(info.billable / scale) * 100}%` }}></span>` : null}
-                  ${info.nonbillable > 0 ? html`<span class="nb" style=${{ width: `${(info.nonbillable / scale) * 100}%` }}></span>` : null}
-                </span>` : null}
-            </button>`;
-        })}
+        ${dowLabels(weekStart).map((d) => html`<div key=${d} class="cal-dow">${d}</div>`)}
+        <div class="cal-dow cal-total-head">Total</div>
+        ${chunk7(gridFor(monthOf(anchor), weekStart)).flatMap((week, wi) => [
+          ...week.map((cell) => {
+            const info = byDay.get(cell.date);
+            const status = statusFor(cell, info);
+            const scale = Math.max(target || 0, info ? info.total : 0, 0.1);
+            return html`
+              <button key=${cell.date}
+                class=${'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '')
+                  + (cell.date === todayStr() ? ' today' : '') + (cell.date === selected ? ' selected' : '')}
+                onClick=${() => pick(cell.date)}
+                onDoubleClick=${() => nav(`#/day/${cell.date}`)}>
+                <span class="cal-num">${cell.dayNum}</span>
+                ${status ? html`<span class=${'cal-status ' + status[0]} title=${'vs ' + fmtHours(target) + 'h target'}>${status[1]}</span>` : null}
+                ${info ? html`
+                  <span class="cal-hours mono">${fmtHours(info.total)}</span>
+                  <span class="cal-split" title=${`${fmtHours(info.billable)} billable / ${fmtHours(info.nonbillable)} non-billable`}>
+                    ${info.billable > 0 ? html`<span class="b" style=${{ width: `${(info.billable / scale) * 100}%` }}></span>` : null}
+                    ${info.nonbillable > 0 ? html`<span class="nb" style=${{ width: `${(info.nonbillable / scale) * 100}%` }}></span>` : null}
+                  </span>` : null}
+              </button>`;
+          }),
+          (() => {
+            const wk = week.reduce((a, cell) => {
+              const info = byDay.get(cell.date);
+              if (info) { a.billable += info.billable; a.nonbillable += info.nonbillable; }
+              return a;
+            }, { billable: 0, nonbillable: 0 });
+            const wtotal = wk.billable + wk.nonbillable;
+            return html`
+              <div key=${'wt' + wi} class="cal-week-total"
+                title=${`${fmtHours(wk.billable)} billable / ${fmtHours(wk.nonbillable)} non-billable this week`}>
+                ${wtotal > 0 ? html`
+                  <span class="cal-wt-b mono">${fmtHours(wk.billable)}</span>
+                  ${wk.nonbillable > 0 ? html`<span class="cal-wt-nb mono">${fmtHours(wk.nonbillable)}</span>` : null}` : null}
+              </div>`;
+          })(),
+        ])}
       </div>` : html`
       <div class="week-strip">
-        ${weekFor(anchor).map((day) => {
+        ${weekFor(anchor, weekStart).map((day) => {
           const info = byDay.get(day);
           return html`
             <div key=${day} class=${'week-col' + (day === selected ? ' selected' : '')}>

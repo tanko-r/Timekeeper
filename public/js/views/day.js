@@ -15,10 +15,11 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
   const [mode, setMode] = useState('day'); // day | week | month | range
   const [customFrom, setCustomFrom] = useState(day);
   const [customTo, setCustomTo] = useState(day);
+  const weekStart = settings?.calendar?.weekStartsOn === 1 ? 1 : 0; // default Sunday
 
   const range = mode === 'range'
     ? (customFrom <= customTo ? { from: customFrom, to: customTo } : { from: customTo, to: customFrom })
-    : rangeFor(mode, day);
+    : rangeFor(mode, day, weekStart);
 
   const { loading, data, error } = useAsync(
     () => api.get(`/api/entries?from=${range.from}&to=${range.to}`),

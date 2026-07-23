@@ -5,7 +5,7 @@ import { getSetting, setSetting } from '../db.js';
 // endpoints with password-change rules.
 const KEYS = [
   'validation', 'rounding', 'targets', 'idleNudgeHours',
-  'backup', 'theme', 'ai', 'tim', 'import', 'pip',
+  'backup', 'theme', 'ai', 'tim', 'import', 'pip', 'calendar',
 ];
 
 export function allSettings(db) {

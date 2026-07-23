@@ -166,6 +166,13 @@ function GeneralCard({ settings, reloadSettings }) {
           <input type="number" min="0" step="0.5" defaultValue=${s.targets?.dailyHours ?? 8}
             onBlur=${(e) => save({ targets: { dailyHours: Number(e.target.value) || 0 } }, reloadSettings)} />
         <//>
+        <${SettingRow} label="Week starts on" hint="First column of the calendar month grid">
+          <select value=${s.calendar?.weekStartsOn === 1 ? '1' : '0'}
+            onChange=${(e) => save({ calendar: { weekStartsOn: Number(e.target.value) } }, reloadSettings)}>
+            <option value="0">Sunday</option>
+            <option value="1">Monday</option>
+          </select>
+        <//>
         <${SettingRow} label="Idle timer nudge (hours)" hint="Flag a running timer after this long">
           <input type="number" min="0.5" step="0.5" defaultValue=${s.idleNudgeHours ?? 3}
             onBlur=${(e) => save({ idleNudgeHours: Number(e.target.value) || 3 }, reloadSettings)} />

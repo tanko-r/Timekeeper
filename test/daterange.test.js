@@ -12,11 +12,18 @@ test('rangeFor day is the single day', () => {
   assert.deepEqual(rangeFor('day', '2026-07-13'), { from: '2026-07-13', to: '2026-07-13' });
 });
 
-test('rangeFor week runs Monday through Sunday of the anchor week', () => {
+test('rangeFor week defaults to Sunday-through-Saturday of the anchor week', () => {
+  // 2026-07-15 is a Wednesday; its Sunday-start week is 07-12 (Sun) .. 07-18 (Sat)
+  assert.deepEqual(rangeFor('week', '2026-07-15'), { from: '2026-07-12', to: '2026-07-18' });
+  assert.deepEqual(rangeFor('week', '2026-07-12'), { from: '2026-07-12', to: '2026-07-18' }); // Sunday starts the week
+  assert.deepEqual(rangeFor('week', '2026-07-19'), { from: '2026-07-19', to: '2026-07-25' }); // next Sunday starts a new week
+});
+
+test('rangeFor week honors a Monday weekStart', () => {
   // 2026-07-13 is a Monday
-  assert.deepEqual(rangeFor('week', '2026-07-13'), { from: '2026-07-13', to: '2026-07-19' });
-  assert.deepEqual(rangeFor('week', '2026-07-15'), { from: '2026-07-13', to: '2026-07-19' });
-  assert.deepEqual(rangeFor('week', '2026-07-19'), { from: '2026-07-13', to: '2026-07-19' }); // Sunday belongs to the same week
+  assert.deepEqual(rangeFor('week', '2026-07-13', 1), { from: '2026-07-13', to: '2026-07-19' });
+  assert.deepEqual(rangeFor('week', '2026-07-15', 1), { from: '2026-07-13', to: '2026-07-19' });
+  assert.deepEqual(rangeFor('week', '2026-07-19', 1), { from: '2026-07-13', to: '2026-07-19' }); // Sunday belongs to the same week
 });
 
 test('rangeFor month covers the anchor month exactly', () => {
