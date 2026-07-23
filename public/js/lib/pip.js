@@ -452,6 +452,7 @@ export async function toggleTimerPip() {
   function buildNarrativeField(t, onEscape) {
     const ta = doc.createElement('textarea');
     ta.rows = 2;
+    ta.spellcheck = true; // 2026-07-18 feedback: spell-check the float narrative
     ta.value = drafts.has(t.id) ? drafts.get(t.id) : narrativeValue(t);
     ta.addEventListener('input', () => {
       const hit = expandShortcuts(ta.value, ta.selectionStart, shortcuts);

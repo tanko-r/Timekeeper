@@ -593,7 +593,7 @@ export function EntryEditor({ spec, settings, onClose }) {
               placeholder="0.0" disabled=${finalized} class="mono"
               onInput=${(e) => updateLineDuration(i, e.target.value)} />
             <${GhostInput} value=${t.fragment} suggestions=${phrases} disabled=${finalized}
-              expand=${expand} onSelectionChange=${onFieldSelect}
+              expand=${expand} onSelectionChange=${onFieldSelect} spellcheck=${true}
               placeholder=${autoAvailable ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
               onChange=${(v) => updateLine(i, { fragment: v })} />
             <div class="row" style=${{ flexWrap: 'nowrap', gap: '2px' }}>
@@ -641,10 +641,10 @@ export function EntryEditor({ spec, settings, onClose }) {
       <div class="narrative-preview">
         ${autoOn ? html`
           <span class="auto-badge">AUTO</span>
-          <textarea value=${autoText || ''} disabled=${finalized}
+          <textarea value=${autoText || ''} disabled=${finalized} spellcheck=${true}
             onInput=${(e) => applyAutoEdit(e.target.value)}></textarea>` : html`
           <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
-            suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect}
+            suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect} spellcheck=${true}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onChange=${(v) => update({ narrative: v })} />`}
       </div>
