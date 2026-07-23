@@ -22,6 +22,19 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     return () => window.removeEventListener('tk:close-day', onCloseDay);
   }, []);
 
+  // Re-pull today's totals + running timers when the tab/PWA wakes, so the
+  // footer clock and filed total are current on resume (mobile pauses timers
+  // while backgrounded). See TimerGrid for the same pattern.
+  useEffect(() => {
+    const onWake = () => { if (document.visibilityState === 'visible') reload(); };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    return () => {
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [reload]);
+
   // [ / ] step into the adjacent days' viewers, same keys as the day view
   useEffect(() => {
     if (!data) return undefined;

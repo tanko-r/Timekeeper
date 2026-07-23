@@ -95,6 +95,20 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     const poll = setInterval(() => reload().catch(() => {}), 5000);
     return () => clearInterval(poll);
   }, [reload]);
+  // Refresh the moment the tab/PWA returns to the foreground. Backgrounding on
+  // mobile pauses both the poll and the display tick, so without this the
+  // running clock shows a stale value for up to 5s on resume — which reads as
+  // "time isn't being recorded". The recorded time is server-authoritative
+  // (computed from last_started_at); this just re-syncs the display promptly.
+  useEffect(() => {
+    const onWake = () => { if (document.visibilityState === 'visible') reload().catch(() => {}); };
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    return () => {
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [reload]);
   // The rendered second flips when (now - fetchedAt) crosses a whole second —
   // tick aligned to that boundary, not a drifting 1s interval (which made the
   // clock hang and then jump two counts at once).
