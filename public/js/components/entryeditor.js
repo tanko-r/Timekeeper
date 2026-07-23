@@ -63,6 +63,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [aiMenu, setAiMenu] = useState(null); // {x, y} — the AI dropdown's position
   const [aiSplit, setAiSplit] = useState(false); // "split into tasks" — off by default (spec 3.3)
   const [aiBusy, setAiBusy] = useState(false);
+  const [aiUndo, setAiUndo] = useState(null); // pre-rewrite {auto, narrative} snapshot, or null
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
@@ -177,6 +178,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   // null (a structural break — deleted paren, merged/added segment) → the
   // box detaches into a plain manual narrative, keeping exactly what's typed.
   function applyAutoEdit(text) {
+    if (aiUndo) setAiUndo(null); // manual edit supersedes the last AI rewrite
     const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling });
     if (!parsed) { update({ narrative: text, auto: false }); return; }
     let changed = false;
@@ -480,10 +482,21 @@ export function EntryEditor({ spec, settings, onClose }) {
   function runAi(kind) {
     const seed = seedText;
     if (!seed) return;
+    // Snapshot what the narrative field shows right now so the rewrite can be
+    // undone (2026-07-16 / 2026-07-20 feedback). Restores AUTO mode too.
+    setAiUndo({ auto: autoOn, narrative: local.narrative });
     if (autoOn) update({ auto: false, narrative: seed });
     if (kind === 'expand') { if (aiSplit) aiExpand(seed); else aiNarrate('draft', seed); return; }
     if (kind === 'shorten') { aiNarrate('shorter', seed); return; }
     aiNarrate('regenerate', seed);
+  }
+
+  // Restore the pre-rewrite narrative (and AUTO state). One-shot: the button
+  // vanishes after use or once the user edits the field manually.
+  function undoAi() {
+    if (!aiUndo) return;
+    update({ auto: aiUndo.auto, narrative: aiUndo.narrative });
+    setAiUndo(null);
   }
 
   const aiMenuItems = [
@@ -626,6 +639,10 @@ export function EntryEditor({ spec, settings, onClose }) {
             title=${autoOn ? 'Turn off — edit narrative freely' : 'Turn on — regenerate from task lines'}
             onClick=${() => update({ auto: !local.auto })}>AUTO</button>` : null}
         <div class="spacer" style=${{ flex: 1 }}></div>
+        ${aiUndo && !finalized ? html`
+          <button type="button" class="btn btn-sm" title="Undo the AI rewrite — restore your previous narrative"
+            disabled=${aiBusy} onClick=${undoAi}>
+            <${Icon} name="history" size=${14} /> Undo</button>` : null}
         ${ai && ai.enabled && ai.reachable && !finalized ? html`
           <button type="button" class="btn btn-sm" title="AI narrative assist" disabled=${!seedText || aiBusy}
             onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); setAiMenu({ x: r.left, y: r.bottom + 4 }); }}>
@@ -636,7 +653,8 @@ export function EntryEditor({ spec, settings, onClose }) {
       ${!finalized && suggestionChips.length > 0 ? html`
         <div class="editor-suggest-chips">
           ${suggestionChips.map((t) => html`
-            <button key=${t} type="button" title=${t} onClick=${() => update({ narrative: t })}>${t}</button>`)}
+            <button key=${t} type="button" title=${t}
+              onClick=${() => { if (aiUndo) setAiUndo(null); update({ narrative: t }); }}>${t}</button>`)}
         </div>` : null}
       <div class="narrative-preview">
         ${autoOn ? html`
@@ -646,7 +664,7 @@ export function EntryEditor({ spec, settings, onClose }) {
           <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
             suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect} spellcheck=${true}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
-            onChange=${(v) => update({ narrative: v })} />`}
+            onChange=${(v) => { if (aiUndo) setAiUndo(null); update({ narrative: v }); }} />`}
       </div>
       ${aiMenu ? html`<${ContextMenu} x=${aiMenu.x} y=${aiMenu.y} items=${aiMenuItems} onClose=${() => setAiMenu(null)} />` : null}
 
