@@ -259,7 +259,10 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // no re-render, so the focus effect below never reruns.
   useEffect(() => {
     const onSearch = () => {
-      if (searchInputRef.current) searchInputRef.current.focus();
+      const el = searchInputRef.current;
+      // Select any existing text so the next keystroke replaces it
+      // (2026-07-17 feedback: re-pressing `/` should start a fresh filter).
+      if (el) { el.focus(); el.select(); }
       else setSearchOpen(true);
     };
     window.addEventListener('tk:timer-search', onSearch);
@@ -274,7 +277,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // silently no-ops. An effect is guaranteed to run only after the DOM for
   // its triggering render has committed, so the ref is always live here.
   useEffect(() => {
-    if (searchOpen) searchInputRef.current?.focus();
+    if (searchOpen) { searchInputRef.current?.focus(); searchInputRef.current?.select(); }
   }, [searchOpen]);
 
   // ---------- ordering ----------
@@ -488,7 +491,17 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Falls back to "All" whenever the persisted/stale tab key isn't in the
   // current tab list — covers a deleted group, a client filtered to zero
   // matches, or simply never having a stored tab for this mode.
-  const effectiveTab = tabList.some((t) => t.key === activeTab) ? activeTab : 'all';
+  let effectiveTab = tabList.some((t) => t.key === activeTab) ? activeTab : 'all';
+  // A live filter that empties the current tab (an activity tab keeps its slot
+  // even at count 0) but still matches timers elsewhere jumps to "All" so the
+  // hits are visible; when nothing matches anywhere it stays put (2026-07-17
+  // feedback). Transient — clearing the filter restores the persisted tab.
+  if (norm && effectiveTab !== 'all' && shown.length > 0) {
+    const curList = ACTIVITY[effectiveTab]
+      ? activityList(effectiveTab)
+      : (sections.find((sec) => sec.key === effectiveTab)?.list ?? []);
+    if (curList.length === 0) effectiveTab = 'all';
+  }
   const activeSection = tabsEnabled && effectiveTab !== 'all'
     ? sections.find((sec) => sec.key === effectiveTab) : null;
   const renderedSections = ACTIVITY[effectiveTab] && tabsEnabled
