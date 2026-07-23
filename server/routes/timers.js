@@ -16,6 +16,9 @@ import { containsTimeAmounts } from '../lib/timeAmounts.js';
 // start/stops. Each stop syncs the day total into ONE linked draft entry.
 // "fresh" zeroes the clock and unlinks so later time files to a new entry.
 
+// Caption a matterless quick timer carries until it's named or gets a matter.
+const QUICK_TIMER_NAME = 'Quick timer';
+
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
   group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since,
@@ -186,7 +189,7 @@ export function timersRouter({ db, clock }) {
       if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
       if (!name) return res.status(400).json({ error: 'Timer name required.' });
     }
-    if (!name) name = 'Quick timer';
+    if (!name) name = QUICK_TIMER_NAME;
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
       return res.status(400).json({ error: 'Unknown group.' });
     }
@@ -286,9 +289,17 @@ export function timersRouter({ db, clock }) {
     if (b.group_id != null && !db.prepare('SELECT id FROM timer_groups WHERE id=?').get(b.group_id)) {
       return res.status(400).json({ error: 'Unknown group.' });
     }
-    const name = b.name !== undefined ? String(b.name).trim() : timer.name;
+    let name = b.name !== undefined ? String(b.name).trim() : timer.name;
     if (!name) return res.status(400).json({ error: 'Timer name required.' });
     const cmChanged = b.cm_id !== undefined && (b.cm_id ?? null) !== (timer.cm_id ?? null);
+    // Auto-caption (2026-07-17 / 2026-07-21 feedback): assigning a matter to a
+    // still-default "Quick timer" renames it to the matter's short name. Only
+    // when the request isn't setting a name itself and the timer hasn't been
+    // named by hand — a deliberate label is never clobbered.
+    if (b.name === undefined && cmChanged && b.cm_id != null && timer.name === QUICK_TIMER_NAME) {
+      const m = db.prepare('SELECT short_name FROM matters WHERE id=?').get(b.cm_id);
+      if (m && m.short_name) name = m.short_name;
+    }
     // Quick-timer completion (2026-07-13, entry-backed): if the timer's
     // linked entry is a matterless draft, assigning a matter ASSOCIATES that
     // entry in place — same entry, same time, same narrative, now finalizable.

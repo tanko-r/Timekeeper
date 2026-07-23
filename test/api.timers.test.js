@@ -87,6 +87,34 @@ test('re-sync preserves narrative and extra task lines the user added', () =>
     assert.ok(stop2.entry.validation.some((v) => v.code === 'sum_mismatch'));
   }));
 
+// 2026-07-17 / 2026-07-21 feedback: assigning a matter to a still-default
+// "Quick timer" captions it with the matter's short name, but never clobbers
+// a name the user chose, and an explicit name in the same PATCH wins.
+test('assigning a matter to a default "Quick timer" renames it to the matter short name', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {})).body;
+    assert.equal(timer.name, 'Quick timer');
+    assert.equal(timer.cm_id, null);
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(patched.cm_id, cm.id);
+    assert.equal(patched.name, 'Acme lease', 'default caption becomes the matter short name');
+  }));
+
+test('assigning a matter does NOT clobber a manually named timer', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Call re dock' })).body;
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: cm.id })).body;
+    assert.equal(patched.name, 'Call re dock', 'a deliberate name survives matter assignment');
+  }));
+
+test('an explicit name in the same matter-assigning PATCH wins over the auto-rename', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {})).body;
+    const patched = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`,
+      { cm_id: cm.id, name: 'My label' })).body;
+    assert.equal(patched.name, 'My label');
+  }));
+
 test('fresh: zeroes clock, unlinks; next stop files a NEW entry; old entry retained', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
