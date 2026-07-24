@@ -1,18 +1,22 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useMemo, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, addDays, emitToast, Confirm, Icon,
+  html, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
+  fmtDateFull, addDays, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
 import { CloseOut } from '/js/components/closeout.js';
+import { SummaryModal } from '/js/components/summary.js';
+import { buildDaySummary } from '/js/lib/daysummary.js';
 import { nav } from '/js/app.js';
 
 export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const { loading, data, error, reload } = useAsync(() => api.get('/api/dashboard'), [refreshKey]);
   const [warnGate, setWarnGate] = useState(null);
   const [closeOut, setCloseOut] = useState(false);
+  const [summary, setSummary] = useState(null);
   // Timestamp of the dashboard payload — the footer adds wall-clock time since
   // this moment to the (fetch-frozen) running-timer seconds.
   const fetchedAt = useMemo(() => Date.now(), [data]);
@@ -21,6 +25,22 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     window.addEventListener('tk:close-day', onCloseDay);
     return () => window.removeEventListener('tk:close-day', onCloseDay);
   }, []);
+
+  // Today read back as prose — everything filed, drafts included, since this
+  // is for recall rather than for billing. Shared by the footer button and
+  // the `s` shortcut, so it lives above the early returns.
+  const showSummary = useCallback(() => {
+    if (!data) return;
+    setSummary(buildDaySummary(data.entries, {
+      title: fmtDateFull(data.date),
+      increment: settings?.rounding?.increment || 0.1,
+    }));
+  }, [data, settings]);
+
+  useEffect(() => {
+    window.addEventListener('tk:day-summary', showSummary);
+    return () => window.removeEventListener('tk:day-summary', showSummary);
+  }, [showSummary]);
 
   // Re-pull today's totals + running timers when the tab/PWA wakes, so the
   // footer clock and filed total are current on resume (mobile pauses timers
@@ -159,7 +179,12 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         onClose=${() => setWarnGate(null)} />` : null}
     </div>
 
-    <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt} onCloseDay=${() => setCloseOut(true)} />
+    <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt}
+      onCloseDay=${() => setCloseOut(true)} onSummary=${showSummary} />
+
+    ${summary ? html`
+      <${SummaryModal} text=${summary} title=${`Summary — ${fmtDateFull(d.date)}`}
+        filename=${`timekeeper-summary-${d.date}.txt`} onClose=${() => setSummary(null)} />` : null}
 
     ${closeOut ? html`
       <${CloseOut} onClose=${(changed) => { setCloseOut(false); if (changed) bumpRefresh(); }} openEditor=${openEditor} />` : null}

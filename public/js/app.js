@@ -97,6 +97,7 @@ function KeyboardHelp({ onClose }) {
     ['n', 'New time entry'],
     ['t', 'Start / stop the last-used timer'],
     ['c', 'Close the day (dashboard)'],
+    ['s', 'Summary of the day in view as plain text'],
     ['/', 'Search — timers on the dashboard, everything elsewhere'],
     ['g then d / c / s / e', 'Go to Dashboard / Calendar / Stats / Export'],
     ['[ and ]', 'Previous / next day (day view)'],
@@ -286,6 +287,10 @@ function App() {
       } else if (e.key === 'c' && route.path === 'dashboard') {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:close-day'));
+      } else if (e.key === 's' && (route.path === 'dashboard' || route.path === 'day')) {
+        // whichever of the two views is mounted answers this
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('tk:day-summary'));
       } else if (e.key === '?') {
         setShowHelp(true);
       }

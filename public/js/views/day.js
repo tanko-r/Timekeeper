@@ -1,10 +1,12 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  addDays, todayStr, emitToast, Confirm, Icon,
+  html, useState, useEffect, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
+  fmtDateFull, addDays, todayStr, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { rangeFor, shiftAnchor } from '/js/lib/daterange.js';
+import { buildDaySummary } from '/js/lib/daysummary.js';
 import { EntryList } from '/js/components/entrylist.js';
+import { SummaryModal } from '/js/components/summary.js';
 import { nav } from '/js/app.js';
 
 // Entry viewer for a date (2026-07-13 feedback): Day / Week / Month / Range
@@ -44,10 +46,7 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
   }, [day, mode]);
 
   const [warnGate, setWarnGate] = useState(null);
-  if (error) return html`<${ErrorBox} error=${error} />`;
-  const entries = data || [];
-  const total = entries.reduce((a, e) => a + e.total, 0);
-  const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
+  const [summary, setSummary] = useState(null);
 
   const monthLabel = (() => {
     const [y, m] = day.split('-').map(Number);
@@ -57,6 +56,28 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     : mode === 'week' ? `Week of ${fmtDateLong(range.from)}`
     : mode === 'month' ? monthLabel
     : 'Custom range';
+  // spelled out in full for the summary, which is prose rather than chrome
+  const summaryTitle = mode === 'day' ? fmtDateFull(day) : title;
+
+  // Reads the range on screen back as prose — everything in view, drafts
+  // included, since this is for recall rather than for billing.
+  const showSummary = useCallback(() => {
+    setSummary(buildDaySummary(data || [], {
+      title: summaryTitle,
+      increment: settings?.rounding?.increment || 0.1,
+      showDates: mode !== 'day',
+    }));
+  }, [data, summaryTitle, mode, settings]);
+
+  useEffect(() => {
+    window.addEventListener('tk:day-summary', showSummary);
+    return () => window.removeEventListener('tk:day-summary', showSummary);
+  }, [showSummary]);
+
+  if (error) return html`<${ErrorBox} error=${error} />`;
+  const entries = data || [];
+  const total = entries.reduce((a, e) => a + e.total, 0);
+  const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
 
   async function finalizeDay(ack = false) {
     const r = await api.post('/api/finalize-day', { date: day, ack });
@@ -109,6 +130,8 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
         </span>` : null}
       <div class="spacer"></div>
       <span class="muted">${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
+      <button class="btn" title="Read the entries in view back as plain text — client, matter, hours, narrative (s)"
+        onClick=${showSummary}><${Icon} name="clipboard" size=${16} /> Summary</button>
       <button class="btn" title="Download finalized entries in view as CSV (marks them exported)"
         onClick=${exportRange}><${Icon} name="export" size=${16} /> Export</button>
       ${mode === 'day' ? html`
@@ -118,6 +141,10 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     ${loading && !data ? html`<${Spinner} />` : html`
       <${EntryList} entries=${entries} openEditor=${openEditor} onChanged=${bumpRefresh}
         settings=${settings} showDate=${mode !== 'day'} />`}
+    ${summary ? html`
+      <${SummaryModal} text=${summary} title=${`Summary — ${summaryTitle}`}
+        filename=${`timekeeper-summary-${range.from}${range.to !== range.from ? `_${range.to}` : ''}.txt`}
+        onClose=${() => setSummary(null)} />` : null}
     ${warnGate ? html`
       <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"
         message=${warnGate.message}

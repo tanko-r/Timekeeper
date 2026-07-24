@@ -631,6 +631,19 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 .modal-body { padding: 12px 18px 18px; }
 .confirm-message { color: var(--text-secondary); }
 
+/* Day/range summary — monospace so the wrapped narrative indents line up the
+   way they will wherever the text is pasted. pre-wrap (not pre) so a phone
+   never has to scroll sideways to read it: Copy takes the string straight
+   from JS, so soft-wrapping here cannot change what gets pasted. */
+.summary-text {
+  margin: 0; padding: 12px 14px; max-height: 58vh; overflow: auto;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.5; color: var(--text-primary);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.summary-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .toast {
   background: var(--text-primary); color: var(--surface-1); padding: 10px 16px;
@@ -800,6 +813,7 @@ tr.import-skip td { opacity: 0.55; }
   .today-footer { left: 0; padding: 8px 12px; gap: 8px; }
   .today-footer > .muted { display: none; }
   .today-footer .tf-meter { display: none; }
+  .tf-summary .tf-btn-label { display: none; } /* icon only — Close must stay on screen */
   .tf-running { min-width: 0; }
   .tf-running .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; }
   .dashboard-view { padding-bottom: 54px; }

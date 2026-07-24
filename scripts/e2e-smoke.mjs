@@ -1200,6 +1200,26 @@ await step('tk:open-entry event opens the entry editor (float → main app)', as
 // parameter and JSON.stringify(body) died on the circular DOM structure
 // before the request was ever sent. An empty far-past day keeps this
 // side-effect-free: the only success signal is the "Nothing to finalize" toast.
+await step('day summary: button and `s` render the day as plain text', async () => {
+  await page.goto(`${base}/#/day/${todayLocal()}`, { waitUntil: 'networkidle0' });
+  await waitFor('.entry-row, .entry-card, .page-head');
+  await clickText('.page-head button', 'Summary');
+  await waitFor('.summary-text');
+  const text = await page.$eval('.summary-text', (el) => el.textContent);
+  for (const needle of ['Acme lease dispute', '100001-000012', '1.2h', 'Reviewed lease agreement']) {
+    if (!text.includes(needle)) throw new Error(`summary missing ${JSON.stringify(needle)}:\n${text}`);
+  }
+  if (!/^.+ — \d+\.\d+h/.test(text)) throw new Error(`summary header malformed:\n${text.split('\n')[0]}`);
+  await shot('summary');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.summary-text'), { timeout: 4000 });
+  // same summary from the keyboard alone
+  await page.keyboard.press('s');
+  await waitFor('.summary-text');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.summary-text'), { timeout: 4000 });
+});
+
 await step('day view: Finalize day posts cleanly (no circular-JSON crash)', async () => {
   await page.goto(`${base}/#/day/2020-01-01`, { waitUntil: 'networkidle0' });
   await clickText('.page-head button', 'Finalize day');

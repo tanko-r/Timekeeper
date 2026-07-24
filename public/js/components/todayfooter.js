@@ -3,7 +3,7 @@ import { startAlignedTick } from '/js/lib/tick.js';
 
 // Persistent "today" footer (spec §4): ambient awareness — live running
 // clock, billable-vs-target meter, one key to close the day. Dashboard only.
-export function TodayFooter({ today, timers, fetchedAt, onCloseDay }) {
+export function TodayFooter({ today, timers, fetchedAt, onCloseDay, onSummary }) {
   const running = (timers || []).filter((t) => t.running);
   const [, tick] = useState(0);
   useEffect(() => {
@@ -50,6 +50,10 @@ export function TodayFooter({ today, timers, fetchedAt, onCloseDay }) {
           <span class="mono">${fmtClock(liveSecs)}</span>
           <span class="muted small">${running.length === 1 ? running[0].name : `${running.length} running`}</span>
         </span>` : null}
+      <button class="btn btn-sm tf-summary" onClick=${onSummary}
+        title="Read today back as plain text — client, matter, hours, narrative (s)">
+        <${Icon} name="clipboard" size=${14} /><span class="tf-btn-label"> Summary</span>
+      </button>
       <button class="btn btn-sm btn-primary" onClick=${onCloseDay} title="Review, finalize, and export today (c)">
         <${Icon} name="lock" size=${14} /> Close the day <kbd>c</kbd>
       </button>
