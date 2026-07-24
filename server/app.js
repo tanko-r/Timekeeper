@@ -55,10 +55,23 @@ export function createApp(deps) {
   // JSON 404 for unknown API routes (registered after real routes are mounted).
   app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
 
-  app.use(express.static(join(repoRoot, 'public')));
+  // Shell assets: "store it, but revalidate before every use". The service
+  // worker — not the browser's HTTP cache — is what makes this app load
+  // instantly, so a client-held lifetime buys nothing and actively breaks
+  // updates. Express's default (public, max-age=0) revalidates too, but says
+  // it weakly enough that Cloudflare's Browser Cache TTL rewrites it to
+  // max-age=14400 on the remote (time.*) path. That four-hour window is how a
+  // remote PWA kept running pre-fix JS through a CACHE bump: the new service
+  // worker installed, and filled its fresh cache generation from the
+  // browser's stale HTTP copies. sw.js now fetches past the HTTP cache on
+  // install; this makes the origin's intent explicit at the header level too.
+  const noStale = (res) => res.setHeader('Cache-Control', 'no-cache');
+  app.use(express.static(join(repoRoot, 'public'), { setHeaders: noStale }));
   // SPA fallback: non-API GETs get the shell (hash routing needs only '/').
-  app.get('/{*any}', (req, res) =>
-    res.sendFile(join(repoRoot, 'public', 'index.html')));
+  app.get('/{*any}', (req, res) => {
+    noStale(res);
+    res.sendFile(join(repoRoot, 'public', 'index.html'));
+  });
 
   // JSON error handler for API paths.
   // eslint-disable-next-line no-unused-vars

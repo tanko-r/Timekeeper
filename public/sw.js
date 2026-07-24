@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v60';
+const CACHE = 'timekeeper-v61';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -65,8 +65,25 @@ const SHELL = [
   './js/views/stats.js',
 ];
 
+// Filling a NEW cache generation must go to the network, not to whatever the
+// browser already has. cache.addAll() reads through the HTTP cache, so a
+// client holding a still-fresh copy of a shell file would re-cache those exact
+// stale bytes under the new CACHE name — and since the fetch handler below is
+// cache-first with no revalidation, it would then serve them forever. That is
+// not hypothetical: remote clients get Cloudflare's max-age=14400 on these
+// files, so a CACHE bump silently pinned four-hour-old JS. {cache: 'reload'}
+// bypasses the HTTP cache for exactly these requests. Non-ok responses reject
+// the install (as addAll did), leaving the previous worker in charge.
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(SHELL.map(async (url) => {
+      const res = await fetch(url, { cache: 'reload' });
+      if (!res.ok) throw new Error(`shell fetch failed: ${url} → ${res.status}`);
+      await cache.put(url, res);
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (e) => {

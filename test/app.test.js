@@ -21,6 +21,24 @@ test('server boots, health endpoint responds, SPA shell served', async () => {
   }
 });
 
+// The shell must never be handed out with a lifetime the client can sit on:
+// the service worker is what makes the app load fast, and a browser-held copy
+// only breaks updates. Express's own default (max-age=0) is not enough —
+// Cloudflare's Browser Cache TTL rewrites a bare max-age=0 into hours, which
+// is how a remote PWA ended up running pre-fix JS after a CACHE bump.
+test('shell assets are served no-cache so updates are never pinned', async () => {
+  const t = await startTestServer();
+  try {
+    for (const path of ['/', '/index.html', '/js/app.js', '/css/app.css', '/sw.js', '/#/anything']) {
+      const res = await fetch(t.base + path);
+      assert.equal(res.status, 200, path);
+      assert.equal(res.headers.get('cache-control'), 'no-cache', path);
+    }
+  } finally {
+    await t.close();
+  }
+});
+
 test('unknown /api path returns JSON 404, not HTML', async () => {
   const t = await startTestServer();
   try {
