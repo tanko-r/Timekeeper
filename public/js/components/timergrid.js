@@ -937,7 +937,8 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
         </div>
         <${Field} label="Template narrative (optional)"
           hint="Every entry this timer creates starts with this text — finish or extend it at close-out.">
-          <textarea rows="2" value=${template} placeholder="e.g. Attend weekly all-hands call with Meridian and Calloway teams regarding"
+          <textarea rows="2" value=${template} spellCheck=${true}
+            placeholder="e.g. Attend weekly all-hands call with Meridian and Calloway teams regarding"
             onInput=${(e) => setTemplate(e.target.value)}></textarea>
         <//>
         ${error ? html`<div class="error-box">${error}</div>` : null}

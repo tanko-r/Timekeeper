@@ -123,6 +123,11 @@ export function GhostInput({
 
   const shared = {
     ref: fieldRef,
+    // Every ghost field is a narrative field, so spell-check them all — and
+    // do it explicitly: Chrome does not spell-check single-line inputs by
+    // default, and React drops a lowercase boolean `spellcheck` prop
+    // entirely (it only understands the camelCase `spellCheck`).
+    spellCheck: true,
     value,
     onInput: handleInput,
     onKeyDown: handleKeyDown,
