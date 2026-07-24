@@ -638,6 +638,9 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 kbd {
   background: var(--surface-2); border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: inherit;
+  /* explicit: the key cap keeps its grey background inside coloured buttons
+     (e.g. "Close the day"), so it must not inherit their white text */
+  color: var(--text-primary);
 }
 .saving-dot { font-size: 12px; color: var(--text-muted); }
 .narrative-preview { position: relative; }
