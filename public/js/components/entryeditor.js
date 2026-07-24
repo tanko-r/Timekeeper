@@ -528,7 +528,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   return html`
     <${Modal} wide=${true} onClose=${flushAndClose}
       title=${finalized ? 'Time entry (finalized)' : entry ? 'Edit time entry' : 'New time entry'}>
-      <div class="grid" style=${{ gridTemplateColumns: '140px 1fr 110px auto', alignItems: 'end', gap: '10px' }}>
+      <div class="entry-head-grid">
         <${Field} label="Date">
           <input type="date" value=${local.date} disabled=${finalized}
             onChange=${(e) => update({ date: e.target.value })} />
@@ -543,11 +543,18 @@ export function EntryEditor({ spec, settings, onClose }) {
             value=${local.total || ''} placeholder="0.0" disabled=${finalized}
             onInput=${(e) => updateTotal(e.target.value)} />
         <//>
-        <label class="checkbox-row" style=${{ paddingBottom: '8px' }}>
-          <input type="checkbox" checked=${local.billable} disabled=${finalized}
-            onChange=${(e) => update({ billable: e.target.checked })} />
-          Billable
-        </label>
+        <div class="field">
+          ${/* a blank label so the checkbox lines up with the neighbouring
+                CONTROLS, not with their labels. The spacer is a JS escape
+                because htm does not decode HTML entities — a written
+                "&nbsp;" would render as those six characters. */''}
+          <span class="field-label" aria-hidden="true">${'\u00a0'}</span>
+          <label class="checkbox-row">
+            <input type="checkbox" checked=${local.billable} disabled=${finalized}
+              onChange=${(e) => update({ billable: e.target.checked })} />
+            Billable
+          </label>
+        </div>
       </div>
 
       ${customFields.length > 0 ? html`
@@ -628,8 +635,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             <${Icon} name="plus" size=${14} /> Add task line
           </button>
           <div class="spacer" style=${{ flex: 1 }}></div>
-          <span class="muted small">Allocated <strong class="mono">${fmtHours(sum, increment)}h</strong>
-            of <strong class="mono">${fmtHours(total, increment)}h</strong></span>
+          <span class="muted small">Allocated <strong class="mono">${fmtHours(sum, increment)}h</strong>${' of '}<strong class="mono">${fmtHours(total, increment)}h</strong></span>
         </div>
       </div>
 

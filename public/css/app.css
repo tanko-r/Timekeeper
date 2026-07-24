@@ -435,6 +435,30 @@ input.total-input { font-weight: 700; }
 .editor-suggest-chips button:hover { border-color: var(--accent); background: var(--surface-1); }
 .cm-client-label { display: block; }
 
+/* ---------- entry editor: header row ---------- */
+/* Date · Client/Matter · Total hours · Billable. align-items:start (never
+   :end) so the client name that appears UNDER the CM picker can't shove that
+   column's label and control up out of line with its neighbours. The Billable
+   cell carries a blank label so its checkbox starts on the control row too. */
+.entry-head-grid {
+  display: grid; grid-template-columns: 140px minmax(0, 1fr) 110px auto;
+  align-items: start; gap: 10px;
+}
+/* matches the fields' control height (15px/1.45 text + 7px padding + 1px
+   border) so the checkbox sits centred against the inputs beside it */
+.entry-head-grid .checkbox-row { min-height: 38px; }
+@media (max-width: 760px) {
+  /* phone: four columns won't fit ~380px. Re-lay them out as
+     [Date | Total hours] / [Client/Matter] / [Billable]. */
+  .entry-head-grid { grid-template-columns: 1fr 110px; }
+  .entry-head-grid > *:nth-child(1) { grid-area: 1 / 1; }
+  .entry-head-grid > *:nth-child(3) { grid-area: 1 / 2; }
+  .entry-head-grid > *:nth-child(2) { grid-area: 2 / 1 / auto / -1; }
+  .entry-head-grid > *:nth-child(4) { grid-area: 3 / 1 / auto / -1; }
+  .entry-head-grid .field-label[aria-hidden] { display: none; }
+  .entry-head-grid .checkbox-row { min-height: 0; }
+}
+
 /* ---------- target meter ---------- */
 .meter { display: flex; flex-direction: column; gap: 6px; }
 .meter-bar {
@@ -691,6 +715,9 @@ kbd {
 .ghost-typed { color: transparent; }
 .ghost-hint { color: var(--text-muted); opacity: .75; }
 .shortcut-save { display: inline-flex; align-items: center; gap: 6px; }
+/* the abbreviation box sits in a row of .btn-sm buttons — match their metrics
+   so it doesn't stand a head taller than Save/Cancel */
+.shortcut-save input { padding: 3px 9px; font-size: 12.5px; }
 
 /* ---------- stop chips (non-blocking stop affordance) ---------- */
 .stop-chips {
