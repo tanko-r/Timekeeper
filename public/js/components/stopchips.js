@@ -25,9 +25,15 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
     // matterless stop: no phrasebook to draw from — the entry still filed
     if (!offerChips || !timer.cm_id) { setChips([]); return undefined; }
     let alive = true;
+    // The suggested-on-start chip is model-written; the phrasebook chips are
+    // David's own past phrases. Picking one has to record which, so AI text
+    // never enters the pool the model learns its voice from (spec §5).
+    const build = (phrases) => dedupe(clean([timer.suggested_narrative, ...phrases])
+      .map(formatSuggestion))
+      .map((text) => ({ text, ai: text === formatSuggestion(timer.suggested_narrative || '') }));
     api.get(`/api/matters/${timer.cm_id}/suggestions`)
-      .then((r) => { if (alive) setChips(dedupe(clean([timer.suggested_narrative, ...r.phrases.map((p) => p.text)]).map(formatSuggestion))); })
-      .catch(() => { if (alive) setChips(dedupe(clean([timer.suggested_narrative]).map(formatSuggestion))); });
+      .then((r) => { if (alive) setChips(build(r.phrases.map((p) => p.text))); })
+      .catch(() => { if (alive) setChips(build([])); });
     return () => { alive = false; };
   }, []); // eslint-disable-line
 
@@ -39,9 +45,11 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   const pauseDismiss = () => clearTimeout(dismissRef.current);
   useEffect(() => { startDismiss(); return () => clearTimeout(dismissRef.current); }, []); // eslint-disable-line
 
-  async function pick(text) {
+  async function pick(chip) {
     try {
-      await api.patch(`/api/entries/${entry.id}`, { narrative: text });
+      await api.patch(`/api/entries/${entry.id}`, {
+        narrative: chip.text, narrative_ai: chip.ai ? 1 : 0,
+      });
       emitToast('Narrative set — review & save');
       openEditor({ id: entry.id });
       onFiled();
@@ -97,9 +105,9 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
         </div>` : null}
       ${offerChips ? (chips === null ? null : chips.length > 0 ? html`
         <div class="stop-chips-list">
-          ${chips.map((text, i) => html`
-            <button key=${text} class="chip-btn" title=${text} onClick=${() => pick(text)}>
-              <kbd>${i + 1}</kbd> <span>${text}</span>
+          ${chips.map((chip, i) => html`
+            <button key=${chip.text} class="chip-btn" title=${chip.text} onClick=${() => pick(chip)}>
+              <kbd>${i + 1}</kbd> <span>${chip.text}</span>
             </button>`)}
         </div>` : html`
         <div class="muted small" style=${{ padding: '2px 0 6px' }}>

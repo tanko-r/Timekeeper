@@ -8,7 +8,7 @@ import { loadEffectiveFields } from './customfields.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
-  narrative_manual, created_at, updated_at`;
+  narrative_manual, narrative_ai, ai_brief, created_at, updated_at`;
 
 export function loadEntry(db, id) {
   const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(id);
@@ -331,12 +331,20 @@ export function entriesRouter({ db, clock }) {
     const billable = b.billable !== undefined ? (b.billable ? 1 : 0) : cm.billable;
     const totalOverride = b.total_override != null ? Number(b.total_override) : null;
     const narrativeManual = b.narrative_manual ? 1 : 0;
+    // AI provenance (spec 2026-08-01 §5): narrative_ai=1 marks text the model
+    // wrote and the attorney accepted untouched, keeping it out of the
+    // exemplar and few-shot pools. ai_brief is the shorthand behind it, so a
+    // later correction yields a labelled (brief → corrected narrative) pair.
+    const narrativeAi = b.narrative_ai ? 1 : 0;
+    const aiBrief = b.ai_brief != null && String(b.ai_brief).trim()
+      ? String(b.ai_brief).trim().slice(0, 500) : null;
     const info = db.transaction(() => {
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`)
         .run(b.date, cm.id, String(b.narrative || ''), billable, totalOverride,
-          b.source === 'timer' ? 'timer' : 'manual', narrativeManual, now(), now());
+          b.source === 'timer' ? 'timer' : 'manual', narrativeManual,
+          narrativeAi, aiBrief, now(), now());
       writeTasks(db, i.lastInsertRowid, norm.tasks);
       applyCustomValues(db, i.lastInsertRowid, cv.ops);
       syncNarrative(db, i.lastInsertRowid);
@@ -372,18 +380,31 @@ export function entriesRouter({ db, clock }) {
     if (cv.error) return res.status(400).json({ error: cv.error });
 
     const beforeTotal = effectiveTotal(db, row.id);
+    // Server-authoritative provenance: any narrative text that differs from
+    // what is stored is a correction, so the entry becomes the attorney's own
+    // and joins the exemplar pool. An explicit narrative_ai in the payload
+    // wins — that is the client saying "this new text IS the AI output I just
+    // accepted". An autosave replaying identical text changes nothing.
+    const nextNarrative = b.narrative !== undefined ? String(b.narrative) : row.narrative;
+    let narrativeAi = row.narrative_ai;
+    if (b.narrative_ai !== undefined) narrativeAi = b.narrative_ai ? 1 : 0;
+    else if (b.narrative !== undefined && nextNarrative !== row.narrative) narrativeAi = 0;
+    const aiBrief = b.ai_brief !== undefined
+      ? (String(b.ai_brief).trim() ? String(b.ai_brief).trim().slice(0, 500) : null)
+      : row.ai_brief;
     let timersSynced = [];
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
-          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, updated_at=?
+          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, narrative_ai=?, ai_brief=?, updated_at=?
         WHERE id=?`).run(
         b.date ?? row.date,
         cmId,
-        b.narrative !== undefined ? String(b.narrative) : row.narrative,
+        nextNarrative,
         b.billable !== undefined ? (b.billable ? 1 : 0) : row.billable,
         b.total_override !== undefined ? (b.total_override == null ? null : Number(b.total_override)) : row.total_override,
         b.ack_validation !== undefined ? (b.ack_validation ? 1 : 0) : row.ack_validation,
         b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
+        narrativeAi, aiBrief,
         now(), row.id);
       if (norm) writeTasks(db, row.id, norm.tasks);
       applyCustomValues(db, row.id, cv.ops);

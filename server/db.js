@@ -317,6 +317,24 @@ const MIGRATIONS = [
   );
   CREATE INDEX idx_ecv_entry ON entry_custom_values(entry_id);
   `,
+  // AI narrative voice (spec 2026-08-01). The style-exemplar and few-shot
+  // pools must never learn from the model's own output, or the verbosity
+  // compounds: recency-weighted selection would increasingly prefer AI text.
+  //   narrative_ai = 1  →  AI wrote it and it was accepted untouched
+  //   narrative_ai = 0  →  typed or corrected by hand; eligible as an exemplar
+  // Existing rows default to 0, correctly treating imported history as the
+  // attorney's own voice. ai_brief records the shorthand that produced the
+  // narrative, making (brief → corrected narrative) a labelled pair.
+  `
+  ALTER TABLE entries ADD COLUMN narrative_ai INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE entries ADD COLUMN ai_brief TEXT;
+  CREATE INDEX idx_entries_exemplar ON entries(narrative_ai, date DESC);
+  -- The saved systemPrompt shadows DEFAULT_AI_INSTRUCTIONS, so the rewritten
+  -- default cannot take effect while a stale custom prompt sits in settings.
+  -- Clearing it restores the default; Settings → AI still edits as before.
+  UPDATE settings SET value = json_set(value, '$.systemPrompt', '')
+    WHERE key = 'ai' AND json_valid(value);
+  `,
 ];
 
 const SEED_SETTINGS = {

@@ -179,6 +179,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   // box detaches into a plain manual narrative, keeping exactly what's typed.
   function applyAutoEdit(text) {
     if (aiUndo) setAiUndo(null); // manual edit supersedes the last AI rewrite
+    if (local.aiAuto) update({ aiAuto: false }); // a typed fragment is the attorney's
     const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling });
     if (!parsed) { update({ narrative: text, auto: false }); return; }
     let changed = false;
@@ -227,6 +228,15 @@ export function EntryEditor({ spec, settings, onClose }) {
       // regenerating it. A single-line entry has no AUTO box to detach from,
       // so it always stays 0 (matches narrative_auto's own ≥2-line gate).
       narrative_manual: l.auto ? 0 : (substantiveTasks.length >= 2 ? 1 : 0),
+      // AI provenance (spec 2026-08-01 §5). The narrative counts as AI-written
+      // only while it still reads EXACTLY as generated — the moment David
+      // types over it the comparison fails, the flag clears, and the entry
+      // joins the pool the model learns its voice from. The split path
+      // derives the narrative from AI fragments, so AUTO standing untouched
+      // over them counts too.
+      narrative_ai: (l.aiText != null && l.narrative === l.aiText)
+        || (l.aiAuto && l.auto) ? 1 : 0,
+      ...(l.aiBrief ? { ai_brief: l.aiBrief } : {}),
       custom_values: l.custom_values || {},
     };
     setSaveState('saving');
@@ -432,9 +442,10 @@ export function EntryEditor({ spec, settings, onClose }) {
           // fragments are full narrative clauses now — let AUTO regenerate
           // the narrative from them so it stays as robust as the split
           auto: true,
+          aiAuto: true, aiBrief: seed, aiText: null,
         });
       } else {
-        update({ narrative: r.narrative });
+        update({ narrative: r.narrative, aiText: r.narrative, aiBrief: seed, aiAuto: false });
       }
     } catch (e) {
       emitToast(e.body?.message || e.message, { error: true });
@@ -466,7 +477,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.error) throw new Error(m.message || m.error);
         if (m.token) { acc += m.token; update({ narrative: acc }); }
-        if (m.done) update({ narrative: m.narrative });
+        if (m.done) update({ narrative: m.narrative, aiText: m.narrative, aiBrief: seed, aiAuto: false });
       }, ctrl.signal);
     } catch (e) {
       if (e.name !== 'AbortError') emitToast(e.body?.message || e.message, { error: true });

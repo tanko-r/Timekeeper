@@ -223,10 +223,13 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // schema-idempotent, its only effect is making cm_id nullable — the
   // timers.held_since column, the AOT-window timers.pinned/
   // draft_narrative columns, the timers.narrative_template column, and the
-  // v15 custom-fields tables) and roll user_version back by eleven
-  // (positional — no hardcoded version numbers)
+  // v15 custom-fields tables, and the AI-voice entries columns) and roll
+  // user_version back by twelve (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    DROP INDEX idx_entries_exemplar;
+    ALTER TABLE entries DROP COLUMN ai_brief;
+    ALTER TABLE entries DROP COLUMN narrative_ai;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
@@ -239,7 +242,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 11}`);
+  db1.pragma(`user_version = ${v - 12}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -320,16 +323,19 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db1.prepare("INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, 'Review', 0.5, 'lease', 0)").run(eid);
   db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
     VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
-  // narrative_template and the v15 custom-fields tables landed after the
-  // rebuild — undo them too so the replay window (rebuild + template column
-  // + custom fields) applies cleanly
+  // narrative_template, the v15 custom-fields tables and the AI-voice entries
+  // columns landed after the rebuild — undo them too so the replay window
+  // (rebuild + template column + custom fields + AI voice) applies cleanly
   db1.exec(`
+    DROP INDEX idx_entries_exemplar;
+    ALTER TABLE entries DROP COLUMN ai_brief;
+    ALTER TABLE entries DROP COLUMN narrative_ai;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
   `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 3}`);
+  db1.pragma(`user_version = ${v - 4}`);
   db1.close();
 
   const db2 = openDb(path);
