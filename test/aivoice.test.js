@@ -197,3 +197,21 @@ test('no seed pair duplicates an eval brief', async () => {
       `seed pair "${p.brief}" also appears as an eval brief`);
   }
 });
+
+// Reopening a flagged entry does not restore the client's in-session record of
+// what the model produced. If the editor asserted narrative_ai on every save,
+// an unrelated edit (a date fix) would silently strip the flag and leak AI
+// text into the pool. Omitting the field leaves the server's rule in charge.
+test('a save that omits narrative_ai leaves the stored flag intact', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id,
+      narrative: 'Review Cedar Lease and confer with client regarding same.',
+      narrative_ai: true, ai_brief: 'rev lease',
+    });
+    await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, { date: '2026-08-02' });
+    assert.equal(t.db.prepare('SELECT narrative_ai FROM entries WHERE id=?')
+      .get(r.body.id).narrative_ai, 1);
+  });
+});

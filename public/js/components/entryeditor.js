@@ -234,8 +234,14 @@ export function EntryEditor({ spec, settings, onClose }) {
       // joins the pool the model learns its voice from. The split path
       // derives the narrative from AI fragments, so AUTO standing untouched
       // over them counts too.
-      narrative_ai: (l.aiText != null && l.narrative === l.aiText)
-        || (l.aiAuto && l.auto) ? 1 : 0,
+      // Only ASSERT provenance when this session actually generated something.
+      // Reopening a flagged entry does not restore aiText, so sending a flat 0
+      // here would silently clear the flag on an unrelated edit; omitting the
+      // field leaves the server's rule in charge (text changed -> not AI).
+      ...(l.aiText != null || l.aiAuto ? {
+        narrative_ai: (l.aiText != null && l.narrative === l.aiText)
+          || (l.aiAuto && l.auto) ? 1 : 0,
+      } : {}),
       ...(l.aiBrief ? { ai_brief: l.aiBrief } : {}),
       custom_values: l.custom_values || {},
     };
