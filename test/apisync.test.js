@@ -23,6 +23,19 @@ test('entry mutations announce tk:entries-changed', () => {
   assert.deepEqual(changeEventsFor('DELETE', '/api/entries/9'), ['tk:entries-changed']);
 });
 
+// 2026-07-24 feedback: an entry edit that re-bases a timer's day clock (the
+// server reports which in timers_synced) has to wake the timer surfaces too,
+// or the grid shows the old clock until its next 5s poll.
+test('an entry edit that moved a timer clock also announces tk:timers-changed', () => {
+  assert.deepEqual(
+    changeEventsFor('PATCH', '/api/entries/9', { timers_synced: [3] }),
+    ['tk:entries-changed', 'tk:timers-changed']);
+  assert.deepEqual(
+    changeEventsFor('PATCH', '/api/entries/9', { timers_synced: [] }),
+    ['tk:entries-changed']);
+  assert.deepEqual(changeEventsFor('PATCH', '/api/entries/9', null), ['tk:entries-changed']);
+});
+
 test('reads and unrelated endpoints announce nothing', () => {
   assert.deepEqual(changeEventsFor('GET', '/api/timers'), []);
   assert.deepEqual(changeEventsFor('GET', '/api/entries'), []);

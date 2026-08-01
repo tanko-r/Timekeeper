@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
-import { isValidDate } from '../lib/dates.js';
+import { isValidDate, todayLocal } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
@@ -124,6 +124,38 @@ export function syncNarrative(db, entryId) {
   if (generated != null) {
     db.prepare('UPDATE entries SET narrative=? WHERE id=?').run(generated, entryId);
   }
+}
+
+// The entry's hours as the app computes them: an explicit override, else the
+// sum of its task lines (same rule as enrich()).
+function effectiveTotal(db, entryId) {
+  const row = db.prepare('SELECT total_override FROM entries WHERE id=?').get(entryId);
+  if (!row) return null;
+  if (row.total_override != null) return row.total_override;
+  const sum = db.prepare(
+    'SELECT COALESCE(SUM(duration), 0) s FROM entry_tasks WHERE entry_id=?').get(entryId).s;
+  return Math.round(sum * 10000) / 10000;
+}
+
+// Reverse of syncToEntry (routes/timers.js): push an EDITED entry total back
+// onto the day clock of whatever timer feeds it (2026-07-24 feedback — "I
+// edited the time on the entry card; the timer should update along with it").
+// Without this the clock keeps the old number and the next stop, which
+// OVERWRITES the entry's total with the whole clock, silently undoes the edit.
+// A running timer keeps running: the clock is re-based to the new total and
+// counts up from now. Callers must only invoke this when the total actually
+// changed — the editor resends total_override on every autosave, and re-basing
+// a running clock on a narrative keystroke would throw away live time.
+export function syncTimersToEntry(db, entryId, nowIso, todayStr) {
+  const e = db.prepare('SELECT date, status, deleted_at FROM entries WHERE id=?').get(entryId);
+  // only today's live draft is a timer's home — a moved, finalized, or deleted
+  // entry has already parted ways with the clock
+  if (!e || e.deleted_at || e.status !== 'draft' || e.date !== todayStr) return [];
+  const seconds = Math.max(0, Math.round(effectiveTotal(db, entryId) * 3600));
+  const timers = db.prepare('SELECT id, running FROM timers WHERE linked_entry_id=?').all(entryId);
+  const upd = db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?');
+  for (const t of timers) upd.run(seconds, t.running ? nowIso : null, t.id);
+  return timers.map((t) => t.id);
 }
 
 export function touchCm(db, cmId, nowIso) {
@@ -339,6 +371,8 @@ export function entriesRouter({ db, clock }) {
     const cv = normalizeCustomValues(db, cmId, b.custom_values);
     if (cv.error) return res.status(400).json({ error: cv.error });
 
+    const beforeTotal = effectiveTotal(db, row.id);
+    let timersSynced = [];
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
           date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, updated_at=?
@@ -362,11 +396,17 @@ export function entriesRouter({ db, clock }) {
         db.prepare('UPDATE timers SET cm_id=?, suggested_narrative=NULL WHERE linked_entry_id=? AND cm_id IS NULL')
           .run(cmId, row.id);
       }
+      // The hours changed → the timer feeding this entry follows them.
+      if (Math.abs(effectiveTotal(db, row.id) - beforeTotal) > 1e-9) {
+        timersSynced = syncTimersToEntry(db, row.id, now(), todayLocal(clock()));
+      }
       recordAudit(db, row, req.body, now());
       rebuildMatterPeople(db, cmId);
       if (cmId !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
     })();
-    res.json(loadEntry(db, row.id));
+    // timers_synced tells the client to refresh the timer surfaces too — an
+    // entry write otherwise only announces tk:entries-changed (see api.js).
+    res.json({ ...loadEntry(db, row.id), timers_synced: timersSynced });
   });
 
   r.delete('/:id', (req, res) => {

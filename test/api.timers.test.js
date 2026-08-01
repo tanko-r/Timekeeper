@@ -1106,3 +1106,77 @@ test('narrative_template: seeds new entries, composes with the stash, round-trip
     await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { narrative_template: '  ' });
     assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].narrative_template, null);
   }));
+
+// 2026-07-24 feedback: "I created the entry with a timer, but then I edited
+// the time on the entry card. Timer should update along with entry." The day
+// clock OVERWRITES the linked entry's total at every stop, so an edited total
+// that doesn't travel back to the clock is silently undone by the next stop.
+test('editing a linked entry’s total re-bases the timer clock (and survives the next stop)', () =>
+  withServer('2026-07-24T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'TEL', cm_id: cm.id,
+    })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(7920); // 2h12m → 2.2h
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.total, 2.2);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].elapsed_seconds, 7920);
+
+    // the user rewrites the entry down to 1.0 in the editor
+    const edited = (await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, {
+      total_override: 1.0, tasks: [{ task_code: '', duration: 1.0, fragment: '' }],
+    })).body;
+    assert.equal(edited.total, 1.0);
+    assert.deepEqual(edited.timers_synced, [timer.id], 'response tells the client to refresh timers');
+
+    const after = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(after.elapsed_seconds, 3600, 'clock follows the entry down to 1.0h');
+    assert.equal(after.running, 0);
+
+    // …and the next stop files 1.0 + the new stretch, not the old 2.2
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800); // +0.5h
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop2.entry.id, stop.entry.id);
+    assert.equal(stop2.entry.total, 1.5);
+  }));
+
+test('entry edits that leave the total alone never touch a RUNNING timer’s clock', () =>
+  withServer('2026-07-24T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'TEL', cm_id: cm.id })).body;
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    clock.advance(3600);
+
+    // the editor's autosave resends total_override on every keystroke — the
+    // running clock must not be re-based (and reset) by a narrative save
+    const saved = (await t.fetchJson('PATCH', `/api/entries/${started.entry.id}`, {
+      narrative: 'Call with client.', total_override: null,
+    })).body;
+    assert.deepEqual(saved.timers_synced, []);
+    const after = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(after.running, 1);
+    assert.equal(after.elapsed_seconds, 3600, 'the running clock kept counting');
+
+    // a deliberate total edit DOES re-base it — and it keeps running from there
+    await t.fetchJson('PATCH', `/api/entries/${started.entry.id}`, { total_override: 0.5 });
+    const rebased = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(rebased.running, 1);
+    assert.equal(rebased.elapsed_seconds, 1800);
+    clock.advance(600);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].elapsed_seconds, 2400);
+  }));
+
+test('a finalized or moved entry does not drag its old timer’s clock around', () =>
+  withServer('2026-07-24T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'TEL', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+
+    // moving the entry to another day unlinks it in spirit — the clock stays put
+    const moved = (await t.fetchJson('PATCH', `/api/entries/${stop.entry.id}`, {
+      date: '2026-07-23', total_override: 0.3,
+    })).body;
+    assert.deepEqual(moved.timers_synced, []);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].elapsed_seconds, 3600);
+  }));

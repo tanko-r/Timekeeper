@@ -15,10 +15,17 @@ export class ApiError extends Error {
 // event and every surface refreshes instantly — no waiting out a 5s poll
 // (which Chrome throttles hard in a tab hidden behind other windows, exactly
 // when the float is in use). Pure — unit-tested in test/apisync.test.js.
-export function changeEventsFor(method, path) {
+// `body` is the response payload: an entry write reports timers_synced when it
+// re-based a timer's day clock (2026-07-24 feedback), which the timer surfaces
+// have to hear about as well.
+export function changeEventsFor(method, path, body) {
   if (method === 'GET') return [];
   if (/^\/api\/timers(\/|$)/.test(path)) return ['tk:timers-changed'];
-  if (/^\/api\/entries(\/|$)/.test(path)) return ['tk:entries-changed'];
+  if (/^\/api\/entries(\/|$)/.test(path)) {
+    return (body && body.timers_synced && body.timers_synced.length)
+      ? ['tk:entries-changed', 'tk:timers-changed']
+      : ['tk:entries-changed'];
+  }
   return [];
 }
 
@@ -37,7 +44,7 @@ async function request(method, path, body) {
     throw new ApiError(res.status, json);
   }
   if (!res.ok) throw new ApiError(res.status, json);
-  for (const ev of changeEventsFor(method, path)) window.dispatchEvent(new CustomEvent(ev));
+  for (const ev of changeEventsFor(method, path, json)) window.dispatchEvent(new CustomEvent(ev));
   return json;
 }
 
