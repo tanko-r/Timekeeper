@@ -4,3 +4,5 @@ feedback/
 *.log
 .DS_Store
 scripts/ai-audit/
+*.TIM
+*.geany
