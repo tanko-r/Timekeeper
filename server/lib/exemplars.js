@@ -32,12 +32,23 @@ export function cleanCandidate(text) {
 // truncation.
 const DANGLING = /\b(regarding|with|to|and|for|of|from|per|re)\s*[;.,]/i;
 
-export function isUsableExemplar(text) {
+// Well-formed = a finished thought. Narratives autosave 600ms after typing
+// stops, so half-edited text reaches the database routinely; this is what
+// separates it from a real narrative.
+export function isWellFormedNarrative(text) {
   const t = cleanCandidate(text);
   if (!t.endsWith('.')) return false;
   if (DANGLING.test(t)) return false;
-  const words = t.split(/\s+/).length;
-  return words >= MIN_WORDS && words <= MAX_WORDS;
+  return t.split(/\s+/).length <= MAX_WORDS;
+}
+
+// An exemplar additionally has to be long enough to TEACH register — a
+// four-word entry is well-formed but shows the model nothing about rhythm.
+// Few-shot pairs deliberately skip that floor: a short, correct narrative is
+// among the best outputs to demonstrate.
+export function isUsableExemplar(text) {
+  if (!isWellFormedNarrative(text)) return false;
+  return cleanCandidate(text).split(/\s+/).length >= MIN_WORDS;
 }
 
 // Even spread across the length range, so the model learns that entries vary
@@ -96,6 +107,11 @@ export function pickPairs(pool, seeds = [], { count = 6, cmId = null, brief = ''
   const real = [];
   for (const p of pool || []) {
     if (!p || isEcho(p.brief, p.narrative)) continue;
+    // Narratives autosave 600ms after typing stops, so a pause mid-correction
+    // persists half-edited text and makes it pool-eligible immediately. A pair
+    // teaches what good OUTPUT looks like, so its narrative side has to clear
+    // the same bar as an exemplar or it would teach truncation.
+    if (!isWellFormedNarrative(p.narrative)) continue;
     const key = `${cleanCandidate(p.brief).toLowerCase()}|${cleanCandidate(p.narrative).toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   cleanCandidate, isUsableExemplar, pickExemplars, pickPairs, renderGlossary,
 } from '../server/lib/exemplars.js';
+import { SEED_PAIRS as SEED_PAIRS_FOR_TEST } from '../server/routes/ai.js';
 
 // ── cleanCandidate ────────────────────────────────────────────────────────
 // Matter tags and time allocations are display furniture; the model must
@@ -210,4 +211,34 @@ test('renderGlossary returns empty string for no rows', () => {
 test('renderGlossary caps the number of rows it renders', () => {
   const rows = Array.from({ length: 200 }, (_, i) => ({ abbrev: `a${i}`, phrase: `Phrase ${i}` }));
   assert.ok(renderGlossary(rows).split('\n').length <= 41);
+});
+
+// Narratives autosave 600ms after you stop typing, so a pause mid-correction
+// stores half-edited text and makes it pool-eligible. The exemplar path is
+// gated by isUsableExemplar; pairs must clear the same bar or a truncated
+// output side would teach the model to truncate.
+test('pickPairs rejects a pair whose narrative is caught mid-edit', () => {
+  const pool = [
+    { brief: 'rev title commitment', cm_id: 1,
+      narrative: 'Review and analyze title commitment, noting exce' },
+    { brief: 'rev title commitment', cm_id: 1,
+      narrative: 'Review and analyze title commitment and note exceptions.' },
+  ];
+  const out = pickPairs(pool, [], { count: 6 });
+  assert.equal(out.length, 1);
+  assert.match(out[0].narrative, /note exceptions\.$/);
+});
+
+test('pickPairs rejects a pair whose narrative dangles on a connector', () => {
+  const pool = [{ brief: 'emails w client', cm_id: 1,
+    narrative: 'Email with client regarding;' }];
+  assert.deepEqual(pickPairs(pool, [], { count: 6 }), []);
+});
+
+test('seed pairs themselves clear the exemplar quality bar', () => {
+  // A seed that could not survive the gate would be teaching something the
+  // pool would reject — an inconsistency worth failing the build over.
+  for (const p of SEED_PAIRS_FOR_TEST) {
+    assert.ok(isUsableExemplar(p.narrative), `seed not well-formed: ${p.narrative}`);
+  }
 });
