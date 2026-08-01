@@ -22,6 +22,7 @@
 // tick.js is zero-dep and sits beside this file, so a RELATIVE specifier
 // resolves under both the browser and node:test.
 import { startAlignedTick } from './tick.js';
+import { compareTimersAZ } from './timersort.js';
 
 export function pipSupported() {
   return typeof window !== 'undefined' && 'documentPictureInPicture' in window;
@@ -29,7 +30,7 @@ export function pipSupported() {
 
 // Which timers earn a row: running, any clock time today, pinned
 // (timers.pinned — the whole point of pinning is surviving the midnight
-// reset), or hand-added for the day via the "recent" picker (extraIds).
+// reset), or hand-added for the day via the find box (extraIds).
 // Alphabetical, regardless of running state (2026-07-14 feedback): a row must
 // keep its position when its timer starts or stops — never jump to the top
 // while the user watches. Pure — unit-tested in test/pip.test.js.
@@ -40,17 +41,18 @@ export function buildPipRows(timers, extraIds = null) {
     .sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' }));
 }
 
-// The "recent" picker's candidates (2026-07-14 feedback): timers that ran in
-// the past week but aren't already on the float list, alphabetical. Pure.
-export function recentPickList(timers, extraIds, nowMs) {
+// The find box's candidates (2026-07-29 feedback, replacing the old "Recent"
+// picker): ANY timer not already on the float list, narrowed by the same
+// fields the dashboard's filter box matches — caption, matter name/number,
+// client name/number. Blank query lists everything. Alphabetical. Pure.
+export function findPickList(timers, extraIds, query = '') {
   const shown = new Set(buildPipRows(timers, extraIds).map((t) => t.id));
-  const weekAgo = nowMs - 7 * 86400000;
+  const q = String(query || '').trim().toLowerCase();
   return (timers || [])
     .filter((t) => !shown.has(t.id))
-    .filter((t) => Math.max(
-      t.last_started_at ? Date.parse(t.last_started_at) : 0,
-      t.last_stopped_at ? Date.parse(t.last_stopped_at) : 0) >= weekAgo)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .filter((t) => !q || [t.name, t.cm_short_name, t.cm_number, t.client_name, t.client_number]
+      .some((v) => String(v || '').toLowerCase().includes(q)))
+    .sort(compareTimersAZ);
 }
 
 // How the expanded row's narrative surface behaves:
@@ -226,27 +228,28 @@ const PIP_CSS = `
   .closeout textarea { flex: 1; min-height: 48px; }
   .co-foot { display: flex; align-items: center; justify-content: space-between; }
   .foot-btns { display: flex; gap: 5px; }
-  .recent-btn { width: auto; padding: 0 8px; font: 600 11px 'InterVariable', system-ui, sans-serif; }
-  .recent-panel {
+  .find-btn { width: auto; padding: 0 8px; font: 600 11px 'InterVariable', system-ui, sans-serif; }
+  .find-panel {
     flex: 1; display: flex; flex-direction: column; gap: 6px;
     padding: 8px; min-height: 0;
   }
-  .recent-filter {
+  .find-filter {
     font: 12px 'InterVariable', system-ui, sans-serif; width: 100%;
     padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px;
     background: var(--surface-2); color: var(--text-primary);
   }
-  .recent-filter:focus { outline: none; border-color: var(--accent); }
-  .recent-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
-  .recent-item {
+  .find-filter:focus { outline: none; border-color: var(--accent); }
+  .find-count { color: var(--text-muted); font-size: 10px; flex: none; }
+  .find-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+  .find-item {
     display: flex; gap: 6px; align-items: baseline; width: 100%;
     padding: 5px 6px; border: 0; border-bottom: 1px solid var(--border);
     background: none; text-align: left; cursor: pointer;
     color: var(--text-primary); font: 12px 'InterVariable', system-ui, sans-serif;
   }
-  .recent-item:hover { background: var(--surface-2); }
-  .recent-item .sub { color: var(--text-muted); font-size: 10px; margin-left: auto; flex: none; }
-  .recent-none { color: var(--text-muted); font-size: 11px; padding: 6px; }
+  .find-item:hover, .find-item.on { background: var(--surface-2); }
+  .find-item .sub { color: var(--text-muted); font-size: 10px; margin-left: auto; flex: none; }
+  .find-none { color: var(--text-muted); font-size: 11px; padding: 6px; }
   .done {
     font: 600 11px 'InterVariable', system-ui, sans-serif; color: #fff;
     background: var(--accent); border: 1px solid var(--accent); border-radius: 5px;
@@ -321,21 +324,21 @@ export async function toggleTimerPip() {
   doc.body.innerHTML = `
     <div class="rows" data-rows></div>
     <div class="closeout" data-closeout hidden></div>
-    <div class="recent-panel" data-recent-panel hidden></div>
+    <div class="find-panel" data-find-panel hidden></div>
     <div class="empty" data-empty hidden>No time today — pin a timer or hit +.</div>
     <div class="err" data-err hidden></div>
     <div class="foot">
       <span class="total" data-total>…</span>
       <span class="foot-btns">
-        <button class="quick recent-btn" data-recent-btn
-          title="Add a timer from the past week to today's list">Recent ▾</button>
+        <button class="quick find-btn" data-find-btn
+          title="Find any timer and add it to today's list">Find ▾</button>
         <button class="quick" data-quick title="Quick timer — starts now; assign a matter later">+</button>
       </span>
     </div>`;
 
   const rowsEl = doc.querySelector('[data-rows]');
   const closeoutEl = doc.querySelector('[data-closeout]');
-  const recentEl = doc.querySelector('[data-recent-panel]');
+  const findEl = doc.querySelector('[data-find-panel]');
   const emptyEl = doc.querySelector('[data-empty]');
   const errEl = doc.querySelector('[data-err]');
   const totalEl = doc.querySelector('[data-total]');
@@ -344,9 +347,9 @@ export async function toggleTimerPip() {
   let fetchedAt = 0;
   let expandedId = null; // one expanded row at a time
   let closeoutId = null; // just-stopped timer whose close-out pane owns the window
-  let recentOpen = false; // the "recent" picker pane owns the window while open
+  let findOpen = false; // the find pane owns the window while open
 
-  // Timers hand-added to today's list via the picker: day-scoped, browser
+  // Timers hand-added to today's list via the find box: day-scoped, browser
   // -local ("add to the list for TODAY" — not a durable pin).
   const localToday = () => {
     const d = new Date();
@@ -667,16 +670,16 @@ export async function toggleTimerPip() {
     if (!co) closeoutId = null;
     if (co) {
       // close-out owns the window; the list comes back on Done / Esc
-      recentOpen = false;
-      recentEl.hidden = true;
-      recentEl.replaceChildren();
+      findOpen = false;
+      findEl.hidden = true;
+      findEl.replaceChildren();
       rowsEl.replaceChildren();
       rowsEl.hidden = true;
       emptyEl.hidden = true;
       buildCloseout(co);
       closeoutEl.hidden = false;
-    } else if (recentOpen) {
-      // the picker owns the window; deliberately NOT rebuilt here — a poll
+    } else if (findOpen) {
+      // the find pane owns the window; deliberately NOT rebuilt here — a poll
       // mid-typing must not clobber the filter input
       rowsEl.replaceChildren();
       rowsEl.hidden = true;
@@ -686,7 +689,7 @@ export async function toggleTimerPip() {
       closeoutEl.hidden = true;
       closeoutEl.replaceChildren();
       closeoutEl.removeAttribute('data-id');
-      recentEl.hidden = true;
+      findEl.hidden = true;
       rowsEl.hidden = false;
       rowsEl.replaceChildren(...rows.map(buildRow));
       emptyEl.hidden = rows.length > 0;
@@ -695,75 +698,94 @@ export async function toggleTimerPip() {
     doc.body.classList.toggle('running', rows.some((t) => t.running));
   }
 
-  // The "recent" pane (2026-07-14 feedback): past-week timers not already on
-  // the list; type-to-filter; picking one adds it for the day and opens its
-  // narrative. Built once per open — poll renders leave it alone.
-  function closeRecent() {
-    recentOpen = false;
-    recentEl.replaceChildren();
+  // The find pane (2026-07-29 feedback, replacing the past-week-only "Recent"
+  // picker): the dashboard's filter box, shrunk to fit the float. Type to
+  // narrow EVERY timer not already on the list; ↑/↓ walk the hits, Enter takes
+  // the highlighted one, Esc closes. Picking adds the timer to today's list and
+  // opens its narrative. Built once per open — poll renders leave it alone.
+  function closeFind() {
+    findOpen = false;
+    findEl.replaceChildren();
     render();
   }
-  function openRecent() {
-    recentOpen = true;
+  function openFind() {
+    findOpen = true;
     const input = doc.createElement('input');
-    input.className = 'recent-filter';
-    input.placeholder = 'Type to filter — Esc closes';
+    input.className = 'find-filter';
+    input.placeholder = 'Find a timer — Esc closes';
+    const count = doc.createElement('div');
+    count.className = 'find-count';
     const list = doc.createElement('div');
-    list.className = 'recent-list';
+    list.className = 'find-list';
+    let hits = [];
+    let cursor = 0;
     const pick = (t) => {
       extras.add(t.id);
       saveExtras();
-      recentOpen = false;
-      recentEl.replaceChildren();
+      findOpen = false;
+      findEl.replaceChildren();
       expandedId = t.id;
       render();
       focusNarrative(t.id);
     };
+    const highlight = () => {
+      [...list.children].forEach((el, i) => el.classList.toggle('on', i === cursor));
+      const on = list.children[cursor];
+      if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest' });
+    };
     const rebuild = () => {
-      const q = input.value.trim().toLowerCase();
-      const cands = recentPickList(timers, extras, Date.now())
-        .filter((t) => !q || [t.name, t.cm_short_name, t.cm_number, t.client_name]
-          .some((v) => String(v || '').toLowerCase().includes(q)));
-      list.replaceChildren(...cands.map((t) => {
+      hits = findPickList(timers, extras, input.value);
+      cursor = 0;
+      count.textContent = hits.length ? `${hits.length} timer${hits.length === 1 ? '' : 's'}` : '';
+      list.replaceChildren(...hits.map((t) => {
         const b = doc.createElement('button');
         b.type = 'button';
-        b.className = 'recent-item';
+        b.className = 'find-item';
         const name = doc.createElement('span');
         name.textContent = t.name;
         b.appendChild(name);
+        // the caption often hides the matter — show the number, as the
+        // dashboard card's tooltip does
         if (t.cm_number) {
           const sub = doc.createElement('span');
           sub.className = 'sub';
           sub.textContent = t.cm_number;
           b.appendChild(sub);
         }
+        b.title = t.cm_id ? `${t.cm_short_name} · ${t.cm_number}` : 'no matter yet';
         b.addEventListener('click', () => pick(t));
         return b;
       }));
-      if (cands.length === 0) {
+      if (hits.length === 0) {
         const none = doc.createElement('div');
-        none.className = 'recent-none';
-        none.textContent = q ? 'No match in the past week.' : 'Nothing ran in the past week that isn’t already listed.';
+        none.className = 'find-none';
+        none.textContent = input.value.trim()
+          ? 'No timer matches.' : 'Every timer is already on the list.';
         list.replaceChildren(none);
       }
-      return cands;
+      highlight();
+      return hits;
     };
     input.addEventListener('input', rebuild);
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeRecent();
-      if (e.key === 'Enter') {
-        const first = rebuild()[0];
-        if (first) pick(first);
+      if (e.key === 'Escape') { closeFind(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (hits.length === 0) return;
+        e.preventDefault();
+        cursor = (cursor + (e.key === 'ArrowDown' ? 1 : -1) + hits.length) % hits.length;
+        highlight();
+        return;
       }
+      if (e.key === 'Enter' && hits[cursor]) pick(hits[cursor]);
     });
     rebuild();
-    recentEl.replaceChildren(input, list);
-    recentEl.hidden = false;
+    findEl.replaceChildren(input, count, list);
+    findEl.hidden = false;
     render();
     input.focus();
   }
-  doc.querySelector('[data-recent-btn]').addEventListener('click', () => {
-    if (recentOpen) closeRecent(); else openRecent();
+  doc.querySelector('[data-find-btn]').addEventListener('click', () => {
+    if (findOpen) closeFind(); else openFind();
   });
 
   // Alt+↑/↓ nudges the clock ±0.1h (Shift: ±0.2h) — the grid's chord, live

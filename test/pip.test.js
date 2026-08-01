@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClockParts,
-  pipSupported, recentPickList, closeoutTimer,
+  pipSupported, findPickList, closeoutTimer,
 } from '../public/js/lib/pip.js';
 
 const T = (id, extra = {}) => ({
@@ -99,21 +99,31 @@ test('buildPipRows: extras set pulls otherwise-hidden timers into the list', () 
   assert.deepEqual(buildPipRows(timers).map((t) => t.id), [2], 'extras optional');
 });
 
-// …and the picker itself offers past-week-active timers not already shown,
-// alphabetically.
-test('recentPickList: past-week activity, excludes shown rows, A–Z', () => {
-  const now = Date.parse('2026-07-14T12:00:00-07:00');
-  const days = (n) => new Date(now - n * 86400000).toISOString();
+// …and the picker itself is a FIND box over every timer (2026-07-29 feedback:
+// the old "Recent" list only offered the past week, so anything older was
+// unreachable from the float). Same fields the dashboard's filter box matches.
+test('findPickList: every timer not already shown, A–Z, when nothing is typed', () => {
   const timers = [
-    T(1, { name: 'Zeta', last_stopped_at: days(2) }),          // recent → offered
-    T(2, { name: 'Alpha', last_started_at: days(6) }),         // recent → offered
-    T(3, { name: 'Old', last_stopped_at: days(9) }),           // too old
-    T(4, { name: 'Never' }),                                   // no activity
-    T(5, { name: 'Shown', elapsed_seconds: 60, last_stopped_at: days(1) }), // already a row
-    T(6, { name: 'Added', last_stopped_at: days(3) }),         // already added via extras
+    T(1, { name: 'Zeta' }),
+    T(2, { name: 'alpha' }),
+    T(3, { name: 'Shown', elapsed_seconds: 60 }),   // already a row
+    T(4, { name: 'Added' }),                        // already added via extras
   ];
-  assert.deepEqual(
-    recentPickList(timers, new Set([6]), now).map((t) => t.name),
-    ['Alpha', 'Zeta']);
-  assert.deepEqual(recentPickList(null, new Set(), now), []);
+  assert.deepEqual(findPickList(timers, new Set([4]), '').map((t) => t.name), ['alpha', 'Zeta']);
+  assert.deepEqual(findPickList(null, new Set(), ''), []);
+});
+
+test('findPickList: matches caption, matter name/number and client, case-insensitively', () => {
+  const timers = [
+    T(1, { name: 'TEL', cm_short_name: 'Real Estate Dev', cm_number: '087365-854545', client_name: 'Microsoft' }),
+    T(2, { name: 'Easement work', cm_short_name: 'Cedar Crossing', cm_number: '135709-868244', client_name: 'Cedar Co' }),
+    T(3, { name: 'Firm Meetings', cm_short_name: 'Firm Meetings', cm_number: '099999-045218', client_name: null }),
+  ];
+  const names = (q) => findPickList(timers, new Set(), q).map((t) => t.id);
+  assert.deepEqual(names('tel'), [1], 'caption');
+  assert.deepEqual(names('cedar'), [2], 'matter + client name');
+  assert.deepEqual(names('099999'), [3], 'matter number');
+  assert.deepEqual(names('microsoft'), [1], 'client name');
+  assert.deepEqual(names('  '), [2, 3, 1], 'blank query lists everything A–Z');
+  assert.deepEqual(names('nothing here'), []);
 });
