@@ -217,6 +217,44 @@ regression check for prompt edits, and the yardstick a fine-tune must beat.
 
 **E2E**: `node scripts/e2e-smoke.mjs` must stay green.
 
+## Measured results
+
+`node scripts/ai-eval.mjs`, llama3.1:8b, 8 briefs, against the live database:
+
+| | before | after | real history |
+|---|---|---|---|
+| median words | 40 | **11.5** | 11 |
+| longest | 40 | 16 | 29 (p90) |
+| filler markers | present | 0 | — |
+| invented time amounts | — | 0 | — |
+
+### A finding that changed the design
+
+Two of the eight outputs borrowed **proper nouns from the exemplars**: `mike`
+came back as a real client contact's surname, and a generic "city" became a
+named client. In a billing narrative that is the worst class of error — it
+bills a conference with the wrong person, and it is subtle enough to survive a
+read-through.
+
+Two successive rule rewrites failed to stop it. What fixed it was **two
+demonstration pairs** added to `SEED_PAIRS`: one keeping a bare first name as
+typed, one leaving an unnamed party unnamed. This is the same lesson as the
+negative-rules finding, one level up: for a model this size, an example is a
+far stronger instrument than a rule, whichever direction you are pushing.
+Those two pairs are load-bearing and covered by regression tests.
+
+A third finding, methodological: the first attempt used a seed pair whose
+brief was **identical to an eval brief**. The model echoed the seed and then
+padded, quietly corrupting the eval that was supposed to be measuring it. A
+test now asserts no seed pair duplicates an eval brief.
+
+### Known limitation
+
+Name resolution still depends on the matter roster. With a `cm_id` the roster
+resolves informal references correctly; without one, an unmatchable first name
+is now kept verbatim rather than invented — safe, but not resolved. Real
+`ai_brief` data will show whether David's actual shorthand hits this at all.
+
 ## Non-goals
 
 - No change to the JSON task-split contract in `formatContract`.
