@@ -9,6 +9,7 @@ import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
+import { compareTimersAZ } from '/js/lib/timersort.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -307,10 +308,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   }
 
   async function sortAZ() {
-    const sorted = [...timers].sort((a, b) =>
-      (a.cm_short_name || '').localeCompare(b.cm_short_name || '') || a.name.localeCompare(b.name));
+    const sorted = [...timers].sort(compareTimersAZ);
     await persistOrder(sorted);
-    emitToast('Sorted A–Z within groups');
+    emitToast('Sorted A–Z by name, within groups');
   }
 
   async function dropOn(target) {
@@ -658,7 +658,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
             onKeyDown=${onSearchKeyDown} />
           ${gridFilter ? html`<span class="muted small">${shown.length}/${timers.length}</span>` : null}
         </span>` : null}
-      <button class="btn btn-sm" title="Sort by CM name within groups" onClick=${() => guard(sortAZ())}>
+      <button class="btn btn-sm" title="Sort cards A–Z by their name, within groups" onClick=${() => guard(sortAZ())}>
         <${Icon} name="sortAZ" size=${16} /> A–Z
       </button>
       <button class="btn btn-sm" onClick=${() => setGroupModal('new')}>
