@@ -279,6 +279,9 @@ export function timersRouter({ db, clock }) {
   });
 
   r.patch('/:id', (req, res) => {
+    // A re-pointed matter MOVES the linked entry (below), so the link must not
+    // be a stale one pointing at yesterday's entry.
+    applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
     const b = req.body || {};
@@ -300,16 +303,19 @@ export function timersRouter({ db, clock }) {
       const m = db.prepare('SELECT short_name FROM matters WHERE id=?').get(b.cm_id);
       if (m && m.short_name) name = m.short_name;
     }
-    // Quick-timer completion (2026-07-13, entry-backed): if the timer's
-    // linked entry is a matterless draft, assigning a matter ASSOCIATES that
-    // entry in place — same entry, same time, same narrative, now finalizable.
-    // Only a real matter→matter change orphans the old entry (it belonged to
-    // the old matter).
+    // Re-pointing the matter MOVES the linked entry (2026-07-13 for the
+    // matterless quick-timer case; extended 2026-07-31 to matter→matter): the
+    // entry is this timer's block of time, so it follows the timer — same
+    // entry, same time, same narrative, new matter. Orphaning it while the day
+    // clock stayed put filed the SAME hours into a second entry, so switching
+    // a timer off the "Pending" placeholder showed the time twice. Only a
+    // deleted or already-finalized entry stays behind (its time is settled);
+    // there the timer unlinks and opens a fresh entry.
     const linked = timer.linked_entry_id
       ? db.prepare('SELECT id, cm_id, status, deleted_at FROM entries WHERE id=?').get(timer.linked_entry_id)
       : null;
     const associate = cmChanged && b.cm_id != null
-      && linked && !linked.deleted_at && linked.status === 'draft' && linked.cm_id == null;
+      && linked && !linked.deleted_at && linked.status === 'draft';
     db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, pinned=?, draft_narrative=?, narrative_template=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
@@ -333,12 +339,14 @@ export function timersRouter({ db, clock }) {
     if (associate) {
       db.transaction(() => {
         const cmRow = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(fresh.cm_id);
-        // billable was a placeholder default on the matterless entry — the
-        // matter's flag takes over now that one is known
+        // the entry's billable was a matterless placeholder, or the OLD
+        // matter's flag — either way the new matter's flag takes over
         db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
           .run(fresh.cm_id, cmRow ? cmRow.billable : 1, now(), linked.id);
         db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(now(), fresh.cm_id);
         rebuildMatterPeople(db, fresh.cm_id);
+        // the entry left the old matter — its people roll-up must lose it too
+        if (linked.cm_id) rebuildMatterPeople(db, linked.cm_id);
       })();
       entry = loadEntry(db, linked.id);
     }

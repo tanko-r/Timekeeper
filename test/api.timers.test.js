@@ -427,6 +427,57 @@ test('quick timer: association inherits the matter’s billable flag', () =>
     assert.equal(r.entry.billable, 0, 'matterless default (billable) gives way to the matter');
   }));
 
+// 2026-07-31 feedback: re-pointing a timer from one matter to another (the
+// "Pending" placeholder → a real CM number) used to ORPHAN the old entry and
+// file the SAME day clock into a brand-new one — the day showed the time
+// twice. The entry is the timer's block of time: it MOVES with the timer.
+test('re-pointing a timer to another matter MOVES its draft entry — no duplicate', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const real = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '100001-000077', short_name: 'Real matter', billable: 1,
+    })).body;
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Pending', cm_id: cm.id,
+    })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600); // 1.0h filed against the placeholder matter
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.total, 1.0);
+
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: real.id })).body;
+    assert.equal(r.entry.id, stop.entry.id, 'SAME entry — moved, not replaced');
+    assert.equal(r.entry.cm_id, real.id);
+    assert.equal(r.entry.total, 1.0, 'time unchanged by the move');
+    assert.equal(r.linked_entry_id, stop.entry.id, 'link survives');
+    const entries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(entries.length, 1, 'the day still holds ONE entry for this hour');
+    assert.equal(entries[0].cm_id, real.id);
+
+    clock.advance(1800);
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800); // +0.5h
+    const stop2 = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop2.entry.id, stop.entry.id, 'later stops keep filing the moved entry');
+    assert.equal(stop2.entry.total, 1.5);
+  }));
+
+test('re-pointing a RUNNING timer to another matter moves the live entry', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const real = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '100001-000078', short_name: 'Real matter', billable: 0,
+    })).body;
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Pending', cm_id: cm.id,
+    })).body;
+    const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
+    clock.advance(3600);
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: real.id })).body;
+    assert.equal(r.entry.id, started.entry.id, 'the running timer keeps its entry');
+    assert.equal(r.entry.cm_id, real.id);
+    assert.equal(r.entry.billable, 0, 'billable follows the new matter');
+    assert.equal((await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body.length, 1);
+  }));
+
 test('quick timer: assigning a matter to a NEVER-STARTED timer files nothing', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
