@@ -308,7 +308,10 @@ test('ai narrate/expand carry matter people + phrases so informal names can reso
     });
     assert.equal(r.status, 200);
     const sys = stub.state.lastChat.messages[0].content;
-    const user = stub.state.lastChat.messages[1].content;
+    // Few-shot pairs sit between the system prompt and the live request
+    // (spec 2026-08-01 §4), so the real user turn is always the last one.
+    const lastUser = (msgs) => msgs[msgs.length - 1].content;
+    const user = lastUser(stub.state.lastChat.messages);
     assert.match(user, /J\. Larson/, 'people roster rides along');
     assert.match(user, /Compensation Agreement/, 'recent phrases ride along');
     assert.match(sys, /informal|first name/i, 'name-resolution rule present');
@@ -317,13 +320,13 @@ test('ai narrate/expand carry matter people + phrases so informal names can reso
     await t.fetchJson('POST', '/api/ai/narrate', {
       mode: 'shorter', narrative: 'Reviewed agreement and mark up from jeff.', cm_id: cm.id,
     });
-    assert.match(stub.state.lastChat.messages[1].content, /J\. Larson/);
+    assert.match(lastUser(stub.state.lastChat.messages), /J\. Larson/);
 
     // /ai/expand too
     await t.fetchJson('POST', '/api/ai/expand', {
       brief: 'call with jeff re backstop', totalHours: 0.5, cm_id: cm.id,
     });
-    assert.match(stub.state.lastChat.messages[1].content, /J\. Larson/);
+    assert.match(lastUser(stub.state.lastChat.messages), /J\. Larson/);
 
     // no cm_id → no matter context, no crash
     const bare = await t.fetchJson('POST', '/api/ai/narrate', { mode: 'draft', brief: 'misc work' });

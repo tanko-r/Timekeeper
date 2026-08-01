@@ -4,6 +4,7 @@ import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts } from '../lib/timeAmounts.js';
+import { pickExemplars, pickPairs, renderGlossary } from '../lib/exemplars.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
 // Brief description in → professional narrative + optional task split out.
@@ -19,28 +20,45 @@ function parseJsonLoose(s) {
 
 // The editable part of the prompt (Settings → AI). The format contract below
 // is ALWAYS appended so custom instructions can't break response parsing.
-export const DEFAULT_AI_INSTRUCTIONS = `You are a legal billing assistant for an attorney. The user gives a brief, informal description of legal work performed. You expand it into (1) a professional billing narrative and (2) its component tasks.
+// POSITIVE-ONLY rules (spec 2026-08-01 §1). Every constraint is phrased as
+// what to do, and no rule contains a literal phrase to avoid or a placeholder
+// name. This is not stylistic: a design prototype that listed forbidden
+// phrases emitted them verbatim, and invented a person named after the
+// placeholder in its own name-formatting rule. A small model treats any string
+// in the prompt as vocabulary, whatever the surrounding sentence claims.
+//
+// The old default also contradicted itself ("make reasonable conjecture" vs
+// "do not invent"), which llama3.1:8b resolved by padding — the filler David
+// reported. Substance now comes from the exemplars and pairs appended by
+// buildVoiceContext(), not from prose here.
+export const DEFAULT_AI_INSTRUCTIONS = `You are a legal billing assistant. The attorney types terse shorthand for work performed. You render it as a billing narrative in the attorney's own voice.
 
-Rules for the narrative:
-- Specific, professional billing language with concrete action verbs (reviewed, drafted, revised, analyzed, telephone conference with, correspondence with).
-- Never use vague phrases like "work on", "attention to", or "review file".
-- No client-confidential embellishment: only expand on what the user said; do not invent facts, names, or documents.
-- 1–3 sentences.`;
+Match the length, rhythm and register of the attorney's entries shown below. Brevity is the point: most entries are a single sentence.
+
+Those entries show you how the attorney writes. Take only their shape. Every name, document and subject in your answer comes from the attorney's description of this work.
+
+- Write in present tense.
+- Separate distinct tasks with semicolons. End with a period.
+- Write a person as an initial and a surname when the description or the matter history gives you their surname. A name you cannot match that way stays exactly as the attorney typed it.
+- Expand abbreviations into the full document name.
+- State what the work touched: the document, the person, the subject. Stop there.
+- Every noun in your output must trace to a word the attorney wrote. Where the shorthand names no subject, leave it unnamed.
+- Drop articles wherever the attorney's entries drop them.`;
 
 export function formatContract(codes) {
   return `Rules for tasks:
 - Break the work into 1–5 component tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: the COMPLETE billing-narrative clause for that task — as specific and professional as the narrative itself, preserving every concrete detail (documents, parties, subject matter) from the description that belongs to that task. Never flatten to a terse label: "review and analyze letter of intent and Purchase and Sale Agreement for the data center transaction", not "review documents". Start lowercase; no trailing period.
+- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, and name nothing the description did not. Start lowercase; no trailing period.
 - share: fraction of the total time for that task; all shares sum to 1.
 
 Respond with ONLY this JSON, no other text:
 {"narrative": "...", "tasks": [{"task_code": "...", "fragment": "...", "share": 0.5}]}`;
 }
 
-export function systemPrompt(codes, custom) {
+export function systemPrompt(codes, custom, voice) {
   const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  return `${instructions}\n\n${formatContract(codes)}`;
+  return `${instructions}${(voice && voice.prompt) || ''}\n\n${formatContract(codes)}`;
 }
 
 // When a call knows its matter, the roster + recurring phrases ride along so
@@ -56,6 +74,83 @@ export function matterAiContext(db, cmId, today) {
   if (names.length) parts.push(`People from this matter's history: ${names.join(', ')}.`);
   if (phrases.length) parts.push(`The attorney's recent work on this matter:\n${phrases.join('\n')}`);
   return parts.length ? parts.join('\n\n') : null;
+}
+
+// Hand-authored bootstrap pairs (spec §4). Deliberately generic — they exist
+// only until real (brief → corrected narrative) pairs accumulate, at which
+// point pickPairs displaces them permanently. Kept few and short so they teach
+// the compression ratio without anchoring subject matter.
+export const SEED_PAIRS = [
+  { brief: 'rev lease; conf w client', seed: true,
+    narrative: 'Review and analyze lease and confer with client regarding same.' },
+  { brief: 'draft easement amendment per comments; send to client', seed: true,
+    narrative: 'Draft revisions to easement amendment incorporating comments and transmit to client.' },
+  { brief: 'tc w opposing counsel re discovery', seed: true,
+    narrative: 'Telephone conference with opposing counsel regarding discovery responses.' },
+  { brief: 'emails w title co re escrow', seed: true,
+    narrative: 'Email with title company regarding escrow.' },
+  // Demonstrates the two cases prose rules could not hold (measured
+  // 2026-08-01): a first name with no known surname stays as typed rather
+  // than being resolved to someone borrowed from the exemplars, and an
+  // unnamed party stays unnamed rather than acquiring a name.
+  { brief: 'rev easement; talked to mike about it', seed: true,
+    narrative: 'Review and analyze easement and confer with Mike regarding same.' },
+  { brief: 'draft ltr to county re permit condition', seed: true,
+    narrative: 'Draft letter to County regarding permit condition.' },
+];
+
+// The voice layer: real narratives as style exemplars, the shortcuts table as
+// an abbreviation authority, and few-shot pairs as chat turns. Returns a
+// prompt fragment plus the turns to splice in before the live request.
+//
+// Exemplars and pairs both draw ONLY from narrative_ai = 0 — text the attorney
+// wrote or corrected. Without that filter, recency-weighted selection would
+// feed the model's own output back as "the attorney's voice" and compound the
+// verbosity this whole design exists to remove.
+export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
+  if (!db) return { prompt: '', turns: [] };
+
+  const own = cmId == null ? [] : db.prepare(`
+    SELECT narrative FROM entries
+    WHERE deleted_at IS NULL AND narrative_ai = 0 AND cm_id = ?
+      AND narrative IS NOT NULL AND length(trim(narrative)) > 0
+    ORDER BY date DESC LIMIT 60
+  `).all(cmId).map((r) => r.narrative);
+
+  const recent = db.prepare(`
+    SELECT narrative FROM entries
+    WHERE deleted_at IS NULL AND narrative_ai = 0
+      AND narrative IS NOT NULL AND length(trim(narrative)) > 0
+    ORDER BY date DESC LIMIT 200
+  `).all().map((r) => r.narrative);
+
+  const exemplars = pickExemplars(own.concat(recent), { count: 6 });
+  const glossary = renderGlossary(db.prepare(
+    'SELECT abbrev, phrase FROM shortcuts ORDER BY id DESC').all());
+
+  const pool = db.prepare(`
+    SELECT ai_brief AS brief, narrative, cm_id, date FROM entries
+    WHERE deleted_at IS NULL AND narrative_ai = 0
+      AND ai_brief IS NOT NULL AND length(trim(ai_brief)) > 0
+      AND narrative IS NOT NULL AND length(trim(narrative)) > 0
+    ORDER BY date DESC LIMIT 300
+  `).all();
+  const pairs = pickPairs(pool, SEED_PAIRS, { count: 6, cmId, brief });
+
+  const parts = [];
+  if (glossary) {
+    parts.push(`The attorney's abbreviations:\n${glossary}`);
+  }
+  if (exemplars.length) {
+    parts.push(`The attorney's entries:\n${exemplars.join('\n')}`);
+  }
+  return {
+    prompt: parts.length ? `\n\n${parts.join('\n\n')}` : '',
+    turns: pairs.flatMap((p) => [
+      { role: 'user', content: `Work done: ${p.brief}` },
+      { role: 'assistant', content: p.narrative },
+    ]),
+  };
 }
 
 export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
@@ -84,9 +179,9 @@ export function timeGroundingRule(totalHours) {
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
-export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours }) {
+export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  const system = `${base}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
+  const system = `${base}${(voice && voice.prompt) || ''}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
   let user;
   if (mode === 'shorter') {
     user = [context, `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`].filter(Boolean).join('\n\n');
@@ -95,7 +190,12 @@ export function buildNarrateMessages({ instructions, brief, narrative, mode = 'd
   } else {
     user = [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
   }
-  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+  // Few-shot pairs sit between the system prompt and the live request so the
+  // model reads them as prior exchanges it should imitate. Rewrites (shorter /
+  // longer) skip them — their input is a finished narrative, not shorthand,
+  // so shorthand→narrative examples would teach the wrong transformation.
+  const shots = (mode === 'shorter' || mode === 'longer') ? [] : ((voice && voice.turns) || []);
+  return [{ role: 'system', content: system }, ...shots, { role: 'user', content: user }];
 }
 
 // Background refinement of a timer's pre-computed narrative (spec §6,
@@ -112,10 +212,12 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     'SELECT t.id, t.name, t.cm_id, m.short_name FROM timers t JOIN matters m ON m.id = t.cm_id WHERE t.id=?'
   ).get(timerId);
   if (!timer) return;
+  const brief = `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`;
   const messages = buildNarrateMessages({
     instructions: cfg.systemPrompt,
-    brief: `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`,
+    brief,
     context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
+    voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name }),
   });
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
@@ -156,6 +258,7 @@ export function aiRouter({ db }) {
     const codes = db.prepare(
       'SELECT name FROM task_codes WHERE active=1 ORDER BY sort_order, id').all().map((x) => x.name);
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
+    const voice = buildVoiceContext(db, { cmId: b.cm_id, brief });
 
     let content;
     try {
@@ -168,7 +271,10 @@ export function aiRouter({ db }) {
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
-            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+            // The voice block sits before the JSON contract so the format
+            // rules stay last and closest to the request — the exemplars
+            // teach register, the contract still owns the response shape.
+            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
             {
               role: 'user',
               content: [
@@ -240,6 +346,7 @@ export function aiRouter({ db }) {
       totalHours: b.totalHours,
       context: [b.context ? String(b.context).slice(0, 2000) : null, matterCtx]
         .filter(Boolean).join('\n\n') || null,
+      voice: buildVoiceContext(db, { cmId: b.cm_id, brief: brief || narrative }),
     });
 
     // If the client goes away mid-stream (navigated off, or a regenerate
