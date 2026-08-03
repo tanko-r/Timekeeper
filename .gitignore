@@ -6,3 +6,6 @@ feedback/
 scripts/ai-audit/
 *.TIM
 *.geany
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
