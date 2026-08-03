@@ -42,8 +42,10 @@ Review and implement TODO.md at repo root.
 - Check the design docs before "fixing" surprising behavior — the spec at
   `docs/superpowers/specs/2026-07-06-timekeeper-design.md` flags deliberate
   assumptions (midnight banking, export shape, remote auth).
-- This is an Android PWA in daily use: check UI work at ~412px wide and watch
-  for toolbars that won't wrap.
+- This is an installed PWA in daily use — **mostly desktop**, occasionally
+  Android. Verify UI work at a desktop viewport first, then sanity-check
+  ~412px (watch for toolbars that won't wrap). Don't sacrifice the desktop
+  layout for phone width.
 - Never put real client, matter, firm, or PII names in code, tests, or commit
   messages — use the house fictional names.
 - If an item is a backlog *idea* rather than a concrete fix, say so and offer
