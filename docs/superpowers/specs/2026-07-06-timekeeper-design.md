@@ -93,9 +93,9 @@ audit_log(id PK, entry_id, action TEXT, detail TEXT/*json diff*/, created_at)
 
 **Finalize**: per-day or date-range; locks entries (no edit without explicit unlock). Unlock + subsequent edits of ever-finalized entries are written to `audit_log` with field diffs, viewable in the editor.
 
-**Export**: today / date range; finalized-only by default, drafts opt-in; produces CSV + plain-text summary; stamps `exported_at` (re-export allowed; pending-vs-exported visible in UI).
+**Export**: today / date range; finalized-only by default, drafts opt-in; status filter (all / not finalized / not exported / either) for finding stalled time; produces CSV + plain-text summary; stamps `exported_at` (re-export allowed; pending-vs-exported visible in UI).
 
-**Dashboard**: target meter (daily target, default 8.0h, billable-focused), timer grid (drag-reorder, live elapsed, idle nudge when a timer runs past a threshold, default 3h), today's entries, alert banner (missing/invalid narratives today + backlog, unexported finalized days).
+**Dashboard**: target meter (daily target, default 8.0h, billable-focused), timer grid (drag-reorder, live elapsed, idle nudge when a timer runs past a threshold, default 3h), today's entries, alert banner (missing/invalid narratives today, plus the three ways time stalls — unfinalized on earlier days, unlocked after finalizing, finalized but never exported; each pill deep-links into the matching Export filter).
 
 **Calendar**: month + week views; per-day total split billable/non-billable; color vs daily target; click-through to day view.
 

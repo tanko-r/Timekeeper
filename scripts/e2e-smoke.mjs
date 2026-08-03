@@ -1129,6 +1129,48 @@ await step('export view: This month preset sets from=1st, to=today', async () =>
   if (toVal !== today) throw new Error(`This month "to" should be today (${today}), got ${toVal}`);
 });
 
+// Time-leakage chain (TODO 2026-08-03): an unfinalized entry on a day that is
+// already over has to be visible on the dashboard, and the pill has to land on
+// an Export page that is actually showing it — right filter, wide enough range.
+await step('stalled time: banner pill → Export filtered to exactly those entries', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const yesterday = (() => {
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const stalled = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date: yesterday, cm_id: cms[0].id, narrative: 'Reviewed stalled matter correspondence.',
+      tasks: [{ task_code: 'Review', duration: 0.6, fragment: '' }],
+    }),
+  })).json();
+
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.alert-pill')].some((b) => b.textContent.includes('not finalized')));
+  await shot('attention-banner');
+  await clickText('.alert-pill', 'not finalized');
+
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.seg button')].some((b) => b.classList.contains('on') && b.textContent.includes('Not finalized')));
+  const { fromVal, rows } = await page.evaluate(() => ({
+    fromVal: document.querySelectorAll('input[type="date"]')[0].value,
+    rows: [...document.querySelectorAll('table.tk tbody tr')].map((r) => r.textContent),
+  }));
+  // the pill opens on the oldest stalled entry, so the range must reach back
+  // at least to yesterday — a narrower one would show an empty list
+  if (fromVal > yesterday) throw new Error(`range should reach ${yesterday}, got from=${fromVal}`);
+  if (!rows.some((r) => r.includes('stalled matter correspondence'))) {
+    throw new Error('the flagged entry is not in the filtered list');
+  }
+  if (rows.some((r) => r.includes('✓'))) throw new Error('an exported entry leaked into the "Not finalized" list');
+  await shot('export-filtered');
+
+  await fetch(`${base}/api/entries/${stalled.id}`, { method: 'DELETE' });
+});
+
 await step('settings pages: bare route = General; submenu reaches AI / .TIM / codes', async () => {
   await page.goto(`${base}/#/settings`, { waitUntil: 'networkidle0' });
   await waitFor('.subnav'); // Settings navlink expanded into category links

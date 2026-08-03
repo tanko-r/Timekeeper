@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { isValidDate } from '../lib/dates.js';
+import { attentionSql } from '../lib/attention.js';
 import { toCsv } from '../lib/csv.js';
 import { durationLabel } from '../lib/narrative.js';
 import { formatTimEntries } from '../lib/tim.js';
@@ -11,22 +12,29 @@ export const CSV_HEADER = [
   'narrative', 'entry_total', 'entry_id',
 ];
 
-export function buildExport(db, { from, to, includeDrafts = false }) {
-  // Matterless entries are never exportable — there is nothing to key them
-  // under in the billing system. They can only be drafts (finalize blocks on
-  // no_matter), so this bites only in includeDrafts previews; the count is
-  // returned so the UI can say what was left out.
+export function buildExport(db, { from, to, includeDrafts = false, attention = null }) {
+  // An attention filter (see lib/attention.js) says which stalled entries to
+  // look at, and answers "finalized only?" on its own — "not finalized" would
+  // be an empty list under the default finalized-only rule.
+  const attSql = attentionSql(attention);
+  const statusSql = attSql ? `AND ${attSql}` : (includeDrafts ? '' : "AND status='finalized'");
   const rows = db.prepare(`
-    SELECT * FROM entries
-    WHERE deleted_at IS NULL AND date >= ? AND date <= ? AND cm_id IS NOT NULL
-      ${includeDrafts ? '' : "AND status='finalized'"}
+    SELECT entries.* FROM entries
+    WHERE deleted_at IS NULL AND date >= ? AND date <= ?
+      ${statusSql}
     ORDER BY date, cm_id, id
   `).all(from, to);
   const unassociated = db.prepare(`
     SELECT COUNT(*) c FROM entries
     WHERE deleted_at IS NULL AND date >= ? AND date <= ? AND cm_id IS NULL
   `).get(from, to).c;
-  const entries = rows.map((r) => enrich(db, r));
+  // Matterless entries are never exportable — there is nothing to key them
+  // under in the billing system. They stay in `entries` so the preview can
+  // show the time they are holding (hiding a leaking entry from the very
+  // screen built to find leaks would defeat the point), and drop out of
+  // everything that becomes a file.
+  const allEntries = rows.map((r) => enrich(db, r));
+  const entries = allEntries.filter((e) => e.cm);
   const increment = (getSetting(db, 'rounding') || {}).increment || 0.1;
 
   // Custom-field columns (2026-07-15): one per distinct effective-field name
@@ -68,7 +76,8 @@ export function buildExport(db, { from, to, includeDrafts = false }) {
     count: entries.length,
     unassociated,
     entry_ids: entries.map((e) => e.id),
-    entries,
+    entries: allEntries, // preview rows — matterless included
+    exportable: entries, // the rows behind csv/text/.TIM
     csv: toCsv(header, csvRows),
     text,
   };
@@ -82,7 +91,9 @@ export function exportRouter({ db, clock }) {
   r.post('/export', (req, res) => {
     const b = req.body || {};
     if (!validRange(b)) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD.' });
-    const result = buildExport(db, { from: b.from, to: b.to, includeDrafts: !!b.includeDrafts });
+    const result = buildExport(db, {
+      from: b.from, to: b.to, includeDrafts: !!b.includeDrafts, attention: b.attention,
+    });
     if (b.markExported !== false && result.entry_ids.length > 0) {
       const stamp = clock().toISOString();
       // Only finalized entries are "sent to the assistant" — a draft included
@@ -90,16 +101,17 @@ export function exportRouter({ db, clock }) {
       const upd = db.prepare("UPDATE entries SET exported_at=? WHERE id=? AND status='finalized'");
       db.transaction(() => result.entry_ids.forEach((id) => upd.run(stamp, id)))();
     }
-    const { entries, ...out } = result;
-    out.tim = formatTimEntries(entries, getSetting(db, 'tim') || {}, { now: clock().toISOString() });
+    const { entries, exportable, ...out } = result;
+    out.tim = formatTimEntries(exportable, getSetting(db, 'tim') || {}, { now: clock().toISOString() });
     res.json(out);
   });
 
   r.get('/export/preview', (req, res) => {
     const q = req.query;
     if (!validRange(q)) return res.status(400).json({ error: 'from/to must be YYYY-MM-DD.' });
-    const { csv, ...out } = buildExport(db, {
+    const { csv, exportable, ...out } = buildExport(db, {
       from: q.from, to: q.to, includeDrafts: q.includeDrafts === '1' || q.includeDrafts === 'true',
+      attention: q.attention,
     });
     res.json(out);
   });

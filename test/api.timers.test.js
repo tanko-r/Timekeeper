@@ -844,21 +844,22 @@ test('finalizing the linked entry zeroes and unlinks its timer (stopped and runn
   }));
 
 // Unassociated-entry surfacing (2026-07-13, replaces the held_since banner):
-// a matterless entry from an earlier day is a validation-blocked draft, so it
-// shows up through the ordinary backlog alert — nothing timer-side to flag.
-test('unassociated entries from earlier days surface in the dashboard backlog alert', () =>
+// a matterless entry from an earlier day is an unfinalized draft holding real
+// time, so it shows up through the ordinary unfinalized alert — nothing
+// timer-side to flag.
+test('unassociated entries from earlier days surface in the dashboard unfinalized alert', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Parking lot' })).body;
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(2 * 3600);
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
 
     clock.set('2026-07-07T10:00:00-07:00');
     const dash = (await t.fetchJson('GET', '/api/dashboard')).body;
     assert.equal(dash.alerts.heldTimers, undefined, 'held-timer alert retired');
-    assert.equal(dash.alerts.backlog.length, 1, 'yesterday’s matterless entry needs attention');
-    assert.equal(dash.alerts.backlog[0].cm_number, null);
-    assert.ok(dash.alerts.backlog[0].codes.includes('no_matter'));
+    assert.equal(dash.alerts.unfinalized.count, 1, 'yesterday’s matterless entry needs attention');
+    assert.equal(dash.alerts.unfinalized.hours, 2);
+    assert.deepEqual(dash.alerts.unfinalized.ids, [stop.entry.id]);
   }));
 
 test('quick timer: "fresh" discards an untouched matterless entry like any other', () =>

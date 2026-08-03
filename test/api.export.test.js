@@ -105,8 +105,8 @@ test('dashboard: today totals, alerts for invalid drafts and unexported finalize
     assert.equal(d.today.target, 8);
     assert.ok(d.alerts.invalidDrafts.some((e) => e.id === bad.id));
     assert.ok(!d.alerts.invalidDrafts.some((e) => e.id === draft.id)); // clean draft not flagged
-    assert.equal(d.alerts.backlogCount, 1);
-    assert.equal(d.alerts.unexportedFinalized, 1);
+    assert.equal(d.alerts.unfinalized.count, 1); // yesterday's draft
+    assert.equal(d.alerts.unexported.count, 1);
     assert.ok(Array.isArray(d.timers));
   }));
 

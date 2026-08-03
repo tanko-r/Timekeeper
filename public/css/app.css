@@ -197,6 +197,10 @@ input.input-narrow { width: 90px; }
 }
 .chip-finalized { color: var(--status-good); border-color: color-mix(in srgb, var(--status-good) 40%, transparent); }
 .chip-exported { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+/* finalized once, then unlocked — it looks done everywhere else, so say so */
+.chip-reverted { color: var(--status-warning); border-color: color-mix(in srgb, var(--status-warning) 45%, transparent); }
+/* an export-preview row that can never leave the building (no matter yet) */
+.row-blocked td { opacity: .72; }
 /* running-entry cue (feedback 2026-07-10): the entry exists from start */
 .chip-running {
   color: var(--status-good); border-color: color-mix(in srgb, var(--status-good) 40%, transparent);

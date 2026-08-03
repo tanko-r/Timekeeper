@@ -79,8 +79,13 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     .filter((t) => t.running && t.linked_entry_id).map((t) => t.linked_entry_id));
 
   const alerts = d.alerts;
-  const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.backlogCount > 0
-    || alerts.unexportedFinalized > 0;
+  const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.unfinalized.count > 0
+    || alerts.reverted.count > 0 || alerts.unexported.count > 0;
+
+  // Each stalled bucket opens the Export page already filtered to itself, from
+  // the oldest entry in it — the range is what makes the entries visible, so
+  // guessing it would be the one way this click-through could lie.
+  const attentionLink = (kind, b) => `#/export/${kind}/${b.oldest}`;
 
   // Two-step finalize: warnings must be seen before they're acknowledged.
   async function finalizeToday(ack = false) {
@@ -143,13 +148,22 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
               ${a.short_name ?? 'No matter yet'} — ${a.codes.includes('no_matter') ? 'assign a matter'
                 : a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
             </button>`)}
-          ${alerts.backlogCount > 0 ? html`
-            <button class="alert-pill" onClick=${() => nav('#/search')}>
-              ${alerts.backlogCount} older draft${alerts.backlogCount === 1 ? '' : 's'} need review
+          ${alerts.unfinalized.count > 0 ? html`
+            <button class="alert-pill" title=${`Oldest ${alerts.unfinalized.oldest} — time recorded on a day that is already over`}
+              onClick=${() => nav(attentionLink('unfinalized', alerts.unfinalized))}>
+              ${alerts.unfinalized.count} ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} on earlier
+              days not finalized · ${fmtHours(alerts.unfinalized.hours)}h
             </button>` : null}
-          ${alerts.unexportedFinalized > 0 ? html`
-            <button class="alert-pill" onClick=${() => nav('#/export')}>
-              ${alerts.unexportedFinalized} finalized ${alerts.unexportedFinalized === 1 ? 'entry' : 'entries'} not yet exported
+          ${alerts.reverted.count > 0 ? html`
+            <button class="alert-pill" title=${'Finalized once and unlocked since — it still reads as done everywhere else'}
+              onClick=${() => nav(attentionLink('unfinalized', alerts.reverted))}>
+              ${alerts.reverted.count} unlocked after finalizing · ${fmtHours(alerts.reverted.hours)}h
+            </button>` : null}
+          ${alerts.unexported.count > 0 ? html`
+            <button class="alert-pill" title=${`Oldest ${alerts.unexported.oldest} — finalized but never sent`}
+              onClick=${() => nav(attentionLink('unexported', alerts.unexported))}>
+              ${alerts.unexported.count} finalized ${alerts.unexported.count === 1 ? 'entry' : 'entries'}
+              not yet exported · ${fmtHours(alerts.unexported.hours)}h
             </button>` : null}
         </div>
       </div>` : null}

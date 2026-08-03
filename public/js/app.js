@@ -317,7 +317,8 @@ function App() {
     stats: () => html`<${StatsView} ...${ctx} />`,
     settings: () => html`<${SettingsView} page=${route.args[0]} ...${ctx} authState=${authState} reloadAuth=${reloadAuth} />`,
     cms: () => html`<${CmsView} ...${ctx} />`,
-    export: () => html`<${ExportView} ...${ctx} />`,
+    // #/export/<filter>/<from> — the dashboard's attention pills deep-link here
+    export: () => html`<${ExportView} focus=${route.args[0]} focusFrom=${route.args[1]} ...${ctx} />`,
   }[route.path] || (() => html`<div class="card">Not found. <a href="#/">Go home</a></div>`);
 
   const active = route.path === 'day' ? 'calendar' : route.path;
