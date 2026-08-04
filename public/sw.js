@@ -110,6 +110,41 @@ self.addEventListener('fetch', (e) => {
   // pass straight through rather than being cached.
   if (url.origin !== self.location.origin) return;
 
+  // Navigations are network-FIRST (cache only as an offline fallback). Serving
+  // the shell from cache here hides the one thing a navigation is for: finding
+  // out we're no longer allowed in. Remote clients sit behind Cloudflare
+  // Access, and when that session lapses every request 302s to
+  // cloudflareaccess.com. A cached navigation meant the login page never
+  // rendered — the shell painted normally and then every /api/ call died on a
+  // cross-origin redirect the browser won't follow, surfacing as "Failed to
+  // fetch". The app reported a server outage while the server was healthy
+  // (2026-08-02). Passing the real response through lets that 302 do its job:
+  // an expired session lands on the Access login instead of a false error.
+  // The redirect arrives as an opaqueredirect (navigations fetch with
+  // redirect: 'manual'); returning it hands the browser the hop to follow, and
+  // its status 0 keeps it out of the cache on its own.
+  if (req.mode === 'navigate') {
+    e.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.status === 200 && res.type === 'basic') {
+          e.waitUntil(caches.open(CACHE).then((c) => c.put(req, res.clone())));
+        }
+        return res;
+      } catch (err) {
+        // Genuinely offline: fall back to the precached shell so the PWA still
+        // opens (it will show its own "can't reach server" state).
+        const cache = await caches.open(CACHE);
+        const hit = await cache.match(req, { ignoreVary: true })
+          || await cache.match('./index.html', { ignoreVary: true })
+          || await cache.match('./', { ignoreVary: true });
+        if (hit) return hit;
+        throw err;
+      }
+    })());
+    return;
+  }
+
   // Cache-first, network-fallback for same-origin static assets.
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
