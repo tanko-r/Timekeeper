@@ -1115,6 +1115,42 @@ await step('export view offers CSV, .TIM, and text', async () => {
   await shot('export');
 });
 
+await step('export view: row actions edit and finalize a not-finalized entry', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const created = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date: todayLocal(), cm_id: cms[0].id, narrative: 'Reviewed export action wiring correspondence.',
+      tasks: [{ task_code: 'Review', duration: 0.6, fragment: '' }],
+    }),
+  })).json();
+
+  await page.goto(`${base}/#/export/unfinalized`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('table.tk tbody tr')].some((r) => r.textContent.includes('export action wiring')));
+
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('table.tk tbody tr')].find((r) => r.textContent.includes('export action wiring'));
+    row.querySelector('button[title="Edit"]').click();
+  });
+  await waitFor('.modal-wide');
+  await page.waitForFunction(() => document.body.textContent.includes('export action wiring'));
+  await shot('export-row-edit');
+  await clickText('.modal-wide button', 'Save & close');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('table.tk tbody tr')].find((r) => r.textContent.includes('export action wiring'));
+    row.querySelector('button[title="Finalize"]').click();
+  });
+  await page.waitForFunction(() =>
+    ![...document.querySelectorAll('table.tk tbody tr')].some((r) => r.textContent.includes('export action wiring')),
+  { timeout: 5000 });
+
+  await fetch(`${base}/api/entries/${created.id}`, { method: 'DELETE' });
+});
+
 await step('export view: This month preset sets from=1st, to=today', async () => {
   await clickText('button', 'This month');
   const { fromVal, toVal, today } = await page.evaluate(() => {

@@ -1,7 +1,7 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useEffect, useAsync, Spinner, ErrorBox, fmtHours, todayStr, addDays,
-  emitToast, BillableBadge, fmtStamp, Icon,
+  emitToast, BillableBadge, fmtStamp, Icon, markJustFinalized,
 } from '/js/ui.js';
 
 // The dashboard's "needs attention" pills deep-link in here as
@@ -14,7 +14,7 @@ const FILTERS = [
   ['either', 'Either', 'Everything still owed something — unfinalized or unexported'],
 ];
 
-export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom }) {
+export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom, openEditor }) {
   const [from, setFrom] = useState(focusFrom || todayStr());
   const [to, setTo] = useState(todayStr());
   const [includeDrafts, setIncludeDrafts] = useState(false);
@@ -44,6 +44,21 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom }) {
     }
     emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'} — ${format === 'tim' ? '.TIM' : 'CSV'} downloaded`);
     bumpRefresh();
+  }
+
+  async function finalize(entry) {
+    try {
+      await api.post(`/api/entries/${entry.id}/finalize`);
+      markJustFinalized(entry.id);
+      emitToast('Finalized', {
+        actionLabel: 'Unlock',
+        action: async () => { await api.post(`/api/entries/${entry.id}/unlock`); bumpRefresh(); },
+      });
+      bumpRefresh();
+    } catch (e) {
+      if (e.status === 422) openEditor({ id: entry.id }); // show the findings in the editor
+      else emitToast(e.message, { error: true });
+    }
   }
 
   async function copyText() {
@@ -136,7 +151,7 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom }) {
         <table class="tk">
           <thead><tr>
             <th>Date</th><th>CM</th><th>Narrative</th><th>Billable</th>
-            <th style=${{ textAlign: 'right' }}>Hours</th><th>Exported</th>
+            <th style=${{ textAlign: 'right' }}>Hours</th><th>Exported</th><th></th>
           </tr></thead>
           <tbody>
             ${entries.map((e) => html`
@@ -156,9 +171,15 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom }) {
                 <td class="small muted">${e.status === 'draft'
                   ? (e.exported_at ? html`<span title=${`Sent ${fmtStamp(e.exported_at)}, edited since`}>stale</span>` : '—')
                   : e.exported_at ? `✓ ${fmtStamp(e.exported_at)}` : 'pending'}</td>
+                <td>
+                  ${e.status === 'draft' ? html`
+                    <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}><${Icon} name="edit" size=${16} /></button>
+                    <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>` : html`
+                    <button class="btn btn-ghost btn-sm" title="View" onClick=${() => openEditor({ id: e.id })}><${Icon} name="eye" size=${16} /></button>`}
+                </td>
               </tr>`)}
             ${entries.length === 0 ? html`
-              <tr><td colSpan="6" class="muted" style=${{ textAlign: 'center', padding: '30px' }}>
+              <tr><td colSpan="7" class="muted" style=${{ textAlign: 'center', padding: '30px' }}>
                 ${attention === 'all'
                   ? html`Nothing in this range${includeDrafts ? '' : ' (finalized only — tick “Include drafts” to preview drafts)'}.`
                   : html`Nothing in this range needs attention — all of it is finalized and exported.`}
