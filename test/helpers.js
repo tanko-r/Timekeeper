@@ -18,7 +18,9 @@ export async function startTestServer(overrides = {}) {
     ...overrides.config,
   };
   const clock = overrides.clock || (() => new Date());
-  const app = createApp({ db, config, clock });
+  // overrides.deps injects collaborators the app normally builds itself
+  // (e.g. a fake tmux runner, so no test ever spawns a real process).
+  const app = createApp({ db, config, clock, ...overrides.deps });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });

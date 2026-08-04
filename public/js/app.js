@@ -13,6 +13,7 @@ import { ExportView } from '/js/views/exportview.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
+import { RunTodo } from '/js/components/runtodo.js';
 import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 const { createRoot } = window.ReactDOM;
@@ -346,6 +347,7 @@ function App() {
           onClick=${() => window.dispatchEvent(new CustomEvent('tk:add-todo'))}>
           <${Icon} name="plus" size=${18} /> Add todo
         </button>
+        <${RunTodo} />
         ${pipSupported() ? html`
           <button class="navlink" title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
             onClick=${() => toggleTimerPip().catch((e) =>
