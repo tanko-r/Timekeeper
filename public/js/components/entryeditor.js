@@ -62,6 +62,13 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [ai, setAi] = useState(null);
   const [aiMenu, setAiMenu] = useState(null); // {x, y} — the AI dropdown's position
   const [aiSplit, setAiSplit] = useState(false); // "split into tasks" — off by default (spec 3.3)
+  // Remembers the last AI task picked (2026-08-03 feedback) so the main
+  // button re-runs it directly; a caret still opens the full menu.
+  const [lastAiTask, setLastAiTaskState] = useState(() => {
+    const v = localStorage.getItem('tk:lastAiTask');
+    return ['expand', 'shorten', 'rewrite'].includes(v) ? v : 'expand';
+  });
+  const setLastAiTask = (v) => { localStorage.setItem('tk:lastAiTask', v); setLastAiTaskState(v); };
   const [aiBusy, setAiBusy] = useState(false);
   const [aiUndo, setAiUndo] = useState(null); // pre-rewrite {auto, narrative} snapshot, or null
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
@@ -499,6 +506,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   function runAi(kind) {
     const seed = seedText;
     if (!seed) return;
+    setLastAiTask(kind);
     // Snapshot what the narrative field shows right now so the rewrite can be
     // undone (2026-07-16 / 2026-07-20 feedback). Restores AUTO mode too.
     setAiUndo({ auto: autoOn, narrative: local.narrative });
@@ -514,6 +522,12 @@ export function EntryEditor({ spec, settings, onClose }) {
     if (!aiUndo) return;
     update({ auto: aiUndo.auto, narrative: aiUndo.narrative });
     setAiUndo(null);
+  }
+
+  function aiTaskLabel(kind) {
+    if (kind === 'expand') return aiSplit ? 'Expand → split into tasks' : 'Expand';
+    if (kind === 'shorten') return 'Shorten';
+    return 'Rewrite';
   }
 
   const aiMenuItems = [
@@ -667,10 +681,17 @@ export function EntryEditor({ spec, settings, onClose }) {
             disabled=${aiBusy} onClick=${undoAi}>
             <${Icon} name="history" size=${14} /> Undo</button>` : null}
         ${ai && ai.enabled && ai.reachable && !finalized ? html`
-          <button type="button" class="btn btn-sm" title="AI narrative assist" disabled=${!seedText || aiBusy}
-            onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); setAiMenu({ x: r.left, y: r.bottom + 4 }); }}>
-            <${Icon} name="sparkles" size=${14} /> ${aiBusy ? 'Working…' : 'AI'}
-          </button>` : null}
+          <div class="btn-split">
+            <button type="button" class="btn btn-sm" title=${`AI: ${aiTaskLabel(lastAiTask)}`}
+              disabled=${!seedText || aiBusy} onClick=${() => runAi(lastAiTask)}>
+              <${Icon} name="sparkles" size=${14} /> ${aiBusy ? 'Working…' : aiTaskLabel(lastAiTask)}
+            </button>
+            <button type="button" class="btn btn-sm" title="Choose a different AI task"
+              disabled=${!seedText || aiBusy}
+              onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); setAiMenu({ x: r.left, y: r.bottom + 4 }); }}>
+              <${Icon} name="chevronDown" size=${12} />
+            </button>
+          </div>` : null}
         <${SaveShortcutBar} selection=${selText} />
       </div>
       ${!finalized && suggestionChips.length > 0 ? html`
