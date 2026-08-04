@@ -1,7 +1,7 @@
 import { api, streamNdjson } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useDebounced,
-  Modal, Field, fmtHours, todayStr, emitToast, clientLabel, ContextMenu,
+  Modal, Field, fmtHours, todayStr, emitToast, clientLabel, ContextMenu, Confirm,
   ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
@@ -71,6 +71,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const setLastAiTask = (v) => { localStorage.setItem('tk:lastAiTask', v); setLastAiTaskState(v); };
   const [aiBusy, setAiBusy] = useState(false);
   const [aiUndo, setAiUndo] = useState(null); // pre-rewrite {auto, narrative} snapshot, or null
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
@@ -741,12 +742,12 @@ export function EntryEditor({ spec, settings, onClose }) {
         </details>` : null}
 
       <div class="row" style=${{ marginTop: '16px' }}>
+        ${entry && !finalized ? html`
+          <button class="btn btn-ghost" onClick=${() => setConfirmDelete(true)}><${Icon} name="trash" size=${16} /> Delete</button>` : null}
         <span class="saving-dot">
           ${saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : saveState === 'error' ? '⚠ Save failed' : ''}
         </span>
         <div class="spacer" style=${{ flex: 1 }}></div>
-        ${entry && !finalized ? html`
-          <button class="btn btn-ghost" onClick=${del}><${Icon} name="trash" size=${16} /> Delete</button>` : null}
         ${finalized
           ? html`<button class="btn" onClick=${unlock}><${Icon} name="unlock" size=${16} /> Unlock to edit</button>`
           : html`
@@ -754,6 +755,11 @@ export function EntryEditor({ spec, settings, onClose }) {
             <button class="btn btn-primary" onClick=${() => finalize(false)}>
               <${Icon} name="lock" size=${16} /> Finalize</button>`}
       </div>
+      ${confirmDelete ? html`
+        <${Confirm} title="Delete entry" danger confirmLabel="Delete"
+          message=${`Delete this ${fmtHours(total, increment)}h entry${local.cm ? ` for ${local.cm.short_name}` : ''}? You'll have a few seconds to undo from the toast.`}
+          onConfirm=${del}
+          onClose=${() => setConfirmDelete(false)} />` : null}
     <//>`;
 }
 

@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
-  markJustFinalized, fmtDateFull,
+  markJustFinalized, fmtDateFull, Confirm,
 } from '/js/ui.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
@@ -86,6 +86,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
     return html`<div class="card muted">No entries.</div>`;
   }
   const increment = (settings?.rounding?.increment) || 0.1;
+  const [deleting, setDeleting] = useState(null);
 
   const timerFor = (entry) => (timers || []).find((t) => t.linked_entry_id === entry.id);
   // (no manual tk:timers-changed dispatch here — api.js announces every
@@ -201,7 +202,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
               ${e.status === 'draft' ? html`
                 <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}><${Icon} name="edit" size=${16} /></button>
                 <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>
-                <button class="btn btn-ghost btn-sm" title="Delete" onClick=${() => del(e)}><${Icon} name="trash" size=${16} /></button>` : html`
+                <button class="btn btn-ghost btn-sm" title="Delete" onClick=${() => setDeleting(e)}><${Icon} name="trash" size=${16} /></button>` : html`
                 <button class="btn btn-ghost btn-sm" title="View" onClick=${() => openEditor({ id: e.id })}><${Icon} name="eye" size=${16} /></button>
                 <button class="btn btn-ghost btn-sm" title="Unlock" onClick=${() => unlock(e)}><${Icon} name="unlock" size=${16} /></button>`}
               <button class="btn btn-ghost btn-sm" title="Copy to today"
@@ -210,7 +211,13 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
           </div>
         </div>`;
 
-  if (!showDate) return html`<div>${entries.map(card)}</div>`;
+  const confirmDelete = deleting ? html`
+    <${Confirm} title="Delete entry" danger confirmLabel="Delete"
+      message=${`Delete this ${fmtHours(deleting.total, increment)}h entry${deleting.cm ? ` for ${deleting.cm.short_name}` : ''}? You'll have a few seconds to undo from the toast.`}
+      onConfirm=${() => del(deleting)}
+      onClose=${() => setDeleting(null)} />` : null;
+
+  if (!showDate) return html`<div>${entries.map(card)}${confirmDelete}</div>`;
 
   return html`
     <div>
@@ -227,5 +234,6 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
             ${g.entries.map(card)}
           </div>`;
       })}
+      ${confirmDelete}
     </div>`;
 }

@@ -482,6 +482,7 @@ await step('ghost-text: phrasebook completion in the entry editor, Tab accepts',
   // the editor autosaved an entry while we typed — delete it to leave the day clean
   await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
   await clickText('.modal-wide button', 'Delete');
+  await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
@@ -514,6 +515,7 @@ await step('shortcuts: save-from-selection, inline expansion, settings list', as
   const val = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
   if (val !== 'review Interconnect Agreement ') throw new Error(`expansion failed: "${val}"`);
   await clickText('.modal-wide button', 'Delete');
+  await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   // settings shows the minimal list (no management screen beyond list/delete)
   await page.goto(`${base}/#/settings/codes`, { waitUntil: 'networkidle0' });
@@ -626,6 +628,7 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
   }
 
   await clickText('.modal-wide button', 'Delete');
+  await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
