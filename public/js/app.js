@@ -137,6 +137,7 @@ function App() {
   const [showHelp, setShowHelp] = useState(false);
   const [quickCapture, setQuickCapture] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [accessExpired, setAccessExpired] = useState(false);
 
   const reloadAuth = useCallback(async () => {
     try {
@@ -157,11 +158,14 @@ function App() {
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     const onAuthRequired = () => reloadAuth();
+    const onAccessExpired = () => setAccessExpired(true);
     window.addEventListener('hashchange', onHash);
     window.addEventListener('tk:auth-required', onAuthRequired);
+    window.addEventListener('tk:access-expired', onAccessExpired);
     return () => {
       window.removeEventListener('hashchange', onHash);
       window.removeEventListener('tk:auth-required', onAuthRequired);
+      window.removeEventListener('tk:access-expired', onAccessExpired);
     };
   }, [reloadAuth]);
 
@@ -300,6 +304,20 @@ function App() {
     return () => document.removeEventListener('keydown', onKey);
   }, [editor, openEditor, route.path, showHelp, quickCapture]);
 
+  // Cloudflare Access expired (remote only). Checked before the spinner: on a
+  // cold load every call 401s, so authState never arrives and the app would
+  // otherwise spin forever. Reloading is a top-level navigation, which Access
+  // IS allowed to redirect — that's the hop to the login page. Deliberately a
+  // button, not an automatic reload: a half-typed narrative shouldn't vanish
+  // because a token aged out.
+  if (accessExpired) {
+    return html`<div class="login-wrap"><div class="card login-card">
+      <h2>Remote session expired</h2>
+      <p class="muted">Cloudflare needs you to sign in again before Timekeeper
+        can reach its server. Your unsaved work stays until you continue.</p>
+      <button class="btn btn-primary btn-lg" onClick=${() => location.reload()}>Sign in again</button>
+    </div></div>`;
+  }
   if (!authState) return html`<${Spinner} />`;
   if (authState.error) return html`<div class="login-wrap"><div class="card login-card">
     <h2>Timekeeper can’t reach its server</h2><p class="muted">${authState.error}</p></div></div>`;

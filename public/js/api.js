@@ -29,13 +29,43 @@ export function changeEventsFor(method, path, body) {
   return [];
 }
 
+// Remotely, Cloudflare Access fronts time.*. Once its session lapses it
+// answers every request with a 302 to tanko-r.cloudflareaccess.com — another
+// origin, which fetch() can't follow, so the call rejects with TypeError
+// "Failed to fetch" and the app reports a server outage while the server is
+// fine (2026-08-02; hit again on mobile 2026-08-03). Measured against the live
+// tunnel: Access returns a plain 401 instead of the redirect when the request
+// says it's XHR. A same-origin 401 is a response we can read and act on.
+// Same-origin requests never preflight, so this custom header costs nothing.
+export function apiHeaders(body) {
+  const h = { 'X-Requested-With': 'XMLHttpRequest' };
+  if (body !== undefined) h['content-type'] = 'application/json';
+  return h;
+}
+
+// Distinguishes "Cloudflare says sign in again" (HTML 401 + a Cloudflare-Access
+// challenge) from the app's own 401, which means the app password.
+export function isAccessChallenge(status, headers) {
+  if (status !== 401 || !headers || typeof headers.get !== 'function') return false;
+  return /^Cloudflare-Access\b/i.test(headers.get('www-authenticate') || '');
+}
+
+function throwIfAccessExpired(res) {
+  if (!isAccessChallenge(res.status, res.headers)) return;
+  window.dispatchEvent(new CustomEvent('tk:access-expired'));
+  const err = new ApiError(401, { error: 'access_expired' });
+  err.accessExpired = true;
+  throw err;
+}
+
 async function request(method, path, body) {
   const res = await fetch(path, {
     method,
-    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    headers: apiHeaders(body),
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: 'same-origin',
   });
+  throwIfAccessExpired(res);
   let json = null;
   const text = await res.text();
   try { json = text ? JSON.parse(text) : null; } catch { json = { raw: text }; }
@@ -64,11 +94,12 @@ export const api = {
 export async function streamNdjson(path, body, onLine, signal) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: apiHeaders(body),
     body: JSON.stringify(body),
     credentials: 'same-origin',
     signal,
   });
+  throwIfAccessExpired(res);
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent('tk:auth-required'));
     throw new ApiError(401, null);
