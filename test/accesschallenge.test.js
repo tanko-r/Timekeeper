@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { apiHeaders, isAccessChallenge } from '../public/js/api.js';
+import { accessSignInUrl, apiHeaders, isAccessChallenge } from '../public/js/api.js';
 
 // Cloudflare Access sits in front of time.* remotely. When its session lapses
 // it answers every request with a 302 to tanko-r.cloudflareaccess.com — a
@@ -50,4 +50,27 @@ test('an unrelated www-authenticate scheme is not an Access challenge', () => {
 test('missing or headerless responses do not crash the check', () => {
   assert.equal(isAccessChallenge(401, null), false);
   assert.equal(isAccessChallenge(401, headers({})), false);
+});
+
+// Re-authenticating must reach the NETWORK. location.reload() doesn't
+// guarantee that: a cache-first service worker answers the same URL from
+// cache, so the Access redirect never happens and the button does nothing.
+// That is exactly how David's phone deadlocked on 2026-08-03 — the old worker
+// served the shell from cache forever, and /sw.js 302ing meant the worker
+// could never update itself out of it (script fetches fail on redirect).
+test('the sign-in URL is one no service worker can have cached', () => {
+  assert.equal(accessSignInUrl(1730000000000, ''), '/?cf=1730000000000');
+});
+
+test('the sign-in URL preserves the hash route so the app reopens where it was', () => {
+  assert.equal(accessSignInUrl(17, '#/export/unexported'), '/?cf=17#/export/unexported');
+});
+
+test('a missing hash adds nothing', () => {
+  assert.equal(accessSignInUrl(17, undefined), '/?cf=17');
+  assert.equal(accessSignInUrl(17, null), '/?cf=17');
+});
+
+test('each attempt is a distinct URL, so a retry is never served from cache', () => {
+  assert.notEqual(accessSignInUrl(1, ''), accessSignInUrl(2, ''));
 });

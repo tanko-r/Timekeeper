@@ -50,6 +50,17 @@ export function isAccessChallenge(status, headers) {
   return /^Cloudflare-Access\b/i.test(headers.get('www-authenticate') || '');
 }
 
+// Where "Sign in again" goes. NOT location.reload(): a cache-first service
+// worker answers the same URL from cache, so the Access redirect never fires
+// and the button does nothing — which is precisely how the installed PWA
+// deadlocked (the old worker served the shell forever, and it could never
+// update out of it because a script fetch fails outright on a redirect). A URL
+// that was never cached always misses and falls through to the network. Hash
+// routing ignores the query, so the app reopens on the same route.
+export function accessSignInUrl(now, hash) {
+  return `/?cf=${now}${hash || ''}`;
+}
+
 function throwIfAccessExpired(res) {
   if (!isAccessChallenge(res.status, res.headers)) return;
   window.dispatchEvent(new CustomEvent('tk:access-expired'));

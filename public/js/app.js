@@ -1,4 +1,4 @@
-import { api } from '/js/api.js';
+import { api, accessSignInUrl } from '/js/api.js';
 import { html, React, useState, useEffect, useCallback, Spinner, Icon } from '/js/ui.js';
 import { runningTitle, IDLE_ICON, RUNNING_ICON } from '/js/lib/titlebar.js';
 import { LoginView } from '/js/views/login.js';
@@ -315,7 +315,10 @@ function App() {
       <h2>Remote session expired</h2>
       <p class="muted">Cloudflare needs you to sign in again before Timekeeper
         can reach its server. Your unsaved work stays until you continue.</p>
-      <button class="btn btn-primary btn-lg" onClick=${() => location.reload()}>Sign in again</button>
+      <button class="btn btn-primary btn-lg"
+        onClick=${() => location.replace(accessSignInUrl(Date.now(), location.hash))}>
+        Sign in again
+      </button>
     </div></div>`;
   }
   if (!authState) return html`<${Spinner} />`;
