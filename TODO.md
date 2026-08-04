@@ -9,4 +9,3 @@ spec/plan (see `docs/superpowers/`) before implementing.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
-- [ ] 2026-08-03 17:52 — manually adding a time to a timer should also create an entry for the timer, same as starting the clock.  just added time manually and no entry was created. (no screenshot · #/)

@@ -165,6 +165,23 @@ test('clock is editable: set hours, ±tenths delta, clamped at zero, syncs linke
     assert.equal(list[0].running, 1);
   }));
 
+// 2026-08-03 feedback: typing a duration into a timer that was never
+// started (no linked entry yet) must file an entry too, same as starting
+// the clock does — not just move the accumulator with nothing to show for it.
+test('manually setting the clock on a never-started timer creates its entry, same as starting it', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;
+    assert.equal(timer.linked_entry_id, null);
+
+    const set = (await t.fetchJson('PUT', `/api/timers/${timer.id}/clock`, { hours: 1.5 })).body;
+    assert.ok(set.entry, 'a manual clock edit files an entry, same as a start would');
+    assert.equal(set.entry.total, 1.5);
+    assert.equal(set.timer.linked_entry_id, set.entry.id);
+
+    const dayEntries = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(dayEntries.length, 1);
+  }));
+
 test('backdated start: minutesAgo and atLastStop', () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: cm.id })).body;

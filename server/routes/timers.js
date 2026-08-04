@@ -604,7 +604,7 @@ export function timersRouter({ db, clock }) {
     let entry = null;
     const fresh = getTimer.get(timer.id);
     const hours = secondsToHours(snapped, roundingCfg(db));
-    if (!fresh.running && fresh.linked_entry_id && hours >= minIncrement(db) - 1e-9) {
+    if (!fresh.running && hours >= minIncrement(db) - 1e-9) {
       const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
       entry = loadEntry(db, synced.entryId);
     }
