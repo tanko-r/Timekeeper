@@ -8,7 +8,7 @@ import { loadEffectiveFields } from './customfields.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
-  narrative_manual, narrative_ai, ai_brief, created_at, updated_at`;
+  narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at`;
 
 export function loadEntry(db, id) {
   const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(id);
@@ -338,13 +338,16 @@ export function entriesRouter({ db, clock }) {
     const narrativeAi = b.narrative_ai ? 1 : 0;
     const aiBrief = b.ai_brief != null && String(b.ai_brief).trim()
       ? String(b.ai_brief).trim().slice(0, 500) : null;
+    // What the model actually wrote, kept whatever David does to it next.
+    const aiDraft = b.ai_draft != null && String(b.ai_draft).trim()
+      ? String(b.ai_draft).trim().slice(0, 2000) : null;
     const info = db.transaction(() => {
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`)
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(b.date, cm.id, String(b.narrative || ''), billable, totalOverride,
           b.source === 'timer' ? 'timer' : 'manual', narrativeManual,
-          narrativeAi, aiBrief, now(), now());
+          narrativeAi, aiBrief, aiDraft, now(), now());
       writeTasks(db, i.lastInsertRowid, norm.tasks);
       applyCustomValues(db, i.lastInsertRowid, cv.ops);
       syncNarrative(db, i.lastInsertRowid);
@@ -392,10 +395,15 @@ export function entriesRouter({ db, clock }) {
     const aiBrief = b.ai_brief !== undefined
       ? (String(b.ai_brief).trim() ? String(b.ai_brief).trim().slice(0, 500) : null)
       : row.ai_brief;
+    // ai_draft is deliberately NOT cleared by an edit — preserving what the
+    // model got wrong is the entire point. Only a fresh generation replaces it.
+    const aiDraft = b.ai_draft !== undefined && String(b.ai_draft || '').trim()
+      ? String(b.ai_draft).trim().slice(0, 2000)
+      : row.ai_draft;
     let timersSynced = [];
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
-          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, narrative_ai=?, ai_brief=?, updated_at=?
+          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, narrative_ai=?, ai_brief=?, ai_draft=?, updated_at=?
         WHERE id=?`).run(
         b.date ?? row.date,
         cmId,
@@ -404,7 +412,7 @@ export function entriesRouter({ db, clock }) {
         b.total_override !== undefined ? (b.total_override == null ? null : Number(b.total_override)) : row.total_override,
         b.ack_validation !== undefined ? (b.ack_validation ? 1 : 0) : row.ack_validation,
         b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
-        narrativeAi, aiBrief,
+        narrativeAi, aiBrief, aiDraft,
         now(), row.id);
       if (norm) writeTasks(db, row.id, norm.tasks);
       applyCustomValues(db, row.id, cv.ops);

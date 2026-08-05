@@ -103,23 +103,28 @@ export const SEED_PAIRS = [
 // an abbreviation authority, and few-shot pairs as chat turns. Returns a
 // prompt fragment plus the turns to splice in before the live request.
 //
-// Exemplars and pairs both draw ONLY from narrative_ai = 0 — text the attorney
-// wrote or corrected. Without that filter, recency-weighted selection would
-// feed the model's own output back as "the attorney's voice" and compound the
-// verbosity this whole design exists to remove.
+// Two filters, both load-bearing:
+//   narrative_ai = 0   — text David wrote or corrected. Without it,
+//     recency-weighted selection feeds the model's own output back as "the
+//     attorney's voice" and compounds the verbosity this design removes.
+//   status = 'finalized' — the version David signed off on. Narratives
+//     autosave every 600ms, so a draft is a moving target: mid-thought wording
+//     would be taught as readily as the wording he settled on.
+const FINAL = "deleted_at IS NULL AND status = 'finalized' AND narrative_ai = 0";
+
 export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
   if (!db) return { prompt: '', turns: [] };
 
   const own = cmId == null ? [] : db.prepare(`
     SELECT narrative FROM entries
-    WHERE deleted_at IS NULL AND narrative_ai = 0 AND cm_id = ?
+    WHERE ${FINAL} AND cm_id = ?
       AND narrative IS NOT NULL AND length(trim(narrative)) > 0
     ORDER BY date DESC LIMIT 60
   `).all(cmId).map((r) => r.narrative);
 
   const recent = db.prepare(`
     SELECT narrative FROM entries
-    WHERE deleted_at IS NULL AND narrative_ai = 0
+    WHERE ${FINAL}
       AND narrative IS NOT NULL AND length(trim(narrative)) > 0
     ORDER BY date DESC LIMIT 200
   `).all().map((r) => r.narrative);
@@ -130,7 +135,7 @@ export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
 
   const pool = db.prepare(`
     SELECT ai_brief AS brief, narrative, cm_id, date FROM entries
-    WHERE deleted_at IS NULL AND narrative_ai = 0
+    WHERE ${FINAL}
       AND ai_brief IS NOT NULL AND length(trim(ai_brief)) > 0
       AND narrative IS NOT NULL AND length(trim(narrative)) > 0
     ORDER BY date DESC LIMIT 300

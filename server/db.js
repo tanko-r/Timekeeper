@@ -335,6 +335,21 @@ const MIGRATIONS = [
   UPDATE settings SET value = json_set(value, '$.systemPrompt', '')
     WHERE key = 'ai' AND json_valid(value);
   `,
+  // Teach only from finalized entries (2026-08-04). Narratives autosave every
+  // 600ms, so a draft is a moving target — mid-thought wording would be taught
+  // as readily as the wording David settled on. Finalizing is the moment he
+  // signs off, and it is the only signal in the app that means "this is the
+  // version I stand behind".
+  //
+  // ai_draft keeps the model's ORIGINAL output next to the corrected final, so
+  // a corrected entry yields a triple (shorthand, what the model wrote, what
+  // David actually wanted). Unlike narrative_ai it is never cleared by an
+  // edit — the whole point is to preserve what was rejected.
+  `
+  ALTER TABLE entries ADD COLUMN ai_draft TEXT;
+  DROP INDEX IF EXISTS idx_entries_exemplar;
+  CREATE INDEX idx_entries_exemplar ON entries(status, narrative_ai, date DESC);
+  `,
 ];
 
 const SEED_SETTINGS = {

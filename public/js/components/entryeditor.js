@@ -251,6 +251,9 @@ export function EntryEditor({ spec, settings, onClose }) {
           || (l.aiAuto && l.auto) ? 1 : 0,
       } : {}),
       ...(l.aiBrief ? { ai_brief: l.aiBrief } : {}),
+      // The model's original output, sent once when generated and never
+      // withdrawn — a correction is only informative next to what it corrected.
+      ...(l.aiText ? { ai_draft: l.aiText } : {}),
       custom_values: l.custom_values || {},
     };
     setSaveState('saving');

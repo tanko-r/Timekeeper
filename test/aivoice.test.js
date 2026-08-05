@@ -15,6 +15,13 @@ async function makeCm(t, cm_number = '100001-000012', short_name = 'Cedar Lease'
   return (await t.fetchJson('POST', '/api/cms', { cm_number, short_name })).body;
 }
 
+// Only finalized entries teach (2026-08-04): a draft autosaves every 600ms, so
+// its narrative is a moving target. Tests that expect an entry in the pool must
+// sign it off the way David does.
+function finalize(t, id) {
+  t.db.prepare("UPDATE entries SET status='finalized', ever_finalized=1 WHERE id=?").run(id);
+}
+
 // ── capture path ──────────────────────────────────────────────────────────
 
 test('POST /api/entries records narrative_ai and ai_brief', async () => {
@@ -92,15 +99,17 @@ test('re-sending identical narrative text does not clear the flag', async () => 
 test('buildVoiceContext omits AI-authored narratives from the exemplars', async () => {
   await withServer(async (t) => {
     const cm = await makeCm(t);
-    await t.fetchJson('POST', '/api/entries', {
+    const ai = await t.fetchJson('POST', '/api/entries', {
       date: '2026-08-01', cm_id: cm.id,
       narrative: 'Correspondence with client by email or other electronic means regarding matters.',
       narrative_ai: true, ai_brief: 'email client',
     });
-    await t.fetchJson('POST', '/api/entries', {
+    const mine = await t.fetchJson('POST', '/api/entries', {
       date: '2026-08-01', cm_id: cm.id,
       narrative: 'Review Cedar Lease and confer with client regarding same.',
     });
+    finalize(t, ai.body.id);
+    finalize(t, mine.body.id);
     const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev lease' });
     assert.match(v.prompt, /Review Cedar Lease and confer with client/);
     assert.doesNotMatch(v.prompt, /electronic means/,
@@ -139,6 +148,7 @@ test('buildVoiceContext promotes a corrected entry into a real few-shot pair', a
     await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, {
       narrative: 'Email with J. Curtis regarding Cedar Lease.',
     });
+    finalize(t, r.body.id);
     const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'emailed bob about the easement' });
     const briefs = v.turns.filter((x) => x.role === 'user').map((x) => x.content);
     const answers = v.turns.filter((x) => x.role === 'assistant').map((x) => x.content);
@@ -151,11 +161,12 @@ test('buildVoiceContext holds the slot count flat as the pool grows', async () =
   await withServer(async (t) => {
     const cm = await makeCm(t);
     for (let i = 0; i < 40; i++) {
-      await t.fetchJson('POST', '/api/entries', {
+      const e = await t.fetchJson('POST', '/api/entries', {
         date: '2026-08-01', cm_id: cm.id,
         narrative: `Review agreement number ${i} and confer with client regarding same.`,
         ai_brief: `rev agmt ${i}`,
       });
+      finalize(t, e.body.id);
     }
     const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev agmt' });
     assert.ok(v.turns.length <= 12, `expected at most 6 pairs, got ${v.turns.length / 2}`);
@@ -213,5 +224,88 @@ test('a save that omits narrative_ai leaves the stored flag intact', async () =>
     await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, { date: '2026-08-02' });
     assert.equal(t.db.prepare('SELECT narrative_ai FROM entries WHERE id=?')
       .get(r.body.id).narrative_ai, 1);
+  });
+});
+
+// ── teach only from the signed-off version ────────────────────────────────
+
+test('a draft entry never reaches the exemplars or the pairs', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id,
+      narrative: 'Review Cedar Lease and confer with client regarding same.',
+      // deliberately unlike any seed brief, so a hit can only come from the pool
+      ai_brief: 'rev cedar dox; ping counsel',
+    });
+    const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev cedar' });
+    assert.doesNotMatch(v.prompt, /Cedar Lease and confer/,
+      'a draft is still being edited — it is not what David stands behind');
+    assert.ok(v.turns.every((x) => !x.content.includes('rev cedar dox')));
+  });
+});
+
+test('finalizing the same entry admits it', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id,
+      narrative: 'Review Cedar Lease and confer with client regarding same.',
+      ai_brief: 'rev lease; conf w client',
+    });
+    finalize(t, r.body.id);
+    const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev lease' });
+    assert.match(v.prompt, /Cedar Lease and confer/);
+  });
+});
+
+// ── ai_draft: keep what the model got wrong ───────────────────────────────
+
+test('ai_draft records the model output and survives the correction', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    const draft = 'Correspondence with client by email regarding various matters of the lease.';
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id, narrative: draft,
+      narrative_ai: true, ai_brief: 'emailed jane re lease', ai_draft: draft,
+    });
+    await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, {
+      narrative: 'Email with J. Curtis regarding Cedar Lease.',
+    });
+    const row = t.db.prepare('SELECT narrative, ai_draft, ai_brief, narrative_ai FROM entries WHERE id=?')
+      .get(r.body.id);
+    assert.equal(row.ai_draft, draft, 'what the model wrote is preserved');
+    assert.equal(row.narrative, 'Email with J. Curtis regarding Cedar Lease.');
+    assert.equal(row.narrative_ai, 0);
+    assert.equal(row.ai_brief, 'emailed jane re lease');
+  });
+});
+
+test('a later save without ai_draft does not erase the stored draft', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    const draft = 'Correspondence with client regarding various matters.';
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id, narrative: draft,
+      narrative_ai: true, ai_brief: 'emailed jane', ai_draft: draft,
+    });
+    await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, { date: '2026-08-02' });
+    assert.equal(t.db.prepare('SELECT ai_draft FROM entries WHERE id=?')
+      .get(r.body.id).ai_draft, draft);
+  });
+});
+
+test('a fresh generation replaces the stored draft', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id, narrative: 'First draft text.',
+      narrative_ai: true, ai_brief: 'x', ai_draft: 'First draft text.',
+    });
+    await t.fetchJson('PATCH', `/api/entries/${r.body.id}`, {
+      narrative: 'Second draft text.', narrative_ai: 1, ai_draft: 'Second draft text.',
+    });
+    assert.equal(t.db.prepare('SELECT ai_draft FROM entries WHERE id=?')
+      .get(r.body.id).ai_draft, 'Second draft text.');
   });
 });
