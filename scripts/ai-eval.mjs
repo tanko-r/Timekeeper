@@ -16,22 +16,18 @@
 import { openDb, getSetting } from '../server/db.js';
 import { buildNarrateMessages, buildVoiceContext } from '../server/routes/ai.js';
 import { loadConfig } from '../server/config.js';
+import { FILLER_MARKERS } from '../server/lib/exemplars.js';
 
 // Baseline for comparison, measured 2026-08-01 from 357 imported entries:
 // p10 4 words, p50 11, p90 29. The pre-rewrite prompt produced 40.
 const MEDIAN_CEILING = 16;
 const LONGEST_CEILING = 34;
 
-// Filler markers. These describe WHY work was done or restate a category
-// instead of naming a thing — the register David flagged. Deliberately not in
-// the prompt: naming a phrase there makes a small model emit it.
-const FILLER = [
-  /\bin order to\b/i, /\bto ensure\b/i, /\bfor review and approval\b/i,
-  /\bwith a view to\b/i, /\bas necessary\b/i, /\bas appropriate\b/i,
-  /\bvarious matters\b/i, /\band other\b/i,
-  /\bor other electronic means\b/i, /\bby email or\b/i,
-  /\bfor the purpose of\b/i, /\bwith respect to the foregoing\b/i,
-];
+// Filler markers come from server/lib/exemplars.js, the same list the teaching
+// gate uses — if the eval and the pool disagree about what filler is, the pool
+// starts teaching things the eval then fails on.
+const FILLER = FILLER_MARKERS;
+
 const TIME_AMOUNT = /\(\s*\d+(?:\.\d+)?\s*\)|\b\d+(?:\.\d+)?\s*(hours?|hrs?)\b/i;
 
 const BRIEFS = [

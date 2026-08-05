@@ -9,6 +9,32 @@
 const MIN_WORDS = 6;
 const MAX_WORDS = 40;
 const GLOSSARY_LIMIT = 40;
+// Teaching material must be EXEMPLARY, not merely typical. The house median is
+// 11 words and p90 is 29; a gate at p90 let 23-word entries through and the
+// model copied their padding ("...conveying revised document for review"),
+// which alone put filler back in the eval. Sitting well above the median but
+// well below p90 keeps multi-clause entries while biasing every borrowed
+// habit toward brevity. Erring short is the right error here.
+const TEACH_MAX_WORDS = 20;
+// Ratio below which an "edit" is really just a nudge, leaving the text the
+// model's. Measured separation: a typo fix scores ~0.08, a genuine reword ~0.33.
+// model's rather than the attorney's.
+const REWRITE_THRESHOLD = 0.25;
+
+// Register markers, not a banned-word list for the prompt — these NEVER go
+// into the prompt (naming a phrase there makes a small model emit it). They
+// describe WHY work was done or restate a category instead of naming a thing,
+// which is the filler that must not be taught back. Shared with
+// scripts/ai-eval.mjs so the teaching bar and the eval bar cannot drift.
+export const FILLER_MARKERS = [
+  /\bin order to\b/i, /\bto ensure\b/i, /\bfor review and approval\b/i,
+  /\bwith a view to\b/i, /\bas necessary\b/i, /\bas appropriate\b/i,
+  /\bvarious matters\b/i, /\bfor the purpose of\b/i,
+  /\bor other electronic means\b/i, /\bwith respect to the foregoing\b/i,
+  /\bto discuss (?:outstanding|same|next)\b/i, /\bkey considerations\b/i,
+  /\bcourse of action\b/i, /\bnext steps and\b/i,
+  /\bto reflect (?:latest|the latest)\b/i, /\band completeness\b/i,
+];
 
 // A leading matter tag — "(MTR09 – Cedar Lease) …" or "[MTR09] …" — is display
 // furniture from the import, and "(0.3)" allocations are recorded separately
@@ -51,12 +77,40 @@ export function isUsableExemplar(text) {
   return cleanCandidate(text).split(/\s+/).length >= MIN_WORDS;
 }
 
+// Whether text is fit to TEACH from, as opposed to merely well-formed. Three
+// days of live use (2026-08-04) proved well-formedness is not enough: lightly
+// edited model output is perfectly well-formed and dragged the median from 11
+// words to 18. This is the same bar scripts/ai-eval.mjs enforces on output —
+// never demonstrate something that would fail the eval.
+export function looksLikeHouseVoice(text) {
+  const t = cleanCandidate(text);
+  if (!t) return false;
+  if (t.split(/\s+/).length > TEACH_MAX_WORDS) return false;
+  return !FILLER_MARKERS.some((re) => re.test(t));
+}
+
+// How much of the final text is the attorney's rather than the model's.
+// Returns 1 when there is no model draft to compare against (hand-typed, or
+// predating ai_draft), so absent history never disqualifies an entry.
+export function rewriteRatio(narrative, aiDraft) {
+  const n = cleanCandidate(narrative).toLowerCase();
+  const d = cleanCandidate(aiDraft || '').toLowerCase();
+  if (!d || !n) return 1;
+  const nt = n.match(/[a-z]{2,}/g) || [];
+  const dt = new Set(d.match(/[a-z]{2,}/g) || []);
+  if (!nt.length) return 1;
+  const fresh = nt.filter((w) => !dt.has(w)).length;
+  const lengthShift = Math.abs(nt.length - dt.size) / Math.max(nt.length, dt.size, 1);
+  return Math.max(fresh / nt.length, lengthShift);
+}
+
 // Even spread across the length range, so the model learns that entries vary
 // from one clause to several — sampling by recency alone would teach whatever
 // length happened to be recent.
 export function pickExemplars(candidates, { count = 6 } = {}) {
   const usable = [...new Set(
-    (candidates || []).map(cleanCandidate).filter(isUsableExemplar))]
+    (candidates || []).map(cleanCandidate)
+      .filter((t) => isUsableExemplar(t) && looksLikeHouseVoice(t)))]
     .sort((a, b) => a.split(/\s+/).length - b.split(/\s+/).length);
   if (usable.length <= count) return usable;
   const out = [];
@@ -112,10 +166,19 @@ export function pickPairs(pool, seeds = [], { count = 6, cmId = null, brief = ''
     // teaches what good OUTPUT looks like, so its narrative side has to clear
     // the same bar as an exemplar or it would teach truncation.
     if (!isWellFormedNarrative(p.narrative)) continue;
-    const key = `${cleanCandidate(p.brief).toLowerCase()}|${cleanCandidate(p.narrative).toLowerCase()}`;
+    // A pair demonstrates good OUTPUT. Filler or over-long text here teaches
+    // the model to produce it.
+    if (!looksLikeHouseVoice(p.narrative)) continue;
+    // A nudge is not a correction: if the final text is still mostly the
+    // model's draft, it is the model's voice wearing David's flag.
+    if (rewriteRatio(p.narrative, p.ai_draft) < REWRITE_THRESHOLD) continue;
+    const narrative = cleanCandidate(p.narrative);
+    const key = `${cleanCandidate(p.brief).toLowerCase()}|${narrative.toLowerCase()}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    real.push(p);
+    // Emit CLEANED text — matter tags and (0.4) allocations reaching the
+    // few-shot would demonstrate exactly what the format contract forbids.
+    real.push({ ...p, brief: cleanCandidate(p.brief), narrative });
   }
 
   real.sort((a, b) => {

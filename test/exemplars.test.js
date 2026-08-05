@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cleanCandidate, isUsableExemplar, pickExemplars, pickPairs, renderGlossary,
+  cleanCandidate, isUsableExemplar, looksLikeHouseVoice, pickExemplars, pickPairs, renderGlossary,
 } from '../server/lib/exemplars.js';
 import { SEED_PAIRS as SEED_PAIRS_FOR_TEST } from '../server/routes/ai.js';
 
@@ -241,4 +241,78 @@ test('seed pairs themselves clear the exemplar quality bar', () => {
   for (const p of SEED_PAIRS_FOR_TEST) {
     assert.ok(isUsableExemplar(p.narrative), `seed not well-formed: ${p.narrative}`);
   }
+});
+
+// ── teaching-quality gate ─────────────────────────────────────────────────
+// Measured 2026-08-04: three days of use put lightly-edited AI text into the
+// pool (the flag clears on any edit, and a nudge counts as an edit). Median
+// output went 11 -> 18 words and filler came back. A pair demonstrates what
+// good OUTPUT looks like, so it has to meet the bar the eval enforces.
+
+test('looksLikeHouseVoice rejects a purpose clause', () => {
+  assert.equal(looksLikeHouseVoice(
+    'Review and revise responses to ensure accuracy and completeness.'), false);
+  assert.equal(looksLikeHouseVoice(
+    'Transmit revised document to client for review and approval.'), false);
+});
+
+test('looksLikeHouseVoice rejects text well past the house p90', () => {
+  assert.equal(looksLikeHouseVoice(`Review ${'lease '.repeat(32)}.`), false);
+});
+
+test('looksLikeHouseVoice accepts a real house-voice narrative', () => {
+  assert.equal(looksLikeHouseVoice(
+    'Review easement background and confer with M. Peacock regarding same.'), true);
+});
+
+test('pickPairs emits cleaned text, not raw stored narratives', () => {
+  const pool = [{
+    brief: '[CYS85] rev easement draft',
+    narrative: '[CYS85] Review revisions to easement draft (0.4); message to M. Peacock (0.4).',
+    cm_id: 1,
+  }];
+  const out = pickPairs(pool, [], { count: 6 });
+  assert.equal(out.length, 1);
+  assert.doesNotMatch(out[0].narrative, /\(0\.4\)/, 'time allocations must never be demonstrated');
+  assert.doesNotMatch(out[0].narrative, /CYS85/, 'matter tags must never be demonstrated');
+});
+
+test('pickPairs drops a pair whose output reads like model filler', () => {
+  const pool = [
+    { brief: 'email client re next steps', cm_id: 1,
+      narrative: 'Compose email to client detailing proposed course of action and key considerations for resolving title issues.' },
+    { brief: 'email client re next steps', cm_id: 1,
+      narrative: 'Compose email to client regarding next steps.' },
+  ];
+  const out = pickPairs(pool, [], { count: 6 });
+  assert.equal(out.length, 1);
+  assert.match(out[0].narrative, /regarding next steps\.$/);
+});
+
+test('pickPairs drops a pair David barely changed from the model draft', () => {
+  const aiDraft = 'Call with client and seller representatives to discuss outstanding issues and next steps.';
+  const pool = [{
+    brief: 'call w client and seller reps', cm_id: 1,
+    ai_draft: aiDraft,
+    narrative: 'Call with client and seller representatives to discuss outstanding issues and next step.',
+  }];
+  assert.deepEqual(pickPairs(pool, [], { count: 6 }), [],
+    'a nudge is not a correction — the text is still the model\'s');
+});
+
+test('pickPairs keeps a pair David genuinely rewrote', () => {
+  const pool = [{
+    brief: 'call w client and seller reps', cm_id: 1,
+    ai_draft: 'Call with client and seller representatives to discuss outstanding issues and next steps.',
+    narrative: 'Call with client and seller representatives regarding parking agreement.',
+  }];
+  assert.equal(pickPairs(pool, [], { count: 6 }).length, 1);
+});
+
+test('pickExemplars applies the same house-voice bar', () => {
+  const out = pickExemplars([
+    'Transmit revised lease amendment to client for review and approval today.',
+    'Review easement background and confer with M. Peacock regarding same.',
+  ], { count: 2 });
+  assert.deepEqual(out, ['Review easement background and confer with M. Peacock regarding same.']);
 });
