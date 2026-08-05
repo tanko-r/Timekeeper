@@ -6,13 +6,19 @@ import { startTestServer } from './helpers.js';
 // tmux calls to make, and no test should spawn a real agent.
 
 // Records every tmux invocation and answers from a scripted window list.
-function fakeTmux({ hasSession = true, windows = '0\tbash\n', target = 'main:4', fail = null } = {}) {
+// `pane` is the todo window's foreground command — 'claude' while a run is
+// actually live, 'bash' once it finished and shellWrap's `exec bash -i`
+// parked the window for its transcript.
+function fakeTmux({
+  hasSession = true, windows = '0\tbash\n', target = 'main:4', pane = 'claude', fail = null,
+} = {}) {
   const calls = [];
   const run = async (args) => {
     calls.push(args);
     if (fail && args[0] === fail) return { code: 1, stdout: '', stderr: 'tmux: boom' };
     if (args[0] === 'has-session') return { code: hasSession ? 0 : 1, stdout: '', stderr: '' };
     if (args[0] === 'list-windows') return { code: 0, stdout: windows, stderr: '' };
+    if (args[0] === 'list-panes') return { code: 0, stdout: `${pane}\n`, stderr: '' };
     if (args[0] === 'new-window') return { code: 0, stdout: `${target}\n`, stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   };
@@ -42,14 +48,35 @@ test('POST /api/agent/todo opens a named window and returns where it went', () =
   });
 });
 
-test('a second press does not stack a second agent on the repo', () => {
-  const tmux = fakeTmux({ windows: '0\tbash\n4\ttodo\n' });
+test('a second press does not stack a second agent while the first is still live', () => {
+  const tmux = fakeTmux({ windows: '0\tbash\n4\ttodo\n', pane: 'claude' });
   return withServer(tmux, async (t) => {
     const { status, body } = await t.fetchJson('POST', '/api/agent/todo');
     assert.equal(status, 200);
     assert.equal(body.started, false);
     assert.equal(body.target, 'main:4');
     assert.equal(tmux.verbs().includes('new-window'), false, 'nothing was launched');
+  });
+});
+
+test('a second press after the previous run finished closes the parked window and starts fresh', () => {
+  const tmux = fakeTmux({ windows: '0\tbash\n4\ttodo\n', pane: 'bash', target: 'main:9' });
+  return withServer(tmux, async (t) => {
+    const { status, body } = await t.fetchJson('POST', '/api/agent/todo');
+    assert.equal(status, 201);
+    assert.equal(body.started, true);
+    assert.equal(body.target, 'main:9');
+    assert.deepEqual(tmux.verbs(), ['has-session', 'list-windows', 'list-panes', 'kill-window', 'new-window']);
+    assert.deepEqual(tmux.calls.find((a) => a[0] === 'kill-window'), ['kill-window', '-t', 'main:4']);
+  });
+});
+
+test('a kill-window failure while clearing a finished run surfaces as an error', () => {
+  const tmux = fakeTmux({ windows: '0\tbash\n4\ttodo\n', pane: 'bash', fail: 'kill-window' });
+  return withServer(tmux, async (t) => {
+    const { status, body } = await t.fetchJson('POST', '/api/agent/todo');
+    assert.equal(status, 500);
+    assert.match(body.error, /boom/);
   });
 });
 
@@ -84,11 +111,20 @@ test('the endpoint ignores any body the client sends', () => {
 });
 
 test('GET /api/agent/todo reports whether a run is live', () => {
-  const tmux = fakeTmux({ windows: '0\tbash\n7\ttodo\n' });
+  const tmux = fakeTmux({ windows: '0\tbash\n7\ttodo\n', pane: 'claude' });
   return withServer(tmux, async (t) => {
     const { status, body } = await t.fetchJson('GET', '/api/agent/todo');
     assert.equal(status, 200);
     assert.deepEqual(body, { running: true, target: 'main:7', attach: 'tmux attach -t main' });
+  });
+});
+
+test('GET /api/agent/todo reports idle once the run finishes, even though the window lingers', () => {
+  const tmux = fakeTmux({ windows: '0\tbash\n7\ttodo\n', pane: 'bash' });
+  return withServer(tmux, async (t) => {
+    const { status, body } = await t.fetchJson('GET', '/api/agent/todo');
+    assert.equal(status, 200);
+    assert.deepEqual(body, { running: false, target: 'main:7', attach: 'tmux attach -t main' });
   });
 });
 

@@ -50,6 +50,22 @@ export function listWindowsArgs(session) {
   return ['list-windows', '-t', session, '-F', LIST_FORMAT];
 }
 
+export function listPanesArgs(target) {
+  return ['list-panes', '-t', target, '-F', '#{pane_current_command}'];
+}
+
+// The window is kept open after a run finishes (see shellWrap) so David can
+// review the transcript, and at that point tmux reports the pane's
+// foreground command as `bash`, not `claude` — that's what tells an active
+// run apart from a finished one still parked in its window.
+export function paneIsRunningAgent(stdout) {
+  return String(stdout || '').split('\n').some((line) => line.trim() === 'claude');
+}
+
+export function killWindowArgs(target) {
+  return ['kill-window', '-t', target];
+}
+
 // -d so an attached client stays on the window it was looking at; -P -F makes
 // tmux print the new window's 'session:index' so the UI can say where it went.
 export function newWindowArgs({ session, window, cwd, command }) {

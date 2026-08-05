@@ -17,7 +17,14 @@ export function RunTodo() {
   const refresh = useCallback(
     () => api.get('/api/agent/todo').then(setLive).catch(() => {}), []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // The run happens in a detached tmux window with nothing pushing status
+  // back to the browser, so this has to poll — otherwise the button is only
+  // ever as fresh as the last full page load.
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
+  }, [refresh]);
   useEffect(() => () => clearTimeout(disarm.current), []);
 
   function arm() {

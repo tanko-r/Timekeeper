@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AGENT_COMMAND, agentWindowIn, listWindowsArgs, newSessionArgs,
-  newWindowArgs, parseWindowList, shellWrap,
+  AGENT_COMMAND, agentWindowIn, killWindowArgs, listPanesArgs, listWindowsArgs,
+  newSessionArgs, newWindowArgs, paneIsRunningAgent, parseWindowList, shellWrap,
 } from '../server/lib/agentsession.js';
 
 // tmux prints one window per line as "<index>\t<name>". Index first so a
@@ -67,4 +67,20 @@ test('session and list argument builders target the named session', () => {
 
 test('the launch command is a fixed constant, not built from input', () => {
   assert.equal(AGENT_COMMAND, 'claude --dangerously-skip-permissions /todo');
+});
+
+test('listPanesArgs asks tmux for the pane\'s foreground command', () => {
+  assert.deepEqual(listPanesArgs('main:4'), ['list-panes', '-t', 'main:4', '-F', '#{pane_current_command}']);
+});
+
+test('paneIsRunningAgent is true only while claude is still the foreground command', () => {
+  assert.equal(paneIsRunningAgent('claude\n'), true);
+  // exec bash -i (see shellWrap) replaces claude once the run finishes, so
+  // the pane reports `bash` even though the window itself lingers.
+  assert.equal(paneIsRunningAgent('bash\n'), false);
+  assert.equal(paneIsRunningAgent(''), false);
+});
+
+test('killWindowArgs targets the exact window', () => {
+  assert.deepEqual(killWindowArgs('main:4'), ['kill-window', '-t', 'main:4']);
 });
