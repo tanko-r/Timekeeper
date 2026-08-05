@@ -27,9 +27,25 @@ function fakeTmux({
   return run;
 }
 
-async function withServer(runTmux, fn) {
-  const t = await startTestServer({ deps: { runTmux } });
+async function withServer(runTmux, fn, config) {
+  const t = await startTestServer({ deps: { runTmux }, config });
   try { await fn(t); } finally { await t.close(); }
+}
+
+// Reads a fetch ReadableStream's raw text until it contains `needle`, or
+// throws if `budgetMs` passes first — a broken push must fail the test
+// quickly, not hang it.
+async function readUntil(reader, needle, budgetMs = 2000) {
+  const decoder = new TextDecoder();
+  let buf = '';
+  const deadline = Date.now() + budgetMs;
+  while (!buf.includes(needle)) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${JSON.stringify(needle)}; got ${JSON.stringify(buf)}`);
+    const { value, done } = await reader.read();
+    if (done) throw new Error('stream ended before ' + JSON.stringify(needle));
+    buf += decoder.decode(value, { stream: true });
+  }
+  return buf;
 }
 
 test('POST /api/agent/todo opens a named window and returns where it went', () => {
@@ -135,5 +151,53 @@ test('GET /api/agent/todo reports idle without creating anything', () => {
     assert.equal(body.running, false);
     assert.equal(body.target, null);
     assert.deepEqual(tmux.verbs(), ['has-session'], 'a status check never starts a session');
+  });
+});
+
+test('POST /api/agent/todo points the parked window at this server\'s completion hook', () => {
+  const tmux = fakeTmux();
+  return withServer(tmux, async (t) => {
+    await t.fetchJson('POST', '/api/agent/todo');
+    const launch = tmux.calls.find((a) => a[0] === 'new-window');
+    const wrapped = launch[launch.length - 1];
+    assert.match(wrapped, /curl -fsS -m 5 -X POST http:\/\/127\.0\.0\.1:4747\/api\/agent\/todo\/done >\/dev\/null 2>&1 \|\| true; exec bash -i$/);
+  }, { PORT: 4747 });
+});
+
+test('GET /api/agent/todo/events opens an SSE stream', () => {
+  const tmux = fakeTmux();
+  return withServer(tmux, async (t) => {
+    const res = await fetch(t.base + '/api/agent/todo/events');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /text\/event-stream/);
+    await res.body.cancel();
+  });
+});
+
+test('POST /api/agent/todo/done pushes a done event to open SSE listeners', () => {
+  const tmux = fakeTmux();
+  return withServer(tmux, async (t) => {
+    const res = await fetch(t.base + '/api/agent/todo/events');
+    const reader = res.body.getReader();
+
+    // Wait for the initial ':ok' comment so the listener is registered
+    // before firing the notification — otherwise the POST could race ahead
+    // of the server adding this connection to its client set.
+    await readUntil(reader, '\n\n');
+
+    const [, payload] = await Promise.all([
+      t.fetchJson('POST', '/api/agent/todo/done'),
+      readUntil(reader, 'event: done'),
+    ]);
+    assert.match(payload, /event: done\ndata: \{\}/);
+    await reader.cancel();
+  });
+});
+
+test('POST /api/agent/todo/done is harmless with no listeners connected', () => {
+  const tmux = fakeTmux();
+  return withServer(tmux, async (t) => {
+    const { status } = await t.fetchJson('POST', '/api/agent/todo/done');
+    assert.equal(status, 204);
   });
 });

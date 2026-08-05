@@ -30,12 +30,24 @@ export function agentWindowIn(stdout, session, window = AGENT_WINDOW) {
   return hit ? `${session}:${hit.index}` : null;
 }
 
+// The route the launched command pings, best-effort, the moment it exits —
+// so the frontend can learn a run finished by push instead of by polling.
+export const DONE_HOOK_PATH = '/api/agent/todo/done';
+
 // ~/.local/bin/claude is not on the systemd user service's PATH, and the tmux
 // server may have been started from anywhere, so the window sources a login
 // environment. `exec bash -i` afterwards leaves the finished transcript on
 // screen for whenever David actually attaches.
-export function shellWrap(command) {
-  return ['bash', '-lc', `${command}; exec bash -i`];
+//
+// When notifyUrl is given, a `curl` to it is spliced in between the command
+// and `exec bash -i` — after the run truly finishes (including a crash exit;
+// bash still reaches this point), before the window is parked. `-fsS -m 5
+// ... || true` makes it best-effort: curl being unavailable, the server
+// restarting, or auth mode being 'always' must never stop the window from
+// being handed back to David.
+export function shellWrap(command, notifyUrl) {
+  const notify = notifyUrl ? `curl -fsS -m 5 -X POST ${notifyUrl} >/dev/null 2>&1 || true; ` : '';
+  return ['bash', '-lc', `${command}; ${notify}exec bash -i`];
 }
 
 export function hasSessionArgs(session) {
@@ -68,10 +80,10 @@ export function killWindowArgs(target) {
 
 // -d so an attached client stays on the window it was looking at; -P -F makes
 // tmux print the new window's 'session:index' so the UI can say where it went.
-export function newWindowArgs({ session, window, cwd, command }) {
+export function newWindowArgs({ session, window, cwd, command, notifyUrl }) {
   return [
     'new-window', '-d', '-t', session, '-n', window, '-c', cwd,
     '-P', '-F', '#{session_name}:#{window_index}',
-    '--', ...shellWrap(command),
+    '--', ...shellWrap(command, notifyUrl),
   ];
 }

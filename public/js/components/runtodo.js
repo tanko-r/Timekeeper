@@ -16,16 +16,32 @@ export function RunTodo() {
 
   const refresh = useCallback(
     () => api.get('/api/agent/todo').then(setLive).catch(() => {}), []);
+  const running = live ? live.running : false;
 
-  // The run happens in a detached tmux window with nothing pushing status
-  // back to the browser, so this has to poll — otherwise the button is only
-  // ever as fresh as the last full page load.
-  useEffect(() => {
-    refresh();
-    const id = setInterval(refresh, 5000);
-    return () => clearInterval(id);
-  }, [refresh]);
+  useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => () => clearTimeout(disarm.current), []);
+
+  // The launched command pings the server the moment it exits (see
+  // server/routes/agent.js's /todo/done), which pushes a 'done' event over
+  // this stream — no polling needed to notice a finished run. The connection
+  // is only held open while a run is actually live: there's nothing to watch
+  // for otherwise, and it keeps this from being a standing connection for
+  // the app's whole session. `onopen` also re-checks on every (re)connect,
+  // since that's the one moment a push could have been missed. visibility-
+  // change is the last-resort fallback for anything that misses even that,
+  // e.g. a backgrounded tab whose network the OS suspended.
+  useEffect(() => {
+    if (!running) return undefined;
+    const events = new EventSource('/api/agent/todo/events');
+    events.addEventListener('done', refresh);
+    events.onopen = refresh;
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      events.close();
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [running, refresh]);
 
   function arm() {
     setArmed(true);
@@ -51,7 +67,6 @@ export function RunTodo() {
     }
   }
 
-  const running = live && live.running;
   const label = busy ? 'Starting…' : armed ? 'Confirm?' : running ? '/todo running' : 'Run /todo';
   const title = running
     ? `A backlog session is open in ${live.target} — attach with ${live.attach}`

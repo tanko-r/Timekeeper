@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  AGENT_COMMAND, agentWindowIn, killWindowArgs, listPanesArgs, listWindowsArgs,
-  newSessionArgs, newWindowArgs, paneIsRunningAgent, parseWindowList, shellWrap,
+  AGENT_COMMAND, DONE_HOOK_PATH, agentWindowIn, killWindowArgs, listPanesArgs,
+  listWindowsArgs, newSessionArgs, newWindowArgs, paneIsRunningAgent,
+  parseWindowList, shellWrap,
 } from '../server/lib/agentsession.js';
 
 // tmux prints one window per line as "<index>\t<name>". Index first so a
@@ -45,18 +46,34 @@ test('shellWrap runs the command under a login shell and keeps the window alive'
   assert.deepEqual(shellWrap('echo hi'), ['bash', '-lc', 'echo hi; exec bash -i']);
 });
 
+test('shellWrap pings a completion hook before parking the window, best-effort', () => {
+  assert.deepEqual(
+    shellWrap('echo hi', 'http://127.0.0.1:4747/api/agent/todo/done'),
+    ['bash', '-lc',
+      'echo hi; curl -fsS -m 5 -X POST http://127.0.0.1:4747/api/agent/todo/done >/dev/null 2>&1 || true; exec bash -i'],
+  );
+});
+
 test('newWindowArgs launches detached, named, in the repo, and reports its target', () => {
-  const args = newWindowArgs({ session: 'main', window: 'todo', cwd: '/repo', command: 'run me' });
+  const args = newWindowArgs({
+    session: 'main', window: 'todo', cwd: '/repo', command: 'run me',
+    notifyUrl: 'http://127.0.0.1:4747/api/agent/todo/done',
+  });
   assert.deepEqual(args, [
     'new-window', '-d', '-t', 'main', '-n', 'todo', '-c', '/repo',
     '-P', '-F', '#{session_name}:#{window_index}',
-    '--', 'bash', '-lc', 'run me; exec bash -i',
+    '--', 'bash', '-lc',
+    'run me; curl -fsS -m 5 -X POST http://127.0.0.1:4747/api/agent/todo/done >/dev/null 2>&1 || true; exec bash -i',
   ]);
 });
 
 test('new window is detached so it never steals focus from an attached session', () => {
-  const args = newWindowArgs({ session: 'main', window: 'todo', cwd: '/repo', command: 'x' });
+  const args = newWindowArgs({ session: 'main', window: 'todo', cwd: '/repo', command: 'x', notifyUrl: 'http://x/done' });
   assert.ok(args.includes('-d'), '-d keeps David on the window he is looking at');
+});
+
+test('DONE_HOOK_PATH is the fixed route the launched command pings on exit', () => {
+  assert.equal(DONE_HOOK_PATH, '/api/agent/todo/done');
 });
 
 test('session and list argument builders target the named session', () => {

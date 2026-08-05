@@ -30,3 +30,30 @@ Newest entries first.
     keep it updated every run.
   - Tests: `npm test` (550 pass, including new/updated coverage in
     `test/agentsession.test.js` and `test/api.agent.test.js`).
+
+- Replaced the 5s status poll above with a push: the launched command now
+  pings the server the instant it exits, over Server-Sent Events, instead of
+  the button asking every 5 seconds.
+  - `server/lib/agentsession.js`: `shellWrap`/`newWindowArgs` splice a
+    best-effort `curl` call to a new `/api/agent/todo/done` route into the
+    launched command, right before the window is parked.
+  - `server/routes/agent.js`: added `GET /api/agent/todo/events` (SSE
+    stream held open only while a run is live) and `POST /api/agent/todo/done`
+    (broadcasts to connected listeners).
+  - `public/js/components/runtodo.js`: opens the SSE connection only while
+    `running` is true — nothing to watch otherwise, and it avoids a standing
+    connection for the app's whole session. Falls back to a re-check on
+    reconnect and on tab-visibility change, in case a push is ever missed.
+  - Caught during verification: an always-open SSE connection broke
+    `scripts/e2e-smoke.mjs`, whose ~30 `page.goto`/`page.reload` calls wait
+    on Puppeteer's `networkidle0` — a persistent connection means network is
+    never idle, so every navigation after the first would hang until
+    Puppeteer's internal timeout. Scoping the connection to "only while a
+    run is live" fixed it structurally (e2e never triggers a real run, so
+    the connection never opens during the suite) rather than by loosening
+    the wait condition.
+  - Tests: `npm test` (561 pass; two unrelated pre-existing flakes in
+    `db.test.js`/`aivoice.test.js` that only appear under full-suite
+    parallelism, not touched by this change — confirmed by running each
+    file standalone and by two clean full-suite reruns).
+    `node scripts/e2e-smoke.mjs`: clean.
