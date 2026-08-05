@@ -248,6 +248,55 @@ brief was **identical to an eval brief**. The model echoed the seed and then
 padded, quietly corrupting the eval that was supposed to be measuring it. A
 test now asserts no seed pair duplicates an eval brief.
 
+## 2026-08-04 revision — teach only from the signed-off version
+
+Three days of live use produced a **measured regression**: median output went
+11 → 18 words and filler returned. Diagnosis, from dumping the assembled
+prompt rather than guessing:
+
+1. **Lightly-edited model output had taken over the pool.** `narrative_ai`
+   clears on *any* edit, so nudging a word made model prose count as David's
+   voice. The spec accepted this risk on 2026-08-01; it materialised in three
+   days and was the main cause. Pairs like *"Compose email to client detailing
+   proposed course of action and key considerations for resolving title
+   issues"* were teaching the exact filler the work removed.
+2. **Pairs emitted raw stored text.** Narratives were cleaned for the quality
+   *gate* but the **uncleaned** string was emitted, so matter tags (`[MTR09]`)
+   and time allocations (`(0.4)`) reached the few-shot — demonstrating
+   precisely what the format contract forbids.
+3. **The teaching ceiling was set at the wrong percentile.** At the house p90
+   (29 words), 23-word entries were teachable and the model copied their
+   padding.
+
+### Changes
+
+- **Both pools now require `status = 'finalized'`.** A draft autosaves every
+  600ms, so its narrative is a moving target — mid-thought wording was being
+  taught as readily as the wording David settled on. Finalizing is the only
+  signal in the app that means "this is the version I stand behind".
+- **`ai_draft`** stores the model's original output beside the corrected
+  final, never cleared by an edit. A corrected entry now yields a triple
+  (shorthand, what the model wrote, what David wanted).
+- **`rewriteRatio()`** uses that draft to distinguish a correction from a
+  nudge. Measured separation is clean: a typo fix scores ~0.08, a genuine
+  reword ~0.33; the threshold sits at 0.25. Entries with no stored draft score
+  1, so absent history never disqualifies anything.
+- **`looksLikeHouseVoice()`** applies the eval's own bar to teaching material:
+  no filler markers, and at most 20 words. Teaching material must be
+  *exemplary*, not merely typical.
+- **`FILLER_MARKERS` is exported and shared with `scripts/ai-eval.mjs`**, so
+  the teaching bar and the eval bar cannot drift apart. It is deliberately
+  never injected into the prompt — naming a phrase there makes the model emit
+  it (see the 2026-08-01 finding).
+- Pairs now emit `cleanCandidate()`-normalised text on both sides.
+
+### Standing lesson
+
+Well-formedness is not quality. A self-improving pool needs a bar on what
+enters it that is at least as strict as the bar used to judge what comes out —
+otherwise it converges on whatever is merely acceptable, and the loop is a
+ratchet in the wrong direction.
+
 ### Known limitation
 
 Name resolution still depends on the matter roster. With a `cm_id` the roster
