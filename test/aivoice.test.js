@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers.js';
-import { buildVoiceContext, SEED_PAIRS } from '../server/routes/ai.js';
+import { buildVoiceContext, buildNarrateMessages, SEED_PAIRS } from '../server/routes/ai.js';
 
 async function withServer(fn) {
   const t = await startTestServer();
@@ -123,7 +123,7 @@ test('buildVoiceContext includes the shortcuts glossary', async () => {
       abbrev: 'psa', phrase: 'Purchase and Sale Agreement',
     });
     const v = buildVoiceContext(t.db, {});
-    assert.match(v.prompt, /psa = Purchase and Sale Agreement/);
+    assert.match(v.prompt, /psa → Purchase and Sale Agreement/);
   });
 });
 
@@ -308,4 +308,60 @@ test('a fresh generation replaces the stored draft', async () => {
     assert.equal(t.db.prepare('SELECT ai_draft FROM entries WHERE id=?')
       .get(r.body.id).ai_draft, 'Second draft text.');
   });
+});
+
+// ── the glossary is an EXPANSION authority, not a contraction one ──────────
+// 2026-08-06 feedback: after an AI rewrite, names David had already expanded
+// ("A. Hessburg") came back as the shorthand he typed ("ah"). The glossary
+// rides in as a bare list of `abbrev = phrase` equations, which reads in both
+// directions — and "make this shorter" is an outright invitation to swap the
+// long side for the short one. A rewrite's input is finished prose, so the
+// abbreviation authority has no work to do there at all; it is dropped, the
+// same way the shorthand→narrative few-shot pairs already are.
+test('buildVoiceContext exposes a rewrite prompt with the exemplars but no glossary', async () => {
+  await withServer(async (t) => {
+    const cm = await makeCm(t);
+    await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'psa', phrase: 'Purchase and Sale Agreement' });
+    const e = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-01', cm_id: cm.id,
+      narrative: 'Review Cedar Lease and confer with client regarding same.',
+    });
+    finalize(t, e.body.id);
+    const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev lease' });
+    assert.match(v.prompt, /psa → Purchase and Sale Agreement/, 'drafting still gets the glossary');
+    assert.doesNotMatch(v.rewritePrompt, /psa/, 'a rewrite never sees the short forms');
+    assert.match(v.rewritePrompt, /Review Cedar Lease and confer with client/,
+      'but it keeps the voice exemplars');
+  });
+});
+
+test('the glossary states the direction it is meant to be read in', async () => {
+  await withServer(async (t) => {
+    await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'psa', phrase: 'Purchase and Sale Agreement' });
+    const v = buildVoiceContext(t.db, {});
+    assert.match(v.prompt, /psa → Purchase and Sale Agreement/,
+      'an arrow, not an equals sign — equations read both ways');
+  });
+});
+
+test('buildNarrateMessages: rewrites drop the glossary, drafts keep it', () => {
+  const voice = { prompt: '\n\nGLOSSARY_BLOCK\n\nEXEMPLAR_BLOCK', rewritePrompt: '\n\nEXEMPLAR_BLOCK', turns: [] };
+  const sys = (mode) => buildNarrateMessages({
+    instructions: 'Base.', brief: 'rev lease', narrative: 'Review Cedar Lease.', mode, voice,
+  })[0].content;
+  for (const mode of ['shorter', 'longer']) {
+    assert.doesNotMatch(sys(mode), /GLOSSARY_BLOCK/, `${mode} must not carry the glossary`);
+    assert.match(sys(mode), /EXEMPLAR_BLOCK/, `${mode} keeps the voice exemplars`);
+  }
+  for (const mode of ['draft', 'regenerate']) {
+    assert.match(sys(mode), /GLOSSARY_BLOCK/, `${mode} expands shorthand, so it needs the glossary`);
+  }
+});
+
+test('buildNarrateMessages: a voice object without a rewrite prompt still works', () => {
+  const sys = buildNarrateMessages({
+    instructions: 'Base.', narrative: 'Review Cedar Lease.', mode: 'shorter',
+    voice: { prompt: '\n\nLEGACY_BLOCK', turns: [] },
+  })[0].content;
+  assert.match(sys, /LEGACY_BLOCK/);
 });

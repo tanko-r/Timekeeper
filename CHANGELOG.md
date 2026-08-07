@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-08-06
 
+- Fixed AI rewrite putting shorthand back into text that had already been
+  expanded ("A. Hollowell" → "ah"). The abbreviation glossary is now written
+  one-directionally and is dropped entirely from rewrite prompts, which get
+  a rewrite demonstration instead. Measured against llama3.1:8b: shorthand
+  leaked back in 3 of 3 runs before, 0 of 3 after.
 - Picking a timer from the float window's Find box now STARTS that timer,
   instead of only adding it to today's list. It follows the same path as the
   row's ▶ button, so the server's start-exclusivity stops whatever was

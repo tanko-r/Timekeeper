@@ -212,10 +212,15 @@ export function pickPairs(pool, seeds = [], { count = 6, cmId = null, brief = ''
   return chosen;
 }
 
+// An ARROW, not an equals sign (2026-08-06 feedback). "ah = A. Hessburg" is a
+// symmetric claim, and an 8B model asked to shorten a narrative will happily
+// read it right-to-left and put the shorthand back into finished prose. The
+// arrow, and the heading the caller wraps it in, both point one way: shorthand
+// in, full wording out.
 export function renderGlossary(rows) {
   const list = (rows || [])
     .filter((r) => r && r.abbrev && r.phrase)
     .slice(0, GLOSSARY_LIMIT)
-    .map((r) => `${r.abbrev} = ${r.phrase}`);
+    .map((r) => `${r.abbrev} → ${r.phrase}`);
   return list.length ? list.join('\n') : '';
 }

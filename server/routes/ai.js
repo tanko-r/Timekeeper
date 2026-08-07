@@ -142,15 +142,26 @@ export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
   `).all();
   const pairs = pickPairs(pool, SEED_PAIRS, { count: 6, cmId, brief });
 
-  const parts = [];
-  if (glossary) {
-    parts.push(`The attorney's abbreviations:\n${glossary}`);
-  }
-  if (exemplars.length) {
-    parts.push(`The attorney's entries:\n${exemplars.join('\n')}`);
-  }
+  // Two blocks, because they are not wanted on the same occasions. The
+  // exemplars teach voice and belong in every call. The glossary is an
+  // EXPANSION authority — it earns its place only when the input is shorthand.
+  const glossaryBlock = glossary
+    ? `The attorney's shorthand, and the full wording it stands for:\n${glossary}`
+    : null;
+  const exemplarBlock = exemplars.length
+    ? `The attorney's entries:\n${exemplars.join('\n')}`
+    : null;
+  const join = (blocks) => {
+    const kept = blocks.filter(Boolean);
+    return kept.length ? `\n\n${kept.join('\n\n')}` : '';
+  };
   return {
-    prompt: parts.length ? `\n\n${parts.join('\n\n')}` : '',
+    prompt: join([glossaryBlock, exemplarBlock]),
+    // Rewrites (shorter / longer) get this one instead: their input is already
+    // finished prose, so a list of short forms has nothing left to expand and
+    // can only tempt the model into putting the shorthand back (2026-08-06
+    // feedback). Same reason the shorthand→narrative pairs are dropped below.
+    rewritePrompt: join([exemplarBlock]),
     turns: pairs.flatMap((p) => [
       { role: 'user', content: `Work done: ${p.brief}` },
       { role: 'assistant', content: p.narrative },
@@ -181,25 +192,58 @@ export function timeGroundingRule(totalHours) {
   return `\n\nThe recorded time for this entry is ${h} hours (${mins} minutes). The narrative must describe only what could plausibly be done in that time: under half an hour is a single brief action in one short sentence; only longer entries justify multiple actions or extended detail.`;
 }
 
+// The two rewrite asks, kept in one place so the demonstrations below are
+// worded identically to the live request — a few-shot turn only teaches if the
+// model reads it as the same kind of question.
+export const REWRITE_ASK = {
+  shorter: (n) => `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${n}`,
+  longer: (n) => `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${n}`,
+};
+
+// What "shorter" is allowed to cut, shown rather than stated (2026-08-06
+// feedback: told to tighten, llama3.1:8b shrank "A. Hollowell" to "AH" and
+// "Purchase and Sale Agreement" to "PSA" — a prose rule saying "keep names in
+// full" would only have put more short forms in front of it). The pairs cut
+// articles and doubled verbs while every name and document title survives
+// intact. House fictional names only.
+export const REWRITE_SHOTS = {
+  shorter: [{
+    before: 'Review and analyze the Purchase and Sale Agreement and confer with J. Larson regarding the escrow schedule; draft the revisions to the easement amendment.',
+    after: 'Review Purchase and Sale Agreement and confer with J. Larson regarding escrow schedule; draft revisions to easement amendment.',
+  }],
+  longer: [{
+    before: 'Review lease and email client.',
+    after: 'Review and analyze lease and email to client regarding same.',
+  }],
+};
+
+export function rewriteShots(mode) {
+  return (REWRITE_SHOTS[mode] || []).flatMap((s) => [
+    { role: 'user', content: REWRITE_ASK[mode](s.before) },
+    { role: 'assistant', content: s.after },
+  ]);
+}
+
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
 export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  const system = `${base}${(voice && voice.prompt) || ''}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
-  let user;
-  if (mode === 'shorter') {
-    user = [context, `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${narrative}`].filter(Boolean).join('\n\n');
-  } else if (mode === 'longer') {
-    user = [context, `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${narrative}`].filter(Boolean).join('\n\n');
-  } else {
-    user = [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
-  }
+  // A rewrite is handed finished prose, so it takes the voice block WITHOUT
+  // the abbreviation glossary (2026-08-06 feedback: names David had already
+  // expanded came back as shorthand). Older callers that only supply `prompt`
+  // keep their previous behaviour.
+  const rewriting = mode === 'shorter' || mode === 'longer';
+  const voicePrompt = (voice && (rewriting ? (voice.rewritePrompt ?? voice.prompt) : voice.prompt)) || '';
+  const system = `${base}${voicePrompt}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
+  const user = rewriting
+    ? [context, REWRITE_ASK[mode](narrative)].filter(Boolean).join('\n\n')
+    : [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
   // Few-shot pairs sit between the system prompt and the live request so the
-  // model reads them as prior exchanges it should imitate. Rewrites (shorter /
-  // longer) skip them — their input is a finished narrative, not shorthand,
-  // so shorthand→narrative examples would teach the wrong transformation.
-  const shots = (mode === 'shorter' || mode === 'longer') ? [] : ((voice && voice.turns) || []);
+  // model reads them as prior exchanges it should imitate. Rewrites get their
+  // OWN demonstrations: the voice pairs are shorthand→narrative, which is the
+  // wrong transformation for an input that is already finished prose.
+  const shots = rewriting ? rewriteShots(mode) : ((voice && voice.turns) || []);
   return [{ role: 'system', content: system }, ...shots, { role: 'user', content: user }];
 }
 

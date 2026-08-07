@@ -217,8 +217,14 @@ test('ai narrate: validation, shorter/longer rewrite modes, clean failures', asy
     assert.equal(res.status, 200);
     const last = JSON.parse((await res.text()).trim().split('\n').at(-1));
     assert.equal(last.narrative, 'Shorter version.');
-    const user = stub.state.lastChat.messages[1].content;
+    // the live request is the LAST turn — a rewrite demonstration rides in
+    // ahead of it (2026-08-06: shows what "shorter" may cut, and that names
+    // and document titles are not it)
+    const user = stub.state.lastChat.messages.at(-1).content;
     assert.ok(user.includes('A very long narrative about the lease.'));
+    const demo = stub.state.lastChat.messages.slice(1, -1);
+    assert.equal(demo.length, 2, 'one shorter-rewrite demonstration pair');
+    assert.match(demo[1].content, /J\. Larson/, 'the demonstration keeps the name in full');
     assert.match(stub.state.lastChat.messages[0].content, /plain text/);
     assert.ok(!stub.state.lastChat.messages[0].content.includes('Respond with ONLY this JSON'),
       'no JSON contract in narrate prompts');
