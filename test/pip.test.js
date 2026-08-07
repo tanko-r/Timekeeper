@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPipRows, narrativeMode, narrativeValue, fmtDayTotal, fmtClockParts,
-  pipSupported, findPickList, closeoutTimer,
+  pipSupported, findPickList, closeoutTimer, pickPlan,
 } from '../public/js/lib/pip.js';
 
 const T = (id, extra = {}) => ({
@@ -126,4 +126,29 @@ test('findPickList: matches caption, matter name/number and client, case-insensi
   assert.deepEqual(names('microsoft'), [1], 'client name');
   assert.deepEqual(names('  '), [2, 3, 1], 'blank query lists everything A–Z');
   assert.deepEqual(names('nothing here'), []);
+});
+
+// Picking from the find box means "I'm working on this now" (2026-08-06
+// feedback) — it starts the timer, exactly as the row's ▶ does, which means
+// the server's start-exclusivity stops whatever was running and THAT timer
+// earns the close-out pane.
+test('pickPlan: picking a stopped timer starts it', () => {
+  const timers = [T(1, { name: 'a' }), T(2, { name: 'b' })];
+  assert.deepEqual(pickPlan(timers, T(2, { name: 'b' })), { start: true, stoppingId: null });
+});
+
+test('pickPlan: an already-running pick is never re-started', () => {
+  const running = T(2, { name: 'b', running: 1 });
+  assert.deepEqual(pickPlan([T(1), running], running), { start: false, stoppingId: null });
+});
+
+test('pickPlan: names the timer the start will stop, so it gets the close-out', () => {
+  const running = T(1, { name: 'a', running: 1, elapsed_seconds: 600 });
+  const picked = T(2, { name: 'b' });
+  assert.deepEqual(pickPlan([running, picked], picked), { start: true, stoppingId: 1 });
+});
+
+test('pickPlan: tolerates a missing timer list', () => {
+  assert.deepEqual(pickPlan(null, T(2)), { start: true, stoppingId: null });
+  assert.deepEqual(pickPlan([], null), { start: false, stoppingId: null });
 });

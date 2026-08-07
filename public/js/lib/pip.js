@@ -55,6 +55,19 @@ export function findPickList(timers, extraIds, query = '') {
     .sort(compareTimersAZ);
 }
 
+// What picking a timer out of the find box should do (2026-08-06 feedback).
+// You only go looking for a timer because you are about to work on it, so the
+// pick starts it — the same act as the row's ▶. `start` is false only when the
+// pick is already running (nothing to do). `stoppingId` names the timer the
+// server's start-exclusivity will stop, so the caller can hand it the
+// close-out pane, exactly as the ▶ button does. Pure — unit-tested.
+export function pickPlan(timers, picked) {
+  if (!picked) return { start: false, stoppingId: null };
+  if (picked.running) return { start: false, stoppingId: null };
+  const running = (timers || []).find((t) => t.running && t.id !== picked.id);
+  return { start: true, stoppingId: running ? running.id : null };
+}
+
 // How the expanded row's narrative surface behaves:
 //   'stash'    — no linked entry: text goes to timers.draft_narrative and is
 //                consumed by the next entry the timer creates (syncToEntry)
@@ -331,7 +344,7 @@ export async function toggleTimerPip() {
       <span class="total" data-total>…</span>
       <span class="foot-btns">
         <button class="quick find-btn" data-find-btn
-          title="Find any timer and add it to today's list">Find ▾</button>
+          title="Find any timer — picking it starts it and adds it to today’s list">Find ▾</button>
         <button class="quick" data-quick title="Quick timer — starts now; assign a matter later">+</button>
       </span>
     </div>`;
@@ -701,8 +714,9 @@ export async function toggleTimerPip() {
   // The find pane (2026-07-29 feedback, replacing the past-week-only "Recent"
   // picker): the dashboard's filter box, shrunk to fit the float. Type to
   // narrow EVERY timer not already on the list; ↑/↓ walk the hits, Enter takes
-  // the highlighted one, Esc closes. Picking adds the timer to today's list and
-  // opens its narrative. Built once per open — poll renders leave it alone.
+  // the highlighted one, Esc closes. Picking adds the timer to today's list,
+  // STARTS it, and opens its narrative. Built once per open — poll renders
+  // leave it alone.
   function closeFind() {
     findOpen = false;
     findEl.replaceChildren();
@@ -719,12 +733,30 @@ export async function toggleTimerPip() {
     list.className = 'find-list';
     let hits = [];
     let cursor = 0;
-    const pick = (t) => {
+    const pick = async (t) => {
       extras.add(t.id);
       saveExtras();
       findOpen = false;
       findEl.replaceChildren();
       expandedId = t.id;
+      // You went looking for this timer because you're starting on it, so
+      // start it (2026-08-06 feedback) — the same path as the row's ▶,
+      // close-out pane included for whatever the server stops.
+      const { start, stoppingId } = pickPlan(timers, t);
+      if (start) {
+        try {
+          await api.post(`/api/timers/${t.id}/start`);
+          localStorage.setItem('tk:lastTimer', String(t.id));
+          await poll();
+        } catch (e) { showErr(e); }
+      }
+      if (stoppingId !== null && closeoutTimer(timers, stoppingId)) {
+        closeoutId = stoppingId;
+        expandedId = null;
+        render();
+        focusNarrative(stoppingId);
+        return;
+      }
       render();
       focusNarrative(t.id);
     };

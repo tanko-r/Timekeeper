@@ -10,6 +10,10 @@ Newest entries first.
 
 ## 2026-08-06
 
+- Picking a timer from the float window's Find box now STARTS that timer,
+  instead of only adding it to today's list. It follows the same path as the
+  row's ▶ button, so the server's start-exclusivity stops whatever was
+  running and that timer gets the close-out pane to narrate.
 - Renamed the first field of the New client/matter modal from "Client" to
   "Client number", and reworded its hint and placeholder to lead with the
   6-digit number ("Type the 6-digit number — or type a name to search
