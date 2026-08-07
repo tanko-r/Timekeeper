@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-08-06
 
+- Added timer multi-select: Ctrl/⌘-click toggles a card, Shift-click extends
+  the range, and right-clicking inside the selection opens a batch menu
+  (move to group, pin/unpin, delete N timers). Batch delete goes through a
+  new all-or-nothing `POST /api/timers/batch-delete`. Esc or a plain click
+  clears. Right-clicking a single timer already opened its menu — unchanged.
 - Fixed mouse-selecting text inside a timer's inline name/clock edit starting
   a drag instead — the card is no longer draggable while an edit is open. Also
   added Trello-style relocation feedback: the dragged card fades and a dashed

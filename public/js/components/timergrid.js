@@ -37,6 +37,38 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [dropBeforeId, setDropBeforeId] = useState(null);
   const endDrag = () => { setDraggingId(null); setDropBeforeId(null); };
 
+  // Multi-select (2026-08-06 feedback): Ctrl/⌘-click toggles a card,
+  // Shift-click extends from the last one clicked, a plain click on a card's
+  // body or Esc clears. Deliberately NOT persisted — a selection is a
+  // this-moment thing, and a stale one that survived a reload would make the
+  // batch menu dangerous. Right-clicking inside the selection opens a batch
+  // menu; right-clicking outside it falls back to the single-timer menu.
+  const [selected, setSelected] = useState(() => new Set());
+  const anchorId = useRef(null);
+  const clearSelection = () => setSelected((s) => (s.size ? new Set() : s));
+
+  function selectCard(e, timer, list) {
+    const ids = list.map((t) => t.id);
+    if (e.shiftKey && anchorId.current != null && ids.includes(anchorId.current)) {
+      const a = ids.indexOf(anchorId.current);
+      const b = ids.indexOf(timer.id);
+      const range = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+      setSelected((s) => new Set([...s, ...range]));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      anchorId.current = timer.id;
+      setSelected((s) => {
+        const next = new Set(s);
+        if (next.has(timer.id)) next.delete(timer.id); else next.add(timer.id);
+        return next;
+      });
+      return;
+    }
+    anchorId.current = timer.id;
+    clearSelection();
+  }
+
   // Grouping view (spec §3.4/§4): 'group' = user-defined timer_groups,
   // 'client' = the matter's client, 'flat' = one list. Persisted per-browser.
   const [grouping, setGroupingState] = useState(() => {
@@ -408,6 +440,49 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     ];
   }
 
+  // The right-click menu for a multi-selection. Only the actions that mean
+  // something applied to several timers at once — clock nudges and "open
+  // today's entry" are per-timer by nature and stay off it.
+  function batchMenuItems(ids) {
+    const picked = timers.filter((t) => ids.includes(t.id));
+    const allPinned = picked.every((t) => t.pinned);
+    const patchAll = async (body) => {
+      await Promise.all(ids.map((id) => api.patch(`/api/timers/${id}`, body)));
+      await reload();
+    };
+    return [
+      { custom: () => html`<div class="ctx-inline"><span class="muted small">${ids.length} timers selected</span></div>` },
+      {
+        custom: () => html`
+          <div class="ctx-inline">
+            <span class="muted small">Group</span>
+            <select value="" onChange=${(e) => {
+              const v = e.target.value;
+              if (v === '') return;
+              setMenu(null);
+              guard(patchAll({ group_id: v === 'none' ? null : Number(v) }));
+            }}>
+              <option value="">Move to…</option>
+              <option value="none">Ungrouped</option>
+              ${groups.map((g) => html`<option key=${g.id} value=${g.id}>${g.name}</option>`)}
+            </select>
+          </div>`,
+      },
+      {
+        label: allPinned ? 'Unpin all from float window' : 'Pin all to float window',
+        icon: 'pin',
+        onClick: () => guard(patchAll({ pinned: allPinned ? 0 : 1 })),
+      },
+      { hr: true },
+      {
+        label: `Delete ${ids.length} timers`,
+        icon: 'trash',
+        danger: true,
+        onClick: () => setDeleting({ ids, names: picked.map((t) => t.name) }),
+      },
+    ];
+  }
+
   // ---------- render ----------
 
   // hook-safe: runs before the early return, touches only the DOM
@@ -575,6 +650,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     if (tag === 'button' && (e.key === 'Enter' || e.key === ' ')) return;
     const done = () => { e.preventDefault(); e.stopPropagation(); };
 
+    // Esc drops a multi-selection before anything else looks at the key.
+    if (e.key === 'Escape' && selected.size) { clearSelection(); return done(); }
+
     const list = visible;
     if (list.length === 0) return;
     const idx = Math.max(0, list.findIndex((t) => t.id === focusId));
@@ -687,6 +765,12 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         <${Icon} name="plus" size=${16} /> New timer
       </button>
     </div>
+    ${selected.size > 0 ? html`
+      <div class="timer-selbar" role="status">
+        <strong>${selected.size} selected</strong>
+        <span class="muted small">Right-click for batch actions · Ctrl-click to add · Shift-click for a range</span>
+        <button class="btn btn-sm" onClick=${clearSelection}>Clear (Esc)</button>
+      </div>` : null}
     ${tabsEnabled ? html`
       <div class="timer-tabs" role="tablist" aria-label=${byGroupMode ? 'Timer groups' : 'Clients'}>
         ${tabList.map((tab) => html`
@@ -745,12 +829,18 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
               const card = html`
                 <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
                   canDrag=${byGroupMode} dragging=${draggingId === t.id}
+                  selected=${selected.has(t.id)} onSelect=${(e) => selectCard(e, t, list)}
                   tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
                   roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
                   onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
                   onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
                   onRename=${(name) => guard(api.patch(`/api/timers/${t.id}`, { name }).then(reload))}
-                  onMenu=${(x, y) => setMenu({ x, y, timer: t })}
+                  onMenu=${(x, y) => {
+                    // inside the selection → batch menu; outside it → the
+                    // ordinary single-timer menu, and the selection drops
+                    if (selected.size > 1 && selected.has(t.id)) setMenu({ x, y, ids: [...selected] });
+                    else { clearSelection(); setMenu({ x, y, timer: t }); }
+                  }}
                   onDragStart=${() => { dragId.current = t.id; setDraggingId(t.id); }}
                   onDragEnd=${endDrag}
                   onDragOverCard=${() => setDropBeforeId(draggingId === t.id ? null : t.id)}
@@ -775,7 +865,9 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     </div>
 
     ${menu ? html`
-      <${ContextMenu} x=${menu.x} y=${menu.y} items=${menuItems(menu.timer)} onClose=${() => setMenu(null)} />` : null}
+      <${ContextMenu} x=${menu.x} y=${menu.y}
+        items=${menu.ids ? batchMenuItems(menu.ids) : menuItems(menu.timer)}
+        onClose=${() => setMenu(null)} />` : null}
 
     ${tabMenu ? html`
       <${ContextMenu} x=${tabMenu.x} y=${tabMenu.y} onClose=${() => setTabMenu(null)}
@@ -815,9 +907,17 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         onClose=${() => setImporting(false)} />` : null}
 
     ${deleting ? html`
-      <${Confirm} title="Delete timer" danger confirmLabel="Delete"
-        message=${`Delete the "${deleting.name}" button? Entries it already created are kept.`}
-        onConfirm=${async () => { await api.del(`/api/timers/${deleting.id}`); await reload(); }}
+      <${Confirm} title=${deleting.ids ? `Delete ${deleting.ids.length} timers` : 'Delete timer'}
+        danger confirmLabel="Delete"
+        message=${deleting.ids
+          ? `Delete these ${deleting.ids.length} timer buttons — ${deleting.names.join(', ')}? Entries they already created are kept.`
+          : `Delete the "${deleting.name}" button? Entries it already created are kept.`}
+        onConfirm=${async () => {
+          if (deleting.ids) await api.post('/api/timers/batch-delete', { ids: deleting.ids });
+          else await api.del(`/api/timers/${deleting.id}`);
+          clearSelection();
+          await reload();
+        }}
         onClose=${() => setDeleting(null)} />` : null}
 
     ${stopPopup ? html`
@@ -830,7 +930,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging = false, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDragEnd, onDragOverCard, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging = false, selected = false, tabbable = false, onFocusCard, onSelect, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDragEnd, onDragOverCard, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -867,12 +967,26 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging
   const editingText = editingName || editingClock;
   const draggable = canDrag && !editingText;
 
+  // Selection is handled in the CAPTURE phase: a Ctrl/⌘/Shift-click is a
+  // selection, so it must never reach the name/clock buttons underneath and
+  // start a rename. A plain click on the card's own body (not on a control)
+  // clears the selection — clicking a control leaves it alone, so a selected
+  // timer can still be started without losing the selection.
+
   return html`
     <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '')
-      + (timer.cm_id ? '' : ' unassigned') + (dragging ? ' dragging' : '') + (editingText ? ' editing' : '')}
+      + (timer.cm_id ? '' : ' unassigned') + (dragging ? ' dragging' : '') + (editingText ? ' editing' : '')
+      + (selected ? ' selected' : '')}
       tabIndex=${tabbable ? 0 : -1}
       data-timer-id=${timer.id}
       onFocus=${() => onFocusCard && onFocusCard()}
+      onClickCapture=${(e) => {
+        if (!onSelect) return;
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          e.preventDefault(); e.stopPropagation(); onSelect(e); return;
+        }
+        if (!e.target.closest('button, input, select')) onSelect(e);
+      }}
       draggable=${draggable ? 'true' : 'false'}
       title=${cardTitle}
       onDragStart=${(e) => { if (!draggable) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}

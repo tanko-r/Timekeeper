@@ -1249,3 +1249,48 @@ test('a finalized or moved entry does not drag its old timer’s clock around', 
     assert.deepEqual(moved.timers_synced, []);
     assert.equal((await t.fetchJson('GET', '/api/timers')).body[0].elapsed_seconds, 3600);
   }));
+
+// Batch delete (2026-08-06 feedback: multi-select timers, right-click, delete
+// them in one go). One transaction, so a bad id in the list can't leave half
+// the selection deleted. Entries the timers already created are kept, exactly
+// as the single delete keeps them.
+test('POST /api/timers/batch-delete removes every listed timer in one transaction', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const mk = async (name) => (await t.fetchJson('POST', '/api/timers', { name, cm_id: cm.id })).body;
+    const a = await mk('Acme research');
+    const b = await mk('Acme calls');
+    const keep = await mk('Acme filing');
+
+    // a filed entry must survive its timer's deletion
+    await t.fetchJson('POST', `/api/timers/${a.id}/start`);
+    await t.fetchJson('POST', `/api/timers/${a.id}/stop`);
+    const before = t.db.prepare('SELECT COUNT(*) n FROM entries WHERE deleted_at IS NULL').get().n;
+
+    const res = await t.fetchJson('POST', '/api/timers/batch-delete', { ids: [a.id, b.id] });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.deleted, 2);
+
+    const left = (await t.fetchJson('GET', '/api/timers')).body.map((x) => x.id);
+    assert.deepEqual(left, [keep.id]);
+    assert.equal(t.db.prepare('SELECT COUNT(*) n FROM entries WHERE deleted_at IS NULL').get().n, before,
+      'entries the deleted timers filed are kept');
+  }));
+
+test('POST /api/timers/batch-delete rejects a missing or empty id list', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme research', cm_id: cm.id })).body;
+    assert.equal((await t.fetchJson('POST', '/api/timers/batch-delete', {})).status, 400);
+    assert.equal((await t.fetchJson('POST', '/api/timers/batch-delete', { ids: [] })).status, 400);
+    assert.equal((await t.fetchJson('POST', '/api/timers/batch-delete', { ids: 'nope' })).status, 400);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body.length, 1);
+    assert.ok(timer.id);
+  }));
+
+test('POST /api/timers/batch-delete is all-or-nothing when an id does not exist', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme research', cm_id: cm.id })).body;
+    const res = await t.fetchJson('POST', '/api/timers/batch-delete', { ids: [timer.id, 999999] });
+    assert.equal(res.status, 404);
+    assert.equal((await t.fetchJson('GET', '/api/timers')).body.length, 1,
+      'nothing is deleted when the selection has gone stale');
+  }));

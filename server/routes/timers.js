@@ -370,6 +370,23 @@ export function timersRouter({ db, clock }) {
     res.json({ ok: true });
   });
 
+  // Multi-select delete (2026-08-06 feedback). All-or-nothing: a selection can
+  // go stale between the right-click and the confirm (another tab, a rollover),
+  // and half a delete is worse than none. Entries the timers filed are kept,
+  // same as the single delete above.
+  r.post('/batch-delete', (req, res) => {
+    const ids = (req.body || {}).ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'ids array required.' });
+    }
+    const missing = ids.filter((id) => !getTimer.get(id));
+    if (missing.length) return res.status(404).json({ error: 'Timer not found.' });
+    const del = db.prepare('DELETE FROM timers WHERE id=?');
+    let deleted = 0;
+    db.transaction(() => { for (const id of ids) deleted += del.run(id).changes; })();
+    res.json({ ok: true, deleted });
+  });
+
   r.post('/:id/duplicate', (req, res) => {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });

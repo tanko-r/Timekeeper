@@ -1050,6 +1050,80 @@ await step('drag: an open inline edit suspends it; hovering a card opens a drop 
     .map((e) => e.textContent).join('|') === want, { timeout: 4000 }, before.join('|'));
 });
 
+// 2026-08-06 feedback: multi-select timers, right-click for a batch menu with
+// a batch delete. Right-click on a single card already opened its menu.
+await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears', async () => {
+  await clickText('.timer-tab', 'All');
+  await waitFor('.timer-board .timer-card');
+  const before = await page.$$eval('.timer-board .timer-card', (els) => els.length);
+
+  // Throwaway timers, so the batch delete can't disturb the fixtures later
+  // steps count and search on. They land at the end of Ungrouped, in order,
+  // which is what makes the shift-click range below meaningful.
+  const probes = ['Batch probe A', 'Batch probe B', 'Batch probe C'];
+  for (const name of probes) {
+    await clickText('button', 'New timer');
+    await type('.modal input[placeholder="e.g. Acme — research"]', name);
+    await page.click('.modal .cmpicker input');
+    await sleep(250);
+    await clickText('.cmpicker-item .name', 'Acme');
+    await clickText('.modal button', 'Create');
+    await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+  }
+  await page.waitForFunction((want) => document.querySelectorAll('.timer-board .timer-card').length === want,
+    { timeout: 4000 }, before + 3);
+
+  // ctrl-click two cards — and the ctrl-click must NOT open the rename input
+  const ctrlClick = (name, shift = false) => page.evaluate((n, sh) => {
+    const card = [...document.querySelectorAll('.timer-board .timer-card')]
+      .find((c) => c.querySelector('.timer-name')?.textContent === n);
+    if (!card) throw new Error(`no card named ${n}`);
+    card.querySelector('.timer-name').dispatchEvent(new MouseEvent('click', {
+      bubbles: true, cancelable: true, ctrlKey: !sh, shiftKey: sh,
+    }));
+  }, name, shift);
+
+  await ctrlClick(probes[0]);
+  await ctrlClick(probes[1]);
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card.selected').length === 2
+    && !document.querySelector('.name-input')
+    && document.querySelector('.timer-selbar')?.textContent.includes('2 selected'), { timeout: 4000 });
+
+  // shift-click extends the range to the third card
+  await ctrlClick(probes[2], true);
+  await page.waitForFunction(() => document.querySelectorAll('.timer-card.selected').length === 3,
+    { timeout: 4000 });
+  await shot('multi-select');
+
+  // right-click inside the selection → BATCH menu, not the single-timer one
+  await page.evaluate((n) => {
+    const card = [...document.querySelectorAll('.timer-board .timer-card')]
+      .find((c) => c.querySelector('.timer-name')?.textContent === n);
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+  }, probes[0]);
+  await waitFor('.ctx-menu');
+  const menuText = await page.$eval('.ctx-menu', (el) => el.textContent);
+  if (!menuText.includes('3 timers selected')) throw new Error(`batch menu missing its header: ${menuText}`);
+  if (!menuText.includes('Delete 3 timers')) throw new Error(`batch menu missing batch delete: ${menuText}`);
+
+  await clickText('.ctx-menu .ctx-item', 'Delete 3 timers');
+  await waitFor('.modal');
+  await clickText('.modal button', 'Delete');
+  await page.waitForFunction((want) => document.querySelectorAll('.timer-board .timer-card').length === want
+    && !document.querySelector('.timer-selbar')
+    && ![...document.querySelectorAll('.timer-name')].some((el) => el.textContent.startsWith('Batch probe')),
+  { timeout: 4000 }, before);
+
+  // right-click on a lone card still opens the ordinary single-timer menu
+  await page.evaluate(() => document.querySelector('.timer-board .timer-card')
+    .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })));
+  await waitFor('.ctx-menu');
+  const single = await page.$eval('.ctx-menu', (el) => el.textContent);
+  if (!single.includes('Delete timer')) throw new Error(`single menu missing: ${single}`);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+});
+
 await step('/ opens the timer search bar; narrows in place; Esc restores', async () => {
   // dashboard route, body focus (not a card, not a form field) — `/` must
   // open the search bar rather than jumping to the Search view.
