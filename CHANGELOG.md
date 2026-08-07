@@ -10,6 +10,10 @@ Newest entries first.
 
 ## 2026-08-06
 
+- Fixed mouse-selecting text inside a timer's inline name/clock edit starting
+  a drag instead — the card is no longer draggable while an edit is open. Also
+  added Trello-style relocation feedback: the dragged card fades and a dashed
+  slot opens where it will land.
 - Fixed AI rewrite putting shorthand back into text that had already been
   expanded ("A. Hollowell" → "ah"). The abbreviation glossary is now written
   one-directionally and is dropped entirely from rewrite prompts, which get

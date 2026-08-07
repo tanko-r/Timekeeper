@@ -28,6 +28,14 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [importing, setImporting] = useState(false);
   const [taskCodes, setTaskCodes] = useState([]);
   const dragId = useRef(null);
+  // Trello-style relocation feedback (2026-08-05 feedback): the card being
+  // dragged fades, and an empty slot opens in front of the card the drop will
+  // land before — so the grid visibly makes room instead of the timer
+  // silently reappearing somewhere else. Rendering-only; `dragId` above is
+  // still what dropOn reads.
+  const [draggingId, setDraggingId] = useState(null);
+  const [dropBeforeId, setDropBeforeId] = useState(null);
+  const endDrag = () => { setDraggingId(null); setDropBeforeId(null); };
 
   // Grouping view (spec §3.4/§4): 'group' = user-defined timer_groups,
   // 'client' = the matter's client, 'flat' = one list. Persisted per-browser.
@@ -717,8 +725,8 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       const showHead = tabsEnabled ? effectiveTab === 'all' : grouping === 'client';
       return html`
         <div key=${sec.key} class="timer-section"
-          onDragOver=${byGroupMode ? (e) => e.preventDefault() : undefined}
-          onDrop=${byGroupMode ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); } : undefined}>
+          onDragOver=${byGroupMode ? (e) => { e.preventDefault(); setDropBeforeId(null); } : undefined}
+          onDrop=${byGroupMode ? (e) => { e.preventDefault(); endDrag(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); } : undefined}>
           ${showHead ? html`
             <div class="group-head">
               ${group ? html`
@@ -732,17 +740,30 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
                 <span class="muted small">${list.length}</span>`}
             </div>` : null}
           <div class="timer-grid">
-            ${list.map((t) => html`
-              <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
-                canDrag=${byGroupMode}
-                tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
-                roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
-                onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
-                onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
-                onRename=${(name) => guard(api.patch(`/api/timers/${t.id}`, { name }).then(reload))}
-                onMenu=${(x, y) => setMenu({ x, y, timer: t })}
-                onDragStart=${() => { dragId.current = t.id; }}
-                onDropOn=${() => guard(dropOn({ kind: 'timer', timer: t }))} />`)}
+            ${list.flatMap((t) => {
+              const dropHere = () => { endDrag(); guard(dropOn({ kind: 'timer', timer: t })); };
+              const card = html`
+                <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                  canDrag=${byGroupMode} dragging=${draggingId === t.id}
+                  tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
+                  roundMode=${settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up')}
+                  onStart=${() => guard(start(t))} onStop=${() => guard(stop(t))}
+                  onDelta=${(d) => guard(clockDelta(t, d))} onSet=${(h) => guard(clockSet(t, h))}
+                  onRename=${(name) => guard(api.patch(`/api/timers/${t.id}`, { name }).then(reload))}
+                  onMenu=${(x, y) => setMenu({ x, y, timer: t })}
+                  onDragStart=${() => { dragId.current = t.id; setDraggingId(t.id); }}
+                  onDragEnd=${endDrag}
+                  onDragOverCard=${() => setDropBeforeId(draggingId === t.id ? null : t.id)}
+                  onDropOn=${dropHere} />`;
+              // The slot stands where the dragged card will land — dropOn
+              // inserts BEFORE the target, so the slot goes there too. It
+              // takes the same drop as the card behind it, since the pointer
+              // is over the slot by the time the user lets go.
+              return dropBeforeId === t.id && draggingId !== null ? [html`
+                <div key=${`slot-${t.id}`} class="timer-drop-slot" aria-hidden="true"
+                  onDragOver=${(e) => { e.preventDefault(); e.stopPropagation(); }}
+                  onDrop=${(e) => { e.preventDefault(); e.stopPropagation(); dropHere(); }}></div>`, card] : [card];
+            })}
             ${byGroupMode && list.length === 0 ? html`<div class="muted small" style=${{ padding: '8px' }}>Drop timers here</div>` : null}
           </div>
         </div>`;
@@ -809,7 +830,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging = false, tabbable = false, onFocusCard, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDragEnd, onDragOverCard, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -838,15 +859,25 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, tabbable
     ? `${timer.name} — ${timer.cm_short_name} · ${timer.cm_number}${timer.task_code ? ` · ${timer.task_code}` : ''} — ${fmtClock(secs)} elapsed`
     : `${timer.name} — no matter yet (time files to an unassociated entry; Edit timer to assign one) — ${fmtClock(secs)} elapsed`;
 
+  // An inline edit is open, so the card must NOT be draggable: a draggable
+  // ancestor swallows the mousedown-drag that selects text inside an input, so
+  // trying to select part of the name started relocating the timer instead
+  // (2026-08-05 feedback). Dropping `draggable` for the duration hands the
+  // gesture back to the browser's own text selection.
+  const editingText = editingName || editingClock;
+  const draggable = canDrag && !editingText;
+
   return html`
-    <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '') + (timer.cm_id ? '' : ' unassigned')}
+    <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '')
+      + (timer.cm_id ? '' : ' unassigned') + (dragging ? ' dragging' : '') + (editingText ? ' editing' : '')}
       tabIndex=${tabbable ? 0 : -1}
       data-timer-id=${timer.id}
       onFocus=${() => onFocusCard && onFocusCard()}
-      draggable=${canDrag ? 'true' : 'false'}
+      draggable=${draggable ? 'true' : 'false'}
       title=${cardTitle}
-      onDragStart=${(e) => { if (!canDrag) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
-      onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); }}
+      onDragStart=${(e) => { if (!draggable) { e.preventDefault(); return; } e.dataTransfer.effectAllowed = 'move'; onDragStart(); }}
+      onDragEnd=${() => onDragEnd && onDragEnd()}
+      onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); if (onDragOverCard) onDragOverCard(); }}
       onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
       onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
       ${editingName ? html`

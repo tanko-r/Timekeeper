@@ -989,6 +989,67 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await clickText('.seg button', 'By group'); // restore for later steps
 });
 
+// 2026-08-05 feedback, both halves: mouse-selecting text in an inline edit
+// used to start a drag (a draggable ancestor eats the selection gesture), and
+// a relocation gave no hint where the timer would land.
+await step('drag: an open inline edit suspends it; hovering a card opens a drop slot', async () => {
+  await clickText('.timer-tab', 'All');
+  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length >= 2,
+    { timeout: 4000 });
+
+  // (a) an open rename input takes the card out of the drag system entirely
+  await page.click('.timer-board .timer-card .timer-name');
+  await waitFor('.timer-board .timer-card .name-input');
+  const whileEditing = await page.$eval('.timer-board .timer-card',
+    (el) => ({ draggable: el.getAttribute('draggable'), editing: el.classList.contains('editing') }));
+  if (whileEditing.draggable !== 'false' || !whileEditing.editing) {
+    throw new Error(`card still draggable while renaming: ${JSON.stringify(whileEditing)}`);
+  }
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.timer-board .name-input'), { timeout: 4000 });
+  await page.waitForFunction(() =>
+    document.querySelector('.timer-board .timer-card').getAttribute('draggable') === 'true',
+    { timeout: 4000 });
+
+  // (b) drag the SECOND card over the first: a slot opens immediately before
+  // the first card (dropOn inserts before its target), and the dragged card
+  // fades. Then drop, confirm the reorder, and drag it back so later steps
+  // see the original order.
+  const names = () => page.$$eval('.timer-board .timer-card .timer-name', (els) => els.map((e) => e.textContent));
+  const before = await names();
+  const dragCardToCard = (fromName, toName, drop) => page.evaluate((from, to, doDrop) => {
+    const card = (n) => [...document.querySelectorAll('.timer-board .timer-card')]
+      .find((c) => c.querySelector('.timer-name')?.textContent === n);
+    const src = card(from); const tgt = card(to);
+    if (!src || !tgt) throw new Error(`drag: missing card (${from}=${!!src}, ${to}=${!!tgt})`);
+    const dt = new DataTransfer();
+    src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    tgt.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    if (doDrop) tgt.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+  }, fromName, toName, drop);
+
+  await dragCardToCard(before[1], before[0], false);
+  await page.waitForFunction((firstName) => {
+    const slot = document.querySelector('.timer-board .timer-drop-slot');
+    const next = slot && slot.nextElementSibling;
+    return !!slot
+      && next?.classList.contains('timer-card')
+      && next.querySelector('.timer-name')?.textContent === firstName
+      && document.querySelectorAll('.timer-board .timer-card.dragging').length === 1;
+  }, { timeout: 4000 }, before[0]);
+  await shot('drop-slot');
+
+  await dragCardToCard(before[1], before[0], true);
+  await page.waitForFunction((want) => {
+    const now = [...document.querySelectorAll('.timer-board .timer-card .timer-name')].map((e) => e.textContent);
+    return now[0] === want && !document.querySelector('.timer-drop-slot');
+  }, { timeout: 4000 }, before[1]);
+
+  await dragCardToCard(before[0], before[1], true);   // put it back
+  await page.waitForFunction((want) => [...document.querySelectorAll('.timer-board .timer-card .timer-name')]
+    .map((e) => e.textContent).join('|') === want, { timeout: 4000 }, before.join('|'));
+});
+
 await step('/ opens the timer search bar; narrows in place; Esc restores', async () => {
   // dashboard route, body focus (not a card, not a form field) — `/` must
   // open the search bar rather than jumping to the Search view.

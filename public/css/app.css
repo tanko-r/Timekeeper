@@ -307,6 +307,22 @@ table.tk tr.client-row td {
   position: relative; cursor: grab; min-width: 0; min-height: 32px;
 }
 .timer-card:active { cursor: grabbing; }
+/* An inline edit is open: the card is not draggable (see timergrid.js), so
+   stop advertising a grab and let the caret be a caret. */
+.timer-card.editing, .timer-card.editing:active { cursor: default; }
+/* Relocation feedback (2026-08-05 feedback, Trello-style): the card being
+   dragged fades out of the way, and an empty slot opens in front of the card
+   the drop will land before, so the board visibly makes room. */
+.timer-card.dragging { opacity: 0.35; }
+.timer-drop-slot {
+  min-height: 32px; border: 2px dashed var(--accent); border-radius: 7px;
+  background: var(--surface-2); animation: drop-slot-open 110ms ease-out;
+}
+@keyframes drop-slot-open {
+  from { min-height: 0; opacity: 0; }
+  to { min-height: 32px; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .timer-drop-slot { animation: none; } }
 .timer-card.running { border-color: var(--status-good); box-shadow: 0 0 0 1px var(--status-good) inset; }
 .timer-name {
   font-weight: 650; font-size: 13px; flex: 2 1 70px; min-width: 0; overflow: hidden;
