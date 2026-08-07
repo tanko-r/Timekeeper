@@ -8,6 +8,14 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-06
+
+- Renamed the first field of the New client/matter modal from "Client" to
+  "Client number", and reworded its hint and placeholder to lead with the
+  6-digit number ("Type the 6-digit number — or type a name to search
+  existing clients"). The field always accepted both a number and a name
+  search; the generic "Client" label made it read as a free-text name box.
+
 ## 2026-08-04
 
 - Fixed the "Run /todo" sidebar button never returning to neutral after a

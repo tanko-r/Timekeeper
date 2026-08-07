@@ -243,11 +243,11 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   return html`
     <${Modal} title="New client/matter" onClose=${onClose}>
       <form onSubmit=${save} class="grid">
-        <${Field} label="Client" hint=${effective
+        <${Field} label="Client number" hint=${effective
           ? `Existing client ${effective.client_number}${effective.name ? '' : ' (unnamed)'}`
           : newNumber ? `New client ${newNumber} — created together with this matter`
           : wantNew ? 'Now type the 6-digit client number'
-          : 'Search by name or 6-digit number — or pick “＋ New client…” below'}>
+          : 'Type the 6-digit number — or type a name to search existing clients'}>
           ${picked ? html`
             <button type="button" class="btn" style=${{ justifyContent: 'space-between' }} title="Change client"
               onClick=${() => { setPicked(null); setClientQ(''); setListOpen(true); }}>
@@ -256,7 +256,7 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
             </button>` : html`
             <div class="cmpicker">
               <input type="search" data-nc-client value=${clientQ} autoFocus
-                placeholder=${wantNew ? '6-digit client number' : 'e.g. Meridian or 100004'}
+                placeholder=${wantNew ? '6-digit client number' : 'e.g. 100004 — or a name to search'}
                 onFocus=${() => setListOpen(true)}
                 onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); }}
                 onBlur=${() => setTimeout(() => setListOpen(false), 150)} />
