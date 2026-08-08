@@ -247,3 +247,21 @@ test('client_name locks to the number at creation — a later matter never renam
   assert.equal(second.status, 201);
   assert.equal(second.body.client_name, 'Initech', 'existing client name kept — matters never rename');
 }));
+
+test('GET /api/cms/export returns a CSV of every matter, archived included', () => withServer(async (t) => {
+  await t.fetchJson('POST', '/api/cms', {
+    cm_number: '600001-000001', short_name: 'Active matter', client_name: 'Initech',
+  });
+  const old = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '600002-000001', short_name: 'Retired matter', billable: 0,
+  });
+  await t.fetchJson('PATCH', `/api/cms/${old.body.id}`, { status: 'archived' });
+
+  const res = await t.fetchJson('GET', '/api/cms/export');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.count, 2, 'archived matters are part of the roster');
+  const lines = res.body.csv.trim().split('\r\n');
+  assert.equal(lines[0].split(',')[0], 'client_number');
+  assert.match(lines[1], /^600001,Initech,000001,600001-000001,Active matter,billable,active,/);
+  assert.match(lines[2], /^600002,,000001,600002-000001,Retired matter,non-billable,archived,/);
+}));

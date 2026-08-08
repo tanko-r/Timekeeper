@@ -8,6 +8,13 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-08
+
+- Clients & Matters: new **Export CSV** button downloads the whole roster —
+  every matter, archived included — via `GET /api/cms/export`. Also produced
+  the current roster as a Gmail draft to the work address, held unsent for
+  review.
+
 ## 2026-08-06
 
 - Added timer multi-select: Ctrl/⌘-click toggles a card, Shift-click extends

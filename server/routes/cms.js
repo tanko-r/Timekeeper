@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { validateCmNumber } from '../lib/validation.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { rankMatters } from '../lib/matterSearch.js';
+import { buildMattersCsv } from '../lib/mattersExport.js';
 
 const CM_COLS = `matters.id, matters.cm_number, matters.short_name, matters.billable,
   matters.status, matters.favorite, matters.last_used_at, matters.created_at, matters.updated_at,
@@ -31,6 +32,19 @@ export function cmsRouter({ db, clock }) {
   r.get('/picker', (req, res) => {
     const q = String(req.query.q || '').trim();
     res.json(rankMatters(q, pickerStmt.all()));
+  });
+
+  // Roster export: the full client/matter list, archived included. The roster
+  // is a reference document — leaving archived matters out would make it a
+  // partial answer to "what are my numbers?". Returns { csv } like the time
+  // export, so the browser saves it with downloadText.
+  r.get('/export', (req, res) => {
+    const rows = db.prepare(`
+      SELECT ${CM_COLS},
+        (SELECT COUNT(*) FROM entries e WHERE e.cm_id = matters.id AND e.deleted_at IS NULL) AS entry_count
+      ${CM_FROM}
+    `).all();
+    res.json({ count: rows.length, csv: buildMattersCsv(rows) });
   });
 
   r.get('/', (req, res) => {

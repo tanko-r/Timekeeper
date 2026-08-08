@@ -1,4 +1,4 @@
-import { api } from '/js/api.js';
+import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useAsync, Spinner, ErrorBox, emitToast, BillableBadge, fmtStamp, Icon, clientLabel, React,
 } from '/js/ui.js';
@@ -50,6 +50,19 @@ export function CmsView({ refreshKey, bumpRefresh }) {
     reload();
   }
 
+  // Roster export — always the full list (archived included), regardless of the
+  // filter box or the "show archived" checkbox. Those two shape the screen; the
+  // file is the reference document.
+  async function exportCsv() {
+    try {
+      const r = await api.get('/api/cms/export');
+      downloadText('client-matters.csv', r.csv);
+      emitToast(`Exported ${r.count} client-matter${r.count === 1 ? '' : 's'}`);
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+
   async function del(cm) {
     try {
       await api.del(`/api/cms/${cm.id}`);
@@ -67,6 +80,8 @@ export function CmsView({ refreshKey, bumpRefresh }) {
         <input type="checkbox" checked=${showArchived} onChange=${(e) => setShowArchived(e.target.checked)} />
         Show archived
       </label>
+      <button class="btn" title="Download every client-matter, archived included"
+        onClick=${exportCsv}><${Icon} name="download" size=${16} /> Export CSV</button>
       <button class="btn btn-primary" onClick=${() => setEditing('new')}><${Icon} name="plus" size=${16} /> New CM</button>
     </div>
 
