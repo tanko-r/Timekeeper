@@ -10,15 +10,17 @@ Newest entries first.
 
 ## 2026-08-11
 
-- Fixed **Expand → split into tasks** damaging a narrative it was given.
-  Capitalisation is now restored from your own text after the model answers,
-  so "E. Hodgson" and "Second Amendment to Option Agreement" stop coming back
-  case-folded. The task-billing amounts are stripped out of what the model
-  reads. And when the narrative you hand it is already split into allocated
-  clauses, those clauses are now the answer — every one survives, in your
-  order and your wording, with your hours — while the model contributes only
-  the task codes. Measured on the reported entry, 1 run in 3 used to drop a
-  task line and 2 in 3 reordered them; both are now impossible.
+- Fixed **Expand → split into tasks** returning short, collapsed task lines
+  when plain Expand on the same text read fine. Two causes, both structural.
+  First, the split was the only AI feature in the app running with **no
+  examples at all** — the code assembled the same demonstrations plain Expand
+  uses and then dropped them before sending. Second, when the narrative was
+  already divided into clauses, the split asked the model to work out a
+  division you had already made; it now asks for a rewrite of each clause
+  instead, one for one. Measured on the reported entry, the old prompt
+  returned four task lines for five clauses on a third of runs and reordered
+  or merged them on others. The new one returned five for five, in order,
+  three runs out of three.
 
 - Fixed the task lines refusing to take time you just added to the entry
   total. Raising **Total hours** left an unallocated remainder, but every

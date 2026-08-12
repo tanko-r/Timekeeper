@@ -86,6 +86,90 @@ test('ai expand: narrative + task split allocated to tenths of the total', async
   } finally { await t.close(); await stub.close(); }
 });
 
+// 2026-08-11 feedback. Two different questions share one button: split this,
+// or rewrite what I already split. The split contract asked an 8B to work out
+// a division the attorney had already made, and it dropped a clause on a
+// third of measured runs, reordered on others, and merged two into one.
+// Sending `clauses` switches the request to a 1:1 rewrite.
+
+const REWRITE_CHAT = JSON.stringify({
+  tasks: [
+    { task_code: 'Review', fragment: 'review and analyze lease' },
+    { task_code: 'Draft', fragment: 'draft revisions to Easement Amendment' },
+    { task_code: 'Correspondence', fragment: 'email with client regarding same' },
+  ],
+});
+
+test('ai expand: `clauses` switches to the numbered 1:1 rewrite contract', async () => {
+  const stub = await startStubOllama(REWRITE_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'Review lease (0.5); draft easement amendment (0.4); email client (0.1).',
+      totalHours: 1.0,
+      clauses: ['Review lease (0.5)', 'draft easement amendment (0.4)', 'email client (0.1)'],
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.tasks.length, 3);
+    assert.equal(r.body.tasks[2].fragment, 'email with client regarding same');
+
+    const system = stub.state.lastChat.messages[0].content;
+    assert.ok(system.includes('already divided this work into 3 tasks'), 'rewrite contract used');
+    assert.ok(system.includes('exactly 3 tasks'), 'the count is pinned to the clauses');
+    assert.ok(!system.includes('all shares sum to 1'), 'the split contract is gone');
+
+    // The clauses arrive numbered, with the app's own bookkeeping stripped out.
+    const user = stub.state.lastChat.messages.at(-1).content;
+    assert.match(user, /1\. Review lease\n2\. draft easement amendment\n3\. email client/);
+    assert.ok(!/\(0\.5\)/.test(user), 'task-billing amounts never reach the model');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai expand: a rewrite answer needs no narrative field', async () => {
+  // The rewrite contract does not ask for one — the attorney already wrote it.
+  const stub = await startStubOllama(REWRITE_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'a; b; c', clauses: ['a', 'b', 'c'],
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.narrative, '');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai expand: a single clause is not a split, so the normal contract stands', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'lease amendment work', clauses: ['lease amendment work'],
+    });
+    assert.equal(r.status, 200);
+    assert.ok(stub.state.lastChat.messages[0].content.includes('all shares sum to 1'));
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai expand: the few-shot demonstrations are spliced in, as /ai/narrate does', async () => {
+  // The split path was the only AI path in the app running with no
+  // demonstrations at all — buildVoiceContext made them and the route
+  // dropped them. That is why plain Expand read well and the split did not.
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    await t.fetchJson('POST', '/api/ai/expand', { brief: 'rev lease; conf w client' });
+    const msgs = stub.state.lastChat.messages;
+    assert.equal(msgs[0].role, 'system');
+    assert.equal(msgs.at(-1).role, 'user');
+    assert.ok(msgs.length > 2, 'demonstrations sit between the system prompt and the request');
+    assert.ok(msgs.slice(1, -1).some((m) => m.role === 'assistant'), 'each demonstration has an answer');
+  } finally { await t.close(); await stub.close(); }
+});
+
 test('ai expand is refused when disabled; unreachable ollama is a clean 502', async () => {
   const t = await startTestServer();
   try {

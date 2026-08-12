@@ -178,18 +178,20 @@ export function splitNarrativeSegments(text) {
 // attorney has ALREADY made is a lossy round trip, and a lost line is a lost
 // billed task.
 //
-// So the clauses win: every one survives, in the attorney's order. The model
-// keeps the one job it does well here — naming the task code — and each of
-// its tasks is claimed by at most one clause, best overlap first. Hours come
-// from the attorney's own allocation when the narrative carried one,
-// otherwise from the matched task.
+// The clauses therefore fix the SHAPE of the answer — how many task lines
+// there are, in what order, and what each is worth — while the model still
+// writes the WORDING. Expanding and rewriting is the point of the button, so
+// a matched clause always takes the model's text; the attorney's own clause
+// is the fallback that rescues one the model dropped, so no described work
+// goes unbilled. Each model task is claimed by at most one clause, best
+// overlap first. Hours come from the attorney's own allocation when the
+// narrative carried one, otherwise from the matched task.
 //
-// `prefer` picks whose WORDING survives, which differs by what the seed was:
-//   'clause' — the seed was finished prose the attorney already wrote. His
-//     wording is the point; the model has nothing to add to it.
-//   'model'  — the seed was shorthand. The expansion IS the value, so a
-//     matched clause takes the model's wording and only an unmatched clause
-//     falls back to the shorthand, so that no described work goes unbilled.
+// Deliberately NOT done here: forcing the attorney's capitalisation back onto
+// the model's text. He writes shorthand with erratic capitals ("rev Lease and
+// easement"), so his casing is not an authority to restore — the model
+// lowercasing it to "review and analyze lease and easement" is the correct
+// answer, and a restore rule would put the typos into the bill.
 
 const STOP = new Set(['a', 'an', 'and', 'the', 'to', 'of', 'for', 'with', 'in', 'on', 're']);
 
@@ -205,7 +207,7 @@ function overlap(a, b) {
   return hits;
 }
 
-export function alignTasksToClauses(clauses, tasks, { prefer = 'clause' } = {}) {
+export function alignTasksToClauses(clauses, tasks) {
   const list = clauses || [];
   const pool = (tasks || []).map((t, i) => ({ t, i, taken: false }));
 
@@ -229,7 +231,7 @@ export function alignTasksToClauses(clauses, tasks, { prefer = 'clause' } = {}) 
 
   return list.map((c, ci) => ({
     task_code: (matched[ci] && matched[ci].task_code) || '',
-    fragment: prefer === 'model' && matched[ci] && cleanFragment(matched[ci].fragment)
+    fragment: matched[ci] && cleanFragment(matched[ci].fragment)
       ? matched[ci].fragment
       : c.fragment,
     hours: c.duration != null ? c.duration

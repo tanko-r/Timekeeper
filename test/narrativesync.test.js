@@ -316,11 +316,12 @@ test('rebalanceHours: headroom is ignored when the caller passes no total', () =
 // ---------- alignTasksToClauses ----------
 
 // 2026-08-11 feedback: "Expand → split into tasks … seems to delete tasks".
-// Measured against llama3.1:8b on the reported 5-clause narrative: 1 run in 3
-// returned 4 tasks, and 2 runs in 3 returned them in a different order than
-// the attorney wrote. Handing an ALREADY-allocated narrative to the model to
-// re-split is a lossy round trip, so the clauses are taken from the attorney's
-// own text and the model keeps only the job it is good at — the task code.
+// Measured against llama3.1:8b on the reported 5-clause narrative, 3 runs
+// each: with and without few-shot demonstrations it returned 4 tasks for 5
+// clauses on some runs, and sometimes reordered them. The demonstrations fix
+// the wording (see server/routes/ai.js) but not the arithmetic, so the
+// clauses fix the SHAPE — count, order, hours — while the model still writes
+// the words.
 
 const CLAUSES = [
   { fragment: 'Review message from E. Hodgson', duration: 0.1 },
@@ -331,20 +332,42 @@ const CLAUSES = [
 ];
 
 test('alignTasksToClauses: a dropped + reordered model answer still yields every clause in order', () => {
-  // Exactly what run 2 of the repro returned: "review message" gone, order shuffled.
+  // Exactly what a measured run returned: "review message" gone, order shuffled.
   const tasks = [
-    { task_code: 'Correspondence', fragment: 'email to E. Hodgson', hours: 0.3 },
+    { task_code: 'Correspondence', fragment: 'email with E. Hodgson regarding same', hours: 0.3 },
     { task_code: 'Draft', fragment: 'draft revisions to Second Amendment to Option Agreement', hours: 0.6 },
     { task_code: 'Draft', fragment: 'draft updates to easement template', hours: 0.2 },
     { task_code: 'Draft', fragment: 'draft amendment to Memorandum', hours: 0.2 },
   ];
   const out = alignTasksToClauses(CLAUSES, tasks);
   assert.equal(out.length, 5);
-  assert.deepEqual(out.map((t) => t.fragment), CLAUSES.map((c) => c.fragment));
+  // The model's wording survives wherever it wrote one — including its own
+  // casing choice ("easement template") and its rewrite of the email clause.
+  assert.deepEqual(out.map((t) => t.fragment), [
+    'Review message from E. Hodgson', // the clause it dropped, rescued verbatim
+    'draft revisions to Second Amendment to Option Agreement',
+    'draft updates to easement template',
+    'draft amendment to Memorandum',
+    'email with E. Hodgson regarding same',
+  ]);
   assert.deepEqual(out.map((t) => t.task_code),
     ['', 'Draft', 'Draft', 'Draft', 'Correspondence']);
   // the attorney's own allocations win over the model's shares
   assert.deepEqual(out.map((t) => t.hours), [0.1, 0.7, 0.2, 0.2, 0.1]);
+});
+
+test('alignTasksToClauses: the model may rewrite every clause, and does', () => {
+  const clauses = [
+    { fragment: 'rev Lease and easement', duration: null },
+    { fragment: 'tc w J. Larson re Escrow', duration: null },
+  ];
+  const tasks = [
+    { task_code: 'Review', fragment: 'review and analyze lease and easement', hours: 0.6 },
+    { task_code: 'Call/Conference', fragment: 'telephone conference with J. Larson regarding escrow', hours: 0.6 },
+  ];
+  // The attorney's erratic capitals ("Lease", "Escrow") are NOT preserved —
+  // the model's rendering is the billing narrative.
+  assert.deepEqual(alignTasksToClauses(clauses, tasks), tasks);
 });
 
 test('alignTasksToClauses: a model task is claimed by one clause only', () => {
@@ -359,9 +382,9 @@ test('alignTasksToClauses: a model task is claimed by one clause only', () => {
 
 test('alignTasksToClauses: a clause with no allocation falls back to the matched task hours', () => {
   const clauses = [{ fragment: 'review the Lease', duration: null }];
-  const tasks = [{ task_code: 'Review', fragment: 'review lease', hours: 0.4 }];
+  const tasks = [{ task_code: 'Review', fragment: 'review and analyze lease', hours: 0.4 }];
   assert.deepEqual(alignTasksToClauses(clauses, tasks), [
-    { task_code: 'Review', fragment: 'review the Lease', hours: 0.4 },
+    { task_code: 'Review', fragment: 'review and analyze lease', hours: 0.4 },
   ]);
 });
 
@@ -379,9 +402,10 @@ test('alignTasksToClauses: no model tasks at all still returns the clauses intac
   assert.deepEqual(out.map((t) => t.task_code), ['', '', '', '', '']);
 });
 
-test("alignTasksToClauses: prefer 'model' keeps the expansion but rescues the lost clause", () => {
-  // The shorthand case, measured: "draft psa; review loi; email w client re
-  // title co comments" came back as two tasks — the email clause was gone.
+test('alignTasksToClauses: the expansion is kept and the lost clause is rescued', () => {
+  // The shorthand case, measured before the few-shot fix: "draft psa; review
+  // loi; email w client re title co comments" came back as two tasks — the
+  // email clause was gone.
   const clauses = [
     { fragment: 'draft psa', duration: null },
     { fragment: 'review loi', duration: null },
@@ -391,18 +415,17 @@ test("alignTasksToClauses: prefer 'model' keeps the expansion but rescues the lo
     { task_code: 'Draft', fragment: 'draft Purchase and Sale Agreement', hours: 0.8 },
     { task_code: 'Review', fragment: 'review Letter of Intent', hours: 0.7 },
   ];
-  const out = alignTasksToClauses(clauses, tasks, { prefer: 'model' });
-  assert.deepEqual(out, [
+  assert.deepEqual(alignTasksToClauses(clauses, tasks), [
     { task_code: 'Draft', fragment: 'draft Purchase and Sale Agreement', hours: 0.8 },
     { task_code: 'Review', fragment: 'review Letter of Intent', hours: 0.7 },
     { task_code: '', fragment: 'email w client re title co comments', hours: null },
   ]);
 });
 
-test("alignTasksToClauses: prefer 'model' still yields to the attorney's own allocation", () => {
+test("alignTasksToClauses: the attorney's own allocation outranks the model's share", () => {
   const clauses = [{ fragment: 'rev lease', duration: 0.4 }];
   const tasks = [{ task_code: 'Review', fragment: 'review and analyze lease', hours: 1.1 }];
-  assert.deepEqual(alignTasksToClauses(clauses, tasks, { prefer: 'model' }), [
+  assert.deepEqual(alignTasksToClauses(clauses, tasks), [
     { task_code: 'Review', fragment: 'review and analyze lease', hours: 0.4 },
   ]);
 });

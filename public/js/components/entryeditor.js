@@ -444,30 +444,43 @@ export function EntryEditor({ spec, settings, onClose }) {
   // Structured task split — the only remaining /ai/expand caller, gated
   // behind the "split into tasks" checkbox (default unchecked).
   //
-  // When the seed is an ALREADY-allocated narrative (AUTO builds it with a
-  // "(x.x)" per clause), the split has in effect already been made and asking
-  // the model to make it again only loses or reorders clauses — the
-  // 2026-08-11 report. In that case the attorney's clauses are the answer and
-  // the model contributes the task codes (alignTasksToClauses). Shorthand,
-  // which never carries an allocation, still goes to the model whole: that is
-  // the case where there is something to expand.
+  // Two different questions wear the same button (2026-08-11 report).
+  //
+  // A seed the attorney has ALREADY divided — an AUTO narrative, which writes
+  // a "(x.x)" per clause — needs no splitting; it needs each clause rewritten.
+  // Sending `clauses` asks the server for exactly that, one task per line, and
+  // the attorney's own hours ride along untouched. Asking the model to work
+  // the division out again is what dropped a clause on a third of runs,
+  // reordered them on others, and merged two into one.
+  //
+  // Shorthand carries no allocation, so it goes whole and the model does the
+  // splitting — that is the case where there is something to split.
+  // alignTasksToClauses is then only a backstop, for a model answer that came
+  // back with fewer tasks than the attorney described.
   async function aiExpand(seed) {
     setAiBusy(true);
     try {
+      const clauses = splitNarrativeSegments(seed);
+      const preSplit = containsTimeAmounts(seed) && clauses.length >= 2;
       const r = await api.post('/api/ai/expand', {
         brief: seed, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
         cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
+        ...(preSplit ? { clauses: clauses.map((c) => c.fragment) } : {}),
       });
-      const clauses = splitNarrativeSegments(seed);
-      // An allocated narrative is anchored outright — its clauses ARE the
-      // split. Shorthand is anchored only when the model came back with fewer
-      // tasks than the attorney described, purely to rescue the missing one;
-      // there the model's wording still wins, since expanding it is the point.
-      const allocated = containsTimeAmounts(seed) && clauses.length >= 2;
-      const lostOne = clauses.length >= 2 && r.tasks.length < clauses.length;
-      const resultTasks = allocated || lostOne
-        ? alignTasksToClauses(clauses, r.tasks, { prefer: allocated ? 'clause' : 'model' })
-        : r.tasks;
+      // A pre-split seed must come back with exactly one task per clause, so
+      // any other count falls back to matching. Shorthand only falls back when
+      // the model came back SHORT — coming back with more tasks than clauses
+      // is a legitimate finer split, and capping it would throw work away.
+      const mismatch = preSplit
+        ? r.tasks.length !== clauses.length
+        : (clauses.length >= 2 && r.tasks.length < clauses.length);
+      const resultTasks = mismatch
+        ? alignTasksToClauses(clauses, r.tasks)
+        : (preSplit
+          // 1:1 by position — the contract the server asked for, and the count
+          // matches, so the attorney's allocation maps straight across.
+          ? r.tasks.map((t, i) => ({ ...t, hours: clauses[i].duration ?? t.hours }))
+          : r.tasks);
       if (resultTasks.length > 0) {
         const even = splitTenthsEvenly(total || sum, resultTasks.length);
         update({

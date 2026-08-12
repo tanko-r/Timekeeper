@@ -4,7 +4,6 @@ import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts, stripTimeAmounts } from '../lib/timeAmounts.js';
-import { restoreSourceCasing } from '../lib/casing.js';
 import { pickExemplars, pickPairs, renderGlossary } from '../lib/exemplars.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
@@ -57,9 +56,29 @@ Respond with ONLY this JSON, no other text:
 {"narrative": "...", "tasks": [{"task_code": "...", "fragment": "...", "share": 0.5}]}`;
 }
 
-export function systemPrompt(codes, custom, voice) {
+// The contract for a split the attorney has ALREADY made (2026-08-11
+// feedback). When the narrative box holds "a; b; c" the semicolons are the
+// division — asking an 8B to work out the division again is what dropped a
+// clause on a third of runs, reordered them on others, and merged two into
+// one. Measured on llama3.1:8b, the same narrative under this 1:1 contract
+// came back as exactly N tasks, in order, three runs out of three. The model
+// is left with the job it is actually good at: writing the clause.
+export function rewriteContract(codes, n) {
+  return `The attorney has already divided this work into ${n} tasks and numbered them below. Rewrite each one as a billing-narrative clause, in the attorney's voice.
+
+- Answer with exactly ${n} tasks, one for each numbered line, in the same order.
+- Task 1 rewrites line 1, task 2 rewrites line 2, and so on. Each task covers its own line and no other.
+- task_code MUST be one of: ${codes.join(', ')}.
+- fragment: that line rewritten. Expand the attorney's abbreviations into full document names and keep every party, document and subject it names. Name nothing the line did not. The first word is a lowercase verb; no trailing punctuation.
+
+Respond with ONLY this JSON, no other text:
+{"tasks": [{"task_code": "...", "fragment": "..."}]}`;
+}
+
+export function systemPrompt(codes, custom, voice, { clauseCount = 0 } = {}) {
   const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  return `${instructions}${(voice && voice.prompt) || ''}\n\n${formatContract(codes)}`;
+  const contract = clauseCount >= 2 ? rewriteContract(codes, clauseCount) : formatContract(codes);
+  return `${instructions}${(voice && voice.prompt) || ''}\n\n${contract}`;
 }
 
 // When a call knows its matter, the roster + recurring phrases ride along so
@@ -304,12 +323,20 @@ export function aiRouter({ db }) {
     // "Expand → split into tasks" seeds from whatever the narrative box shows,
     // and an AUTO narrative shows a task-billing parenthetical per clause. The
     // amounts are the app's own bookkeeping — the model is being asked about
-    // the work, and `totalHours` already tells it the time (2026-08-11
-    // feedback). The UNSTRIPPED text stays as the casing authority below.
-    const typed = String(b.brief || '').trim();
-    const brief = stripTimeAmounts(typed);
+    // the work, and `totalHours` already tells it the time (2026-08-11).
+    const brief = stripTimeAmounts(String(b.brief || '').trim());
     if (!brief) return res.status(400).json({ error: 'Describe the work first.' });
     const totalHours = b.totalHours != null ? Number(b.totalHours) : null;
+
+    // The caller sends `clauses` when the attorney has ALREADY divided the
+    // work (an allocated narrative — see the entry editor). That switches the
+    // request from "split this" to "rewrite each of these", which is the only
+    // form llama3.1:8b answers reliably.
+    const clauses = (Array.isArray(b.clauses) ? b.clauses : [])
+      .map((c) => stripTimeAmounts(String(c || '').trim()))
+      .filter(Boolean)
+      .slice(0, 12);
+    const rewriting = clauses.length >= 2;
 
     const codes = db.prepare(
       'SELECT name FROM task_codes WHERE active=1 ORDER BY sort_order, id').all().map((x) => x.name);
@@ -330,14 +357,29 @@ export function aiRouter({ db }) {
             // The voice block sits before the JSON contract so the format
             // rules stay last and closest to the request — the exemplars
             // teach register, the contract still owns the response shape.
-            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+            // The few-shot pairs, which this route built and then dropped on
+            // the floor until 2026-08-11. /ai/narrate has always spliced them
+            // in, and that is the whole reason plain Expand reads well while
+            // Expand → split into tasks did not: the split was the ONLY AI
+            // path in the app running with no demonstrations at all. Measured
+            // on llama3.1:8b, adding them turned "draft psa; review loi; email
+            // w client re title co comments" from two tasks (the email clause
+            // silently gone) into three, properly expanded, and stopped the
+            // model answering in gerunds and inventing a person who appears
+            // nowhere in the brief. They go AFTER the system message for the
+            // same reason as in buildNarrateMessages — prior exchanges to
+            // imitate, not instructions to follow.
+            ...voice.turns,
             {
               role: 'user',
               content: [
                 matterCtx,
-                totalHours
-                  ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
-                  : `Work done: ${brief}`,
+                rewriting
+                  ? clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')
+                  : (totalHours
+                    ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
+                    : `Work done: ${brief}`),
               ].filter(Boolean).join('\n\n'),
             },
           ],
@@ -356,20 +398,17 @@ export function aiRouter({ db }) {
     }
 
     const parsed = parseJsonLoose(content);
-    if (!parsed || typeof parsed.narrative !== 'string') {
+    const rawTasks = parsed && Array.isArray(parsed.tasks) ? parsed.tasks : [];
+    // The rewrite contract asks for tasks only — there is no narrative to
+    // write, because the attorney already wrote it. The split contract still
+    // has to produce one.
+    const unusable = !parsed || (rewriting ? rawTasks.length === 0 : typeof parsed.narrative !== 'string');
+    if (unusable) {
       return res.status(502).json({ error: 'ai_bad_response', message: 'Model returned unusable output — try again.' });
     }
-    const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-    // The contract asks for a fragment that STARTS lowercase, and llama3.1:8b
-    // reads that as "lowercase the clause" — "E. Hodgson" came back
-    // "e hodgson", "Second Amendment to Option Agreement" came back all
-    // lowercase (2026-08-11 feedback). The attorney's own capitalisation is
-    // sitting right there in the brief, so it is restored here rather than
-    // argued for in the prompt. Restoring from `typed` (pre-strip) costs
-    // nothing and keeps the authority as close to what David wrote as possible.
-    const tasks = rawTasks.slice(0, 8).map((t) => ({
+    const tasks = rawTasks.slice(0, rewriting ? clauses.length : 8).map((t) => ({
       task_code: codes.includes(t.task_code) ? t.task_code : (codes[0] || ''),
-      fragment: restoreSourceCasing(String(t.fragment || '').trim(), typed).slice(0, 400),
+      fragment: String(t.fragment || '').trim().slice(0, 400),
       share: Number(t.share) > 0 ? Number(t.share) : 0,
     }));
     const hours = totalHours && tasks.length
@@ -377,7 +416,7 @@ export function aiRouter({ db }) {
       : null;
 
     res.json({
-      narrative: parsed.narrative.trim(),
+      narrative: typeof parsed.narrative === 'string' ? parsed.narrative.trim() : '',
       tasks: tasks.map((t, i) => ({
         task_code: t.task_code,
         fragment: t.fragment,
