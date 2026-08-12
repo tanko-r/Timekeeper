@@ -8,6 +8,15 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-11
+
+- Fixed the task lines refusing to take time you just added to the entry
+  total. Raising **Total hours** left an unallocated remainder, but every
+  attempt to type that remainder into a task line was immediately taken back
+  out of the other lines, so the lines could never reach the new total. A
+  growing line now spends the unallocated remainder first, and only pulls
+  from the other lines once the remainder is gone.
+
 ## 2026-08-08
 
 - Clients & Matters: new **Export CSV** button downloads the whole roster —

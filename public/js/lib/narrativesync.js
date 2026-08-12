@@ -95,13 +95,15 @@ export function parseNarrativeEdit(text, lineCount, { taskBilling = true } = {})
 // redistribution gymnastics. Internally works in integer multiples of the
 // increment to dodge float drift.
 //
-// `total` is accepted-but-inert: the rule only ever preserves whatever the
-// lines summed to BEFORE this edit (see the delta-absorption loop below), so
-// it never reads `total`. Callers naturally have the entry's current total in
-// hand though, so the param stays part of the contract for a future stricter
-// mode (e.g. clamping the rebalance to an explicit total) without a
-// signature change.
-export function rebalanceHours(durations, changedIndex, newValue, { total, increment = 0.1 } = {}) { // eslint-disable-line no-unused-vars
+// `total` is the entry's total hours, and it bounds the rule (2026-08-11
+// feedback: "I manually increased the time at the top of the entry, but now I
+// can't allocate that time in the task lines"). Raising the total leaves an
+// unallocated remainder, and preserving the lines' old sum meant every attempt
+// to type that remainder into a line was immediately clawed back out of the
+// other lines — the sum could never reach the new total. A growing line now
+// spends the unallocated remainder FIRST and only then pulls from the other
+// lines. Omit `total` and the rule keeps its original sum-preserving behaviour.
+export function rebalanceHours(durations, changedIndex, newValue, { total, increment = 0.1 } = {}) {
   const scale = 10 ** decimalsOf(increment);
   const toUnits = (x) => Math.round(Number(x || 0) * scale);
   const fromUnits = (u) => u / scale;
@@ -111,12 +113,20 @@ export function rebalanceHours(durations, changedIndex, newValue, { total, incre
   const n = units.length;
   if (changedIndex < 0 || changedIndex >= n) return units.map(fromUnits);
 
+  // Hours the total leaves unspoken for, measured BEFORE this edit. Growth
+  // draws on this pool first; an exactly- or over-allocated entry has none,
+  // which is the original sum-preserving behaviour.
+  const totalUnits = Number.isFinite(Number(total)) ? toUnits(total) : null;
+  const oldSum = units.reduce((a, b) => a + b, 0);
+  const headroom = totalUnits == null ? 0 : Math.max(0, totalUnits - oldSum);
+
   const oldUnits = units[changedIndex];
   let newUnits = Math.round(toUnits(newValue) / incUnits) * incUnits;
   newUnits = Math.max(incUnits, newUnits);
   units[changedIndex] = newUnits;
 
   let delta = newUnits - oldUnits; // > 0: changed line grew, must shrink others
+  if (delta > 0) delta -= Math.min(delta, headroom); // spend the remainder first
   for (let i = n - 1; i >= 0 && delta !== 0; i--) {
     if (i === changedIndex) continue;
     if (delta > 0) {

@@ -280,6 +280,39 @@ test('rebalanceHours: new value rounds to the increment and floors at one increm
   assert.deepEqual(out, [1.4, 0.1]);
 });
 
+// Unallocated headroom (2026-08-11 feedback: "I manually increased the time at
+// the top of the entry, but now I can't allocate that time in the task lines").
+// Growth spends the unallocated remainder BEFORE it takes from other lines.
+
+test('rebalanceHours: growth spends the unallocated remainder before touching other lines', () => {
+  // 5 lines summing 1.3 under a hand-raised 1.5 total — the reported case.
+  const out = rebalanceHours([0.1, 0.6, 0.2, 0.1, 0.3], 0, 0.3, { total: 1.5, increment: 0.1 });
+  assert.deepEqual(out, [0.3, 0.6, 0.2, 0.1, 0.3]);
+  assert.equal(out.reduce((a, b) => a + b, 0).toFixed(1), '1.5'); // lines now fill the total
+});
+
+test('rebalanceHours: growth past the remainder takes the rest from other lines', () => {
+  // 0.2h of headroom, a 0.4h grab: 0.2 free, 0.2 pulled from the last line.
+  const out = rebalanceHours([0.1, 0.6, 0.2, 0.1, 0.3], 0, 0.5, { total: 1.5, increment: 0.1 });
+  assert.deepEqual(out, [0.5, 0.6, 0.2, 0.1, 0.1]);
+  assert.equal(out.reduce((a, b) => a + b, 0).toFixed(1), '1.5');
+});
+
+test('rebalanceHours: a fully allocated entry still pulls from other lines', () => {
+  const out = rebalanceHours([1.0, 0.5, 1.0], 0, 1.2, { total: 2.5, increment: 0.1 });
+  assert.deepEqual(out, [1.2, 0.5, 0.8]);
+});
+
+test('rebalanceHours: an over-allocated entry has no headroom to spend', () => {
+  const out = rebalanceHours([1.0, 0.5, 1.0], 0, 1.2, { total: 2.0, increment: 0.1 });
+  assert.deepEqual(out, [1.2, 0.5, 0.8]);
+});
+
+test('rebalanceHours: headroom is ignored when the caller passes no total', () => {
+  const out = rebalanceHours([0.1, 0.6, 0.2, 0.1, 0.3], 0, 0.3, { increment: 0.1 });
+  assert.deepEqual(out, [0.3, 0.6, 0.2, 0.1, 0.1]); // sum still pinned at 1.3
+});
+
 // ---------- formatSuggestion ----------
 
 test('formatSuggestion: trims, capitalizes, and adds a trailing period', () => {
