@@ -11,6 +11,7 @@ import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion, splitNarrativeSegments,
+  alignTasksToClauses,
 } from '/js/lib/narrativesync.js';
 
 const blankLine = (duration = 0) => ({ task_code: '', duration, fragment: '' });
@@ -442,6 +443,14 @@ export function EntryEditor({ spec, settings, onClose }) {
 
   // Structured task split — the only remaining /ai/expand caller, gated
   // behind the "split into tasks" checkbox (default unchecked).
+  //
+  // When the seed is an ALREADY-allocated narrative (AUTO builds it with a
+  // "(x.x)" per clause), the split has in effect already been made and asking
+  // the model to make it again only loses or reorders clauses — the
+  // 2026-08-11 report. In that case the attorney's clauses are the answer and
+  // the model contributes the task codes (alignTasksToClauses). Shorthand,
+  // which never carries an allocation, still goes to the model whole: that is
+  // the case where there is something to expand.
   async function aiExpand(seed) {
     setAiBusy(true);
     try {
@@ -449,10 +458,20 @@ export function EntryEditor({ spec, settings, onClose }) {
         brief: seed, totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
         cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
       });
-      if (r.tasks.length > 0) {
-        const even = splitTenthsEvenly(total || sum, r.tasks.length);
+      const clauses = splitNarrativeSegments(seed);
+      // An allocated narrative is anchored outright — its clauses ARE the
+      // split. Shorthand is anchored only when the model came back with fewer
+      // tasks than the attorney described, purely to rescue the missing one;
+      // there the model's wording still wins, since expanding it is the point.
+      const allocated = containsTimeAmounts(seed) && clauses.length >= 2;
+      const lostOne = clauses.length >= 2 && r.tasks.length < clauses.length;
+      const resultTasks = allocated || lostOne
+        ? alignTasksToClauses(clauses, r.tasks, { prefer: allocated ? 'clause' : 'model' })
+        : r.tasks;
+      if (resultTasks.length > 0) {
+        const even = splitTenthsEvenly(total || sum, resultTasks.length);
         update({
-          tasks: r.tasks.map((t, i) => ({
+          tasks: resultTasks.map((t, i) => ({
             task_code: t.task_code, fragment: t.fragment,
             duration: t.hours != null ? t.hours : even[i] || 0,
           })),

@@ -3,7 +3,8 @@ import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
-import { containsTimeAmounts } from '../lib/timeAmounts.js';
+import { containsTimeAmounts, stripTimeAmounts } from '../lib/timeAmounts.js';
+import { restoreSourceCasing } from '../lib/casing.js';
 import { pickExemplars, pickPairs, renderGlossary } from '../lib/exemplars.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
@@ -47,9 +48,9 @@ Those entries show you how the attorney writes. Take only their shape. Every nam
 
 export function formatContract(codes) {
   return `Rules for tasks:
-- Break the work into 1–5 component tasks.
+- The tasks account for every distinct piece of work in the description. Where the attorney separated clauses with semicolons, give one task per clause, in the same order. Up to 8 tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, and name nothing the description did not. Start lowercase; no trailing period.
+- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, spelled and capitalised as the attorney spelled them, and name nothing the description did not. The first word is a lowercase verb; no trailing period.
 - share: fraction of the total time for that task; all shares sum to 1.
 
 Respond with ONLY this JSON, no other text:
@@ -300,7 +301,13 @@ export function aiRouter({ db }) {
     const cfg = getSetting(db, 'ai') || {};
     if (!cfg.enabled) return res.status(400).json({ error: 'ai_disabled' });
     const b = req.body || {};
-    const brief = String(b.brief || '').trim();
+    // "Expand → split into tasks" seeds from whatever the narrative box shows,
+    // and an AUTO narrative shows a task-billing parenthetical per clause. The
+    // amounts are the app's own bookkeeping — the model is being asked about
+    // the work, and `totalHours` already tells it the time (2026-08-11
+    // feedback). The UNSTRIPPED text stays as the casing authority below.
+    const typed = String(b.brief || '').trim();
+    const brief = stripTimeAmounts(typed);
     if (!brief) return res.status(400).json({ error: 'Describe the work first.' });
     const totalHours = b.totalHours != null ? Number(b.totalHours) : null;
 
@@ -353,9 +360,16 @@ export function aiRouter({ db }) {
       return res.status(502).json({ error: 'ai_bad_response', message: 'Model returned unusable output — try again.' });
     }
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+    // The contract asks for a fragment that STARTS lowercase, and llama3.1:8b
+    // reads that as "lowercase the clause" — "E. Hodgson" came back
+    // "e hodgson", "Second Amendment to Option Agreement" came back all
+    // lowercase (2026-08-11 feedback). The attorney's own capitalisation is
+    // sitting right there in the brief, so it is restored here rather than
+    // argued for in the prompt. Restoring from `typed` (pre-strip) costs
+    // nothing and keeps the authority as close to what David wrote as possible.
     const tasks = rawTasks.slice(0, 8).map((t) => ({
       task_code: codes.includes(t.task_code) ? t.task_code : (codes[0] || ''),
-      fragment: String(t.fragment || '').trim().slice(0, 400),
+      fragment: restoreSourceCasing(String(t.fragment || '').trim(), typed).slice(0, 400),
       share: Number(t.share) > 0 ? Number(t.share) : 0,
     }));
     const hours = totalHours && tasks.length

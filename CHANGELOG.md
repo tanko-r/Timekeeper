@@ -10,6 +10,16 @@ Newest entries first.
 
 ## 2026-08-11
 
+- Fixed **Expand → split into tasks** damaging a narrative it was given.
+  Capitalisation is now restored from your own text after the model answers,
+  so "E. Hodgson" and "Second Amendment to Option Agreement" stop coming back
+  case-folded. The task-billing amounts are stripped out of what the model
+  reads. And when the narrative you hand it is already split into allocated
+  clauses, those clauses are now the answer — every one survives, in your
+  order and your wording, with your hours — while the model contributes only
+  the task codes. Measured on the reported entry, 1 run in 3 used to drop a
+  task line and 2 in 3 reordered them; both are now impossible.
+
 - Fixed the task lines refusing to take time you just added to the entry
   total. Raising **Total hours** left an unallocated remainder, but every
   attempt to type that remainder into a task line was immediately taken back

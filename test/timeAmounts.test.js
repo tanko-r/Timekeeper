@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { containsTimeAmounts as serverCheck } from '../server/lib/timeAmounts.js';
-import { containsTimeAmounts as clientCheck } from '../public/js/lib/timeamounts.js';
+import { containsTimeAmounts as serverCheck, stripTimeAmounts as serverStrip } from '../server/lib/timeAmounts.js';
+import { containsTimeAmounts as clientCheck, stripTimeAmounts as clientStrip } from '../public/js/lib/timeamounts.js';
 
 // ONE fixture table run against BOTH copies of the detector — the browser
 // mirror (public/js/lib/timeamounts.js) cannot import server code, so this
@@ -36,6 +36,43 @@ for (const [label, check] of [['server helper', serverCheck], ['client mirror', 
   test(`containsTimeAmounts (${label}): fixture table`, () => {
     for (const [text, expected, why] of FIXTURES) {
       assert.equal(check(text), expected, `${why}: ${JSON.stringify(text)}`);
+    }
+  });
+}
+
+// stripTimeAmounts — the removal half of the same rule. "Expand → split into
+// tasks" seeds the model with whatever the narrative box shows, and an AUTO
+// narrative shows every task-billing parenthetical. Those amounts are the
+// app's bookkeeping, not a description of the work, so they come out before
+// the brief reaches the model. Same fixture-table discipline: one table, both
+// copies, so the browser mirror cannot drift.
+const STRIP_FIXTURES = [
+  // [text, expected, why]
+  ['Reviewed lease (0.5); drafted amendment (1.2).',
+    'Reviewed lease; drafted amendment.', 'parentheticals leave no gap before the punctuation'],
+  ['Review message from E. Hodgson (0.1); email to E. Hodgson (0.1).',
+    'Review message from E. Hodgson; email to E. Hodgson.', 'the reported AUTO-narrative shape'],
+  ['Drafted the motion in 1.5 hrs and filed it.',
+    'Drafted the motion in and filed it.', 'a worded amount is removed with its surrounding space'],
+  ['Moved for summary judgment under Fed. R. Civ. P. 12(b)(6).',
+    'Moved for summary judgment under Fed. R. Civ. P. 12(b)(6).', 'citation subsections are untouched'],
+  ['Reviewed invoice for the 8h x 10w frame.',
+    'Reviewed invoice for the 8h x 10w frame.', 'a dimension is not a duration'],
+  ['Review and revise lease.', 'Review and revise lease.', 'plain prose is returned unchanged'],
+  ['', '', 'empty'],
+  [null, '', 'null'],
+];
+
+for (const [label, strip] of [['server helper', serverStrip], ['client mirror', clientStrip]]) {
+  test(`stripTimeAmounts (${label}): fixture table`, () => {
+    for (const [text, expected, why] of STRIP_FIXTURES) {
+      assert.equal(strip(text), expected, `${why}: ${JSON.stringify(text)}`);
+    }
+  });
+
+  test(`stripTimeAmounts (${label}): output never trips the detector`, () => {
+    for (const [text] of FIXTURES) {
+      assert.equal(serverCheck(strip(text)), false, `still flagged: ${JSON.stringify(text)}`);
     }
   });
 }

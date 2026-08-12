@@ -16,3 +16,20 @@ export function containsTimeAmounts(text) {
   const s = String(text ?? '');
   return PAREN_AMOUNT.test(s) || WORDED_AMOUNT.test(s);
 }
+
+// The removal half of the same rule, for text on its way INTO the model
+// ("Expand → split into tasks" seeds from the narrative box, and an AUTO
+// narrative carries a parenthetical per task). The amounts are the app's
+// bookkeeping; the model is being asked about the work. Same patterns, so
+// citations and dimensions survive untouched.
+const PAREN_AMOUNT_G = /\s*\(\s*\d+\.\d+\s*\)/g;
+const WORDED_AMOUNT_G = /\b\d+(?:\.\d+)?\s*(?:hours?|hrs?)\b|\b\d+\.\d+\s*h\b/gi;
+
+export function stripTimeAmounts(text) {
+  return String(text ?? '')
+    .replace(PAREN_AMOUNT_G, '')
+    .replace(WORDED_AMOUNT_G, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([;,.])/g, '$1')
+    .trim();
+}

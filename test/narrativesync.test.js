@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion,
-  splitNarrativeSegments,
+  splitNarrativeSegments, alignTasksToClauses,
 } from '../public/js/lib/narrativesync.js';
 
 // ---------- generateNarrative (client mirror of server/lib/narrative.js) ----------
@@ -311,6 +311,104 @@ test('rebalanceHours: an over-allocated entry has no headroom to spend', () => {
 test('rebalanceHours: headroom is ignored when the caller passes no total', () => {
   const out = rebalanceHours([0.1, 0.6, 0.2, 0.1, 0.3], 0, 0.3, { increment: 0.1 });
   assert.deepEqual(out, [0.3, 0.6, 0.2, 0.1, 0.1]); // sum still pinned at 1.3
+});
+
+// ---------- alignTasksToClauses ----------
+
+// 2026-08-11 feedback: "Expand → split into tasks … seems to delete tasks".
+// Measured against llama3.1:8b on the reported 5-clause narrative: 1 run in 3
+// returned 4 tasks, and 2 runs in 3 returned them in a different order than
+// the attorney wrote. Handing an ALREADY-allocated narrative to the model to
+// re-split is a lossy round trip, so the clauses are taken from the attorney's
+// own text and the model keeps only the job it is good at — the task code.
+
+const CLAUSES = [
+  { fragment: 'Review message from E. Hodgson', duration: 0.1 },
+  { fragment: 'draft revisions to Second Amendment to Option Agreement', duration: 0.7 },
+  { fragment: 'draft updates to Easement template', duration: 0.2 },
+  { fragment: 'draft amendment to Memorandum', duration: 0.2 },
+  { fragment: 'email to E. Hodgson', duration: 0.1 },
+];
+
+test('alignTasksToClauses: a dropped + reordered model answer still yields every clause in order', () => {
+  // Exactly what run 2 of the repro returned: "review message" gone, order shuffled.
+  const tasks = [
+    { task_code: 'Correspondence', fragment: 'email to E. Hodgson', hours: 0.3 },
+    { task_code: 'Draft', fragment: 'draft revisions to Second Amendment to Option Agreement', hours: 0.6 },
+    { task_code: 'Draft', fragment: 'draft updates to easement template', hours: 0.2 },
+    { task_code: 'Draft', fragment: 'draft amendment to Memorandum', hours: 0.2 },
+  ];
+  const out = alignTasksToClauses(CLAUSES, tasks);
+  assert.equal(out.length, 5);
+  assert.deepEqual(out.map((t) => t.fragment), CLAUSES.map((c) => c.fragment));
+  assert.deepEqual(out.map((t) => t.task_code),
+    ['', 'Draft', 'Draft', 'Draft', 'Correspondence']);
+  // the attorney's own allocations win over the model's shares
+  assert.deepEqual(out.map((t) => t.hours), [0.1, 0.7, 0.2, 0.2, 0.1]);
+});
+
+test('alignTasksToClauses: a model task is claimed by one clause only', () => {
+  const clauses = [
+    { fragment: 'draft amendment to Lease', duration: null },
+    { fragment: 'draft amendment to Easement', duration: null },
+  ];
+  const tasks = [{ task_code: 'Draft', fragment: 'draft amendment to Lease', hours: 0.5 }];
+  const out = alignTasksToClauses(clauses, tasks);
+  assert.deepEqual(out.map((t) => t.task_code), ['Draft', '']);
+});
+
+test('alignTasksToClauses: a clause with no allocation falls back to the matched task hours', () => {
+  const clauses = [{ fragment: 'review the Lease', duration: null }];
+  const tasks = [{ task_code: 'Review', fragment: 'review lease', hours: 0.4 }];
+  assert.deepEqual(alignTasksToClauses(clauses, tasks), [
+    { task_code: 'Review', fragment: 'review the Lease', hours: 0.4 },
+  ]);
+});
+
+test('alignTasksToClauses: a clause matching nothing keeps its own hours and no code', () => {
+  const clauses = [{ fragment: 'attend site inspection', duration: 0.5 }];
+  const tasks = [{ task_code: 'Draft', fragment: 'draft revisions to lease', hours: 0.4 }];
+  assert.deepEqual(alignTasksToClauses(clauses, tasks), [
+    { task_code: '', fragment: 'attend site inspection', hours: 0.5 },
+  ]);
+});
+
+test('alignTasksToClauses: no model tasks at all still returns the clauses intact', () => {
+  const out = alignTasksToClauses(CLAUSES, []);
+  assert.deepEqual(out.map((t) => t.fragment), CLAUSES.map((c) => c.fragment));
+  assert.deepEqual(out.map((t) => t.task_code), ['', '', '', '', '']);
+});
+
+test("alignTasksToClauses: prefer 'model' keeps the expansion but rescues the lost clause", () => {
+  // The shorthand case, measured: "draft psa; review loi; email w client re
+  // title co comments" came back as two tasks — the email clause was gone.
+  const clauses = [
+    { fragment: 'draft psa', duration: null },
+    { fragment: 'review loi', duration: null },
+    { fragment: 'email w client re title co comments', duration: null },
+  ];
+  const tasks = [
+    { task_code: 'Draft', fragment: 'draft Purchase and Sale Agreement', hours: 0.8 },
+    { task_code: 'Review', fragment: 'review Letter of Intent', hours: 0.7 },
+  ];
+  const out = alignTasksToClauses(clauses, tasks, { prefer: 'model' });
+  assert.deepEqual(out, [
+    { task_code: 'Draft', fragment: 'draft Purchase and Sale Agreement', hours: 0.8 },
+    { task_code: 'Review', fragment: 'review Letter of Intent', hours: 0.7 },
+    { task_code: '', fragment: 'email w client re title co comments', hours: null },
+  ]);
+});
+
+test("alignTasksToClauses: prefer 'model' still yields to the attorney's own allocation", () => {
+  const clauses = [{ fragment: 'rev lease', duration: 0.4 }];
+  const tasks = [{ task_code: 'Review', fragment: 'review and analyze lease', hours: 1.1 }];
+  assert.deepEqual(alignTasksToClauses(clauses, tasks, { prefer: 'model' }), [
+    { task_code: 'Review', fragment: 'review and analyze lease', hours: 0.4 },
+  ]);
+});
+
+test('alignTasksToClauses: no clauses returns nothing', () => {
+  assert.deepEqual(alignTasksToClauses([], [{ task_code: 'Draft', fragment: 'x', hours: 1 }]), []);
 });
 
 // ---------- formatSuggestion ----------
