@@ -45,11 +45,39 @@ Those entries show you how the attorney writes. Take only their shape. Every nam
 - Every noun in your output must trace to a word the attorney wrote. Where the shorthand names no subject, leave it unnamed.
 - Drop articles wherever the attorney's entries drop them.`;
 
+// NOTE on casing (2026-08-11, third pass). Both contracts below used to end
+// their fragment rule with "the first word is a lowercase verb". David asked
+// why the split case-folds proper nouns when plain Expand never does, and he
+// was right that the difference is the prompt, not the model: these were the
+// only prompts in the app containing the word "lowercase", and the split was
+// the only path that folded. An 8B applies a rule about the first word to the
+// whole clause.
+//
+// Measured on llama3.1:8b against the live database, on the reported entry:
+//
+//   plain Expand (buildNarrateMessages — says nothing about case)   0/4 folded
+//   this contract WITH "lowercase"                                  1/4 folded
+//   this contract without it                                       0/12 folded
+//
+// The folding run lost "E. Hodgson", "Second Amendment", "Option Agreement"
+// and "Memorandum" together. "verb" is kept because it anchors the clause to
+// an action; only the word "lowercase" is gone. Nothing is lost by that:
+// generateNarrative capitalises the leading clause itself, and David does not
+// mind a capitalised fragment.
+//
+// Watch item, NOT caused by this change and not fixed by it: on some runs the
+// model imports people and stock phrases from OTHER matters in the voice
+// context ("email with J. Busse and C. Pierce regarding legal descriptions"
+// for an entry naming neither). Measured on the same entry, 5 runs each: with
+// the few-shot pairs 2/5, without them 5/5 — so the pairs spliced in below
+// reduce it. A later batch of 10 came back clean, so the rate swings hard.
+// Dropping the exemplar block for the rewrite contract was tried and measured
+// 0/5 against 0/5 — no evidence either way, so it was not changed.
 export function formatContract(codes) {
   return `Rules for tasks:
 - The tasks account for every distinct piece of work in the description. Where the attorney separated clauses with semicolons, give one task per clause, in the same order. Up to 8 tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, spelled and capitalised as the attorney spelled them, and name nothing the description did not. The first word is a lowercase verb; no trailing period.
+- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, and name nothing the description did not. The first word is a verb; no trailing period.
 - share: fraction of the total time for that task; all shares sum to 1.
 
 Respond with ONLY this JSON, no other text:
@@ -69,7 +97,7 @@ export function rewriteContract(codes, n) {
 - Answer with exactly ${n} tasks, one for each numbered line, in the same order.
 - Task 1 rewrites line 1, task 2 rewrites line 2, and so on. Each task covers its own line and no other.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: that line rewritten. Expand the attorney's abbreviations into full document names and keep every party, document and subject it names. Name nothing the line did not. The first word is a lowercase verb; no trailing punctuation.
+- fragment: that line rewritten. Expand the attorney's abbreviations into full document names and keep every party, document and subject it names. Name nothing the line did not. The first word is a verb; no trailing punctuation.
 
 Respond with ONLY this JSON, no other text:
 {"tasks": [{"task_code": "...", "fragment": "..."}]}`;

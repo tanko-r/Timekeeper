@@ -10,6 +10,13 @@ Newest entries first.
 
 ## 2026-08-11
 
+- Stopped **Expand → split into tasks** lowercasing proper nouns. The split
+  contract was the only prompt in the app containing the word "lowercase",
+  and the split was the only path that case-folded — an 8B applies a rule
+  about the first word to the whole clause. Measured on the reported entry:
+  plain Expand 0 of 4 runs folded, the split 1 of 4, and 0 of 12 with the
+  word removed. Task lines may now start with a capital letter.
+
 - Fixed **Expand → split into tasks** returning short, collapsed task lines
   when plain Expand on the same text read fine. Two causes, both structural.
   First, the split was the only AI feature in the app running with **no
