@@ -11,6 +11,18 @@ export function msUntilNextSecond(nowMs, anchorMs, epsilonMs = 25) {
   return (1000 - frac) + epsilonMs;
 }
 
+// Seconds a timer holds RIGHT NOW: its elapsed_seconds are frozen at the
+// moment the payload was fetched, so a running one keeps accruing wall-clock
+// time on top of that (same arithmetic as the timer card and today's footer).
+// Returns null when there is nothing live to show — no timer, a stopped one is
+// already exact, or no fetch anchor to measure from.
+export function liveTimerSeconds(timer, fetchedAt, nowMs = Date.now()) {
+  if (!timer || !fetchedAt) return null;
+  const base = Number(timer.elapsed_seconds) || 0;
+  if (!timer.running) return base;
+  return base + Math.max(0, (nowMs - fetchedAt) / 1000);
+}
+
 // Self-rescheduling aligned ticker. Calls onTick just after every boundary;
 // returns a cancel function. Re-create whenever the anchor changes.
 // `host` supplies setTimeout/clearTimeout — the PiP float passes its own

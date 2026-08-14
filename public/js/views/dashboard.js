@@ -183,7 +183,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
       </div>
       <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
-        settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} />
+        settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} fetchedAt=${fetchedAt} />
     </div>
 
     ${warnGate ? html`

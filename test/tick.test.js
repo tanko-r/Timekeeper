@@ -47,3 +47,28 @@ test('startAlignedTick schedules on the provided host and cancels through it', (
   cancel();
   assert.equal(cleared, 1, 'cancel clears via host.clearTimeout');
 });
+
+// Live entry hours (2026-08-14 feedback: "These numbers don't update live
+// when the timer is running"). An entry's filed total only moves when the
+// timer stops, so the list has to add the seconds elapsed since the payload
+// was fetched — the same arithmetic the timer card and the footer use.
+import { liveTimerSeconds } from '../public/js/lib/tick.js';
+
+const RUN = { running: 1, elapsed_seconds: 120 };
+
+test('a running timer accrues the seconds since the payload was fetched', () => {
+  assert.equal(liveTimerSeconds(RUN, 10_000, 15_400), 125.4);
+});
+
+test('a stopped timer is frozen at its fetched elapsed_seconds', () => {
+  assert.equal(liveTimerSeconds({ running: 0, elapsed_seconds: 120 }, 10_000, 99_000), 120);
+});
+
+test('no timer, or no fetch anchor, yields null — the caller keeps the filed total', () => {
+  assert.equal(liveTimerSeconds(null, 10_000, 15_000), null);
+  assert.equal(liveTimerSeconds(RUN, null, 15_000), null);
+});
+
+test('a clock that jumped backwards never subtracts time', () => {
+  assert.equal(liveTimerSeconds(RUN, 20_000, 15_000), 120);
+});

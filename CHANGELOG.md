@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-08-14
 
+- **Today's entries now count up while a timer runs.** An entry's hours only
+  moved when the timer stopped, so the row read 0.0 next to a clock showing
+  real elapsed time. The number now ticks once a second against the running
+  timer, rounded exactly like the timer card, and the "running" chip says so.
+
 - **An emptied narrative no longer sticks empty under written task lines.**
   Clearing the AUTO box marked the narrative "durably manual", and the server
   then refused to regenerate it — so an entry could sit blank and unfinalizable

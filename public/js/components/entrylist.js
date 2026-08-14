@@ -1,8 +1,9 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, fmtHours, emitToast, BillableBadge, StatusChip, ValidationList, fmtStamp, Icon,
-  markJustFinalized, fmtDateFull, Confirm,
+  html, useState, useEffect, fmtHours, fmtTenths, emitToast, BillableBadge, StatusChip,
+  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm,
 } from '/js/ui.js';
+import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
@@ -81,14 +82,37 @@ function InlineNarrative({ entry, onChanged }) {
 // Card list of entries with inline actions. onChanged() after any mutation.
 // `timers` (dashboard only) enables the per-entry start/stop-timer button —
 // it resumes the timer linked to the entry (or links/creates one server-side).
-export function EntryList({ entries, openEditor, onChanged, settings, showDate = false, runningIds = null, timers = null }) {
-  if (!entries || entries.length === 0) {
-    return html`<div class="card muted">No entries.</div>`;
-  }
+export function EntryList({
+  entries, openEditor, onChanged, settings, showDate = false,
+  runningIds = null, timers = null, fetchedAt = null,
+}) {
   const increment = (settings?.rounding?.increment) || 0.1;
   const [deleting, setDeleting] = useState(null);
 
   const timerFor = (entry) => (timers || []).find((t) => t.linked_entry_id === entry.id);
+
+  // A running timer's time reaches its entry only when the timer stops, so the
+  // filed total sat still while the clock climbed (2026-08-14 feedback: "These
+  // numbers don't update live when the timer is running"). Tick once a second
+  // while any linked timer runs and show what the entry is worth right now,
+  // rounded exactly like the timer card.
+  const roundMode = settings?.rounding?.enabled === false ? 'nearest' : (settings?.rounding?.mode || 'up');
+  const anyRunning = (timers || []).some((t) => t.running && t.linked_entry_id);
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    if (!anyRunning || !fetchedAt) return undefined;
+    return startAlignedTick(fetchedAt, () => forceTick((x) => x + 1));
+  }, [anyRunning, fetchedAt]);
+
+  const hoursLabel = (entry) => {
+    const t = timerFor(entry);
+    const secs = t && t.running ? liveTimerSeconds(t, fetchedAt) : null;
+    return secs == null ? fmtHours(entry.total, increment) : fmtTenths(secs, roundMode);
+  };
+
+  if (!entries || entries.length === 0) {
+    return html`<div class="card muted">No entries.</div>`;
+  }
   // (no manual tk:timers-changed dispatch here — api.js announces every
   // successful /api/timers write itself now)
 
@@ -175,7 +199,7 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
               ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>
                 <${Icon} name="export" size=${12} /> exported</span>` : null}
               ${runningIds && runningIds.has(e.id) ? html`
-                <span class="chip chip-running" title="Timer running — the total settles at the next stop">
+                <span class="chip chip-running" title="Timer running — the hours tick live and file at the next stop">
                   <${Icon} name="timer" size=${12} /> running</span>`
               : e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
@@ -188,7 +212,9 @@ export function EntryList({ entries, openEditor, onChanged, settings, showDate =
             ${e.status === 'draft' ? html`<${ValidationList} findings=${e.validation} compact=${true} />` : null}
           </div>
           <div style=${{ textAlign: 'right' }}>
-            <div class=${'hours' + (runningIds && runningIds.has(e.id) ? ' active' : '')}>${fmtHours(e.total, increment)}</div>
+            <div class=${'hours' + (runningIds && runningIds.has(e.id) ? ' active' : '')}
+              title=${runningIds && runningIds.has(e.id)
+                ? `Running — ${fmtHours(e.total, increment)}h filed so far` : null}>${hoursLabel(e)}</div>
             <div class="entry-actions">
               ${timers && e.status === 'draft' ? (() => {
                 const t = timerFor(e);
