@@ -9,3 +9,7 @@ scripts/ai-audit/
 
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
+
+# UI overhaul: screenshot matrices and the generated progress page
+shots/
+progress/
