@@ -197,6 +197,9 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const [name, setName] = useState(/^[\d\s-]*$/.test(initialQ) ? '' : initialQ);
   const [billable, setBillable] = useState(true);
   const [favorite, setFavorite] = useState(false);
+  // New clients start block-billed: task lines are the exception, so a matter
+  // created in a hurry must not silently demand them at finalize time.
+  const [taskBilling, setTaskBilling] = useState(false);
   const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
   const [error, setError] = useState(null);
 
@@ -217,6 +220,12 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const qt = clientQ.trim();
   const qIsText = qt !== '' && !/^[\d\s-]+$/.test(qt);
 
+  // Show the existing client's own setting once one is chosen, so the checkbox
+  // never claims a matter is block-billed when its client is task-billed.
+  useEffect(() => {
+    if (effective) setTaskBilling(!!effective.task_billing);
+  }, [effective ? effective.id : null]);
+
   function startNewClient() {
     if (qIsText) { setClientName(qt); setClientQ(''); }
     setWantNew(true);
@@ -232,7 +241,14 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
         short_name: name, billable: billable ? 1 : 0, favorite: favorite ? 1 : 0,
       };
       if (needsName && clientName.trim()) body.client_name = clientName.trim();
+      body.client_task_billing = taskBilling ? 1 : 0;
       const cm = await api.post('/api/cms', body);
+      // The server only honors client_task_billing for a client it just
+      // created; an existing client takes a deliberate PATCH instead.
+      if (effective && (taskBilling ? 1 : 0) !== (effective.task_billing ?? 1)) {
+        await api.patch(`/api/clients/${effective.id}`, { task_billing: taskBilling ? 1 : 0 });
+        cm.client_task_billing = taskBilling ? 1 : 0;
+      }
       emitToast(`CM ${cm.cm_number} created`);
       onCreated(cm);
     } catch (err) {
@@ -294,6 +310,12 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
         <label class="checkbox-row">
           <input type="checkbox" checked=${billable} onChange=${(e) => setBillable(e.target.checked)} />
           Billable by default
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" data-nc-task-billing checked=${taskBilling}
+            onChange=${(e) => setTaskBilling(e.target.checked)} />
+          Task billing — this client needs task lines and allocations like "(0.5)"
+          ${effective ? html`<span class="muted small"> · applies to every matter under ${effective.client_number}</span>` : null}
         </label>
         <label class="checkbox-row">
           <input type="checkbox" checked=${favorite} onChange=${(e) => setFavorite(e.target.checked)} />

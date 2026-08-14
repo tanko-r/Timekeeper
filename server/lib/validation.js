@@ -39,7 +39,16 @@ export function validateEntry(entry, settings = {}) {
     add('block', 'no_matter', 'No client/matter assigned — associate one before finalizing.');
   }
 
-  if (tasks.length === 0) {
+  // Per-client task-billing flag. Absent (e.g. a matter with no client) means
+  // task-billed, matching loadEntry's cm payload default.
+  const taskBilling = entry.cm && entry.cm.client_task_billing !== undefined
+    ? !!entry.cm.client_task_billing : true;
+
+  // Task lines are a task-billing requirement, not a universal one: a client
+  // billed in blocks can finalize on the narrative and the entry total alone
+  // (the export already emits a single row from the total when there are no
+  // task lines).
+  if (taskBilling && tasks.length === 0) {
     add('block', 'no_task_lines', 'Entry has no task lines.');
   }
 
@@ -83,10 +92,7 @@ export function validateEntry(entry, settings = {}) {
     add('warn', 'zero_duration', 'Entry total is zero.');
   }
 
-  // Per-client task-billing enforcement (default task-billed when the client
-  // flag is absent, e.g. a matter with no client — see loadEntry's cm payload).
-  const taskBilling = entry.cm && entry.cm.client_task_billing !== undefined
-    ? !!entry.cm.client_task_billing : true;
+  // Per-client task-billing enforcement of narrative allocations.
   if (taskBilling && narrative && tasks.filter(isSubstantiveTask).length >= 2 && !ALLOCATION_RE.test(narrative)) {
     add('warn', 'missing_allocations',
       'This client requires task billing — add per-task time allocations, e.g. "(0.5)".');

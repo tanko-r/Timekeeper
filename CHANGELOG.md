@@ -8,6 +8,16 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-14
+
+- **New client/matter now gets a Task billing checkbox, and starts off.** A
+  matter created inline behaved as though its client required task billing:
+  the client row defaulted to `task_billing = 1`, and the create modal had no
+  way to say otherwise. Every entry on that matter then blocked at finalize
+  with "Entry has no task lines." Task lines are now a task-billing
+  requirement instead of a universal one — a block-billed client finalizes on
+  narrative plus entry total, which the CSV export already handled.
+
 ## 2026-08-11
 
 - Stopped **Expand → split into tasks** lowercasing proper nouns. The split

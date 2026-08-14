@@ -30,6 +30,32 @@ test('CM CRUD with format validation', () => withServer(async (t) => {
   assert.equal(list.body.length, 1);
 }));
 
+test('POST /api/cms carries client_task_billing onto a brand-new client', () => withServer(async (t) => {
+  const created = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '700100-000001', short_name: 'No task billing', client_task_billing: 0,
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.client_task_billing, 0);
+}));
+
+test('POST /api/cms never rewrites task billing on a client that already exists', () => withServer(async (t) => {
+  const first = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '700200-000001', short_name: 'First matter', client_task_billing: 1,
+  });
+  assert.equal(first.body.client_task_billing, 1);
+  const second = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '700200-000002', short_name: 'Second matter', client_task_billing: 0,
+  });
+  assert.equal(second.body.client_task_billing, 1);
+}));
+
+test('POST /api/cms with no client_task_billing keeps the existing default of 1', () => withServer(async (t) => {
+  const created = await t.fetchJson('POST', '/api/cms', {
+    cm_number: '700300-000001', short_name: 'Default matter',
+  });
+  assert.equal(created.body.client_task_billing, 1);
+}));
+
 test('creating a CM links (and creates) its client and sets matter_number', () => withServer(async (t) => {
   const created = await t.fetchJson('POST', '/api/cms', {
     cm_number: '777001-000042', short_name: 'Linked matter', billable: 1,

@@ -59,12 +59,18 @@ export function cmsRouter({ db, clock }) {
   });
 
   r.post('/', (req, res) => {
-    const { cm_number, short_name = '', billable = 1, favorite = 0, client_name } = req.body || {};
+    const {
+      cm_number, short_name = '', billable = 1, favorite = 0, client_name, client_task_billing,
+    } = req.body || {};
     if (!validateCmNumber(cm_number)) {
       return res.status(400).json({ error: 'CM number must match format 123456-123456.' });
     }
     try {
       const { clientNumber, matterNumber } = splitCmNumber(cm_number);
+      // Task billing is a client-wide setting, so it may only be set by the
+      // request that brings the client into existence. A later matter under
+      // the same client must never silently reflag every earlier matter.
+      const clientIsNew = !db.prepare('SELECT 1 FROM clients WHERE client_number=?').get(clientNumber);
       const clientId = ensureClient(db, clientNumber, now());
       // INSERT first: it's the statement that can throw (duplicate cm_number).
       // Only once it has actually succeeded do we apply the client_name side
@@ -76,6 +82,10 @@ export function cmsRouter({ db, clock }) {
         // Name a still-blank client at creation time; never overwrite a real name.
         db.prepare("UPDATE clients SET name=?, updated_at=? WHERE id=? AND name=''")
           .run(client_name.trim(), now(), clientId);
+      }
+      if (clientIsNew && client_task_billing !== undefined) {
+        db.prepare('UPDATE clients SET task_billing=?, updated_at=? WHERE id=?')
+          .run(client_task_billing ? 1 : 0, now(), clientId);
       }
       res.status(201).json(getCm.get(info.lastInsertRowid));
     } catch (e) {

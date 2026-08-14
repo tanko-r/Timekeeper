@@ -54,6 +54,18 @@ test('no task lines blocks', () => {
   assert.equal(v.find((x) => x.code === 'no_task_lines').level, 'block');
 });
 
+test('no task lines does NOT block a client that does not require task billing', () => {
+  const v = validateEntry(entry({
+    tasks: [],
+    cm: { cm_number: '123456-654321', client_task_billing: 0 },
+  }), SETTINGS);
+  assert.ok(!codes(v).includes('no_task_lines'));
+  assert.ok(canFinalize(entry({
+    tasks: [],
+    cm: { cm_number: '123456-654321', client_task_billing: 0 },
+  }), SETTINGS).ok);
+});
+
 test('sum mismatch vs manual total warns', () => {
   const v = validateEntry(entry({ total_override: 1.0 }), SETTINGS); // sum is 0.5
   assert.ok(codes(v).includes('sum_mismatch'));
