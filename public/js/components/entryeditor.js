@@ -9,6 +9,8 @@ import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
+import { insertNarrative } from '/js/lib/narrativejoin.js';
+import { NarrativeHistory } from '/js/components/narrativehistory.js';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion, splitNarrativeSegments,
   alignTasksToClauses,
@@ -73,6 +75,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiUndo, setAiUndo] = useState(null); // pre-rewrite {auto, narrative} snapshot, or null
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false); // "Reuse" — this matter's past narratives
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
@@ -567,6 +570,16 @@ export function EntryEditor({ spec, settings, onClose }) {
     aiNarrate('regenerate', seed);
   }
 
+  // Fold a narrative borrowed from this matter's history into the box. Same
+  // one-click rule the AI path uses: borrowed text is the attorney's own
+  // narrative now, so AUTO steps aside and hands over what it had generated
+  // as the text being added to — no dead end, nothing silently overwritten.
+  function insertFromHistory(text) {
+    if (aiUndo) setAiUndo(null);
+    const base = autoOn ? (autoText || '') : local.narrative;
+    update({ auto: false, aiAuto: false, narrative: insertNarrative(base, text) });
+  }
+
   // Restore the pre-rewrite narrative (and AUTO state). One-shot: the button
   // vanishes after use or once the user edits the field manually.
   function undoAi() {
@@ -727,6 +740,11 @@ export function EntryEditor({ spec, settings, onClose }) {
             title=${autoOn ? 'Turn off — edit narrative freely' : 'Turn on — regenerate from task lines'}
             onClick=${() => update({ auto: !local.auto })}>AUTO</button>` : null}
         <div class="spacer" style=${{ flex: 1 }}></div>
+        ${local.cm && !finalized ? html`
+          <button type="button" class="btn btn-sm"
+            title="Reuse a narrative from this matter's recent entries"
+            onClick=${() => setHistoryOpen(true)}>
+            <${Icon} name="history" size=${14} /> Reuse</button>` : null}
         ${aiUndo && !finalized ? html`
           <button type="button" class="btn btn-sm" title="Undo the AI rewrite — restore your previous narrative"
             disabled=${aiBusy} onClick=${undoAi}>
@@ -762,6 +780,10 @@ export function EntryEditor({ spec, settings, onClose }) {
             onChange=${(v) => { if (aiUndo) setAiUndo(null); update({ narrative: v }); }} />`}
       </div>
       ${aiMenu ? html`<${ContextMenu} x=${aiMenu.x} y=${aiMenu.y} items=${aiMenuItems} onClose=${() => setAiMenu(null)} />` : null}
+      ${historyOpen && local.cm ? html`
+        <${NarrativeHistory} cmId=${local.cm.id}
+          cmLabel=${local.cm.short_name || local.cm.cm_number}
+          onInsert=${insertFromHistory} onClose=${() => setHistoryOpen(false)} />` : null}
 
       <${ValidationList} findings=${validation} />
 

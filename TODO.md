@@ -9,4 +9,3 @@ spec/plan (see `docs/superpowers/`) before implementing.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
-- [ ] 2026-08-14 15:06 — New feature!  A button to pop up the last 10 or 20 entries with narratives for this matter.  Import narrative from one or more entries. (feedback/2026-08-14T15-06-48.png · #/)

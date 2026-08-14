@@ -694,6 +694,32 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 }
 .summary-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* Reuse-a-narrative picker (entry editor → Reuse). Each past narrative is a
+   raised, clickable slab with its own bounding box, so picking several reads
+   as picking objects rather than ticking a form. The picked ones sink into
+   the accent tint and carry their order number — the order they were picked
+   is the order they join in. */
+.narrative-history { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow: auto; padding: 2px; }
+.narrative-history-row {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1); box-shadow: 0 1px 0 var(--border);
+}
+.narrative-history-row:hover { border-color: var(--accent); }
+.narrative-history-row.picked {
+  border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+}
+.narrative-history-row input[type="checkbox"] { margin-top: 3px; flex: none; }
+.narrative-history-body { min-width: 0; flex: 1; }
+.narrative-history-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-secondary); }
+.narrative-history-body .narrative { margin: 4px 0 0; color: var(--text-primary); overflow-wrap: break-word; }
+.narrative-history-preview {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  border: 1px dashed var(--accent); background: var(--surface-2);
+}
+.narrative-history-preview .narrative { margin: 3px 0 0; overflow-wrap: break-word; }
+
 .toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .toast {
   background: var(--text-primary); color: var(--surface-1); padding: 10px 16px;

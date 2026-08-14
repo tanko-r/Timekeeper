@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { rankPhrases } from '../lib/phrasebook.js';
+import { pickRecentNarratives } from '../lib/recentnarratives.js';
 import { todayLocal } from '../lib/dates.js';
 
 // Memory-layer read endpoints (spec §5). Everything here is derived from the
@@ -99,6 +100,31 @@ export function mattersRouter({ db, clock }) {
     GROUP BY LOWER(mp.name)
     ORDER BY last_seen DESC, count DESC, name
   `);
+
+  // The matter's own recent narratives, newest first, duplicates collapsed —
+  // the editor's "Reuse a narrative" list. Finalized and draft alike: what he
+  // wrote this morning is the most likely thing to reuse this afternoon.
+  // Over-fetch, then let the pure lib cap the DISTINCT count.
+  const recentNarratives = db.prepare(`
+    SELECT e.id, e.date, e.narrative, e.status,
+      COALESCE(e.total_override,
+        (SELECT COALESCE(SUM(t.duration), 0) FROM entry_tasks t WHERE t.entry_id = e.id)) AS total
+    FROM entries e
+    WHERE e.cm_id = ? AND e.deleted_at IS NULL AND TRIM(e.narrative) != ''
+    ORDER BY e.date DESC, e.id DESC
+    LIMIT 400
+  `);
+
+  r.get('/:id/recent-narratives', (req, res) => {
+    const matter = getMatter.get(req.params.id);
+    if (!matter) return res.status(404).json({ error: 'Matter not found.' });
+    const asked = Number(req.query.limit);
+    const limit = Number.isFinite(asked) ? Math.min(50, Math.max(1, Math.floor(asked))) : 20;
+    res.json({
+      matter_id: matter.id,
+      entries: pickRecentNarratives(recentNarratives.all(matter.id), limit),
+    });
+  });
 
   r.get('/:id/people', (req, res) => {
     const matter = getMatter.get(req.params.id);

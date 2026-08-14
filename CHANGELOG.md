@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-08-14
 
+- **New: Reuse a narrative.** The entry editor's Narrative row has a "Reuse"
+  button that opens this matter's last 20 narratives, newest first, with
+  repeats collapsed to one row carrying a use count. Tick one or several and
+  Insert joins them into a single clause list, in the order picked, added to
+  whatever is already in the box rather than replacing it.
+
 - **Today's entries now count up while a timer runs.** An entry's hours only
   moved when the timer stopped, so the row read 0.0 next to a clock showing
   real elapsed time. The number now ticks once a second against the running

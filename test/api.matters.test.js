@@ -116,3 +116,54 @@ test('404 for unknown matter on both endpoints', () =>
     assert.equal((await t.fetchJson('GET', '/api/matters/9999/suggestions')).status, 404);
     assert.equal((await t.fetchJson('GET', '/api/matters/9999/people')).status, 404);
   }));
+
+test('recent-narratives: newest first, duplicates collapsed, other matters excluded', () =>
+  withServer(async (t) => {
+    const { warm, other } = await seed(t);
+    const add = (cmId, date, narrative) => t.fetchJson('POST', '/api/entries', {
+      date, cm_id: cmId, narrative,
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    });
+    await add(warm.id, '2026-07-01', 'Call with W. Hammond regarding the lease.');
+    await add(warm.id, '2026-07-02', 'Call with W. Hammond regarding the lease.');
+    await add(warm.id, '2026-07-03', 'Draft response to the landlord.');
+    await add(other.id, '2026-07-04', 'Unrelated matter narrative.');
+
+    const r = await t.fetchJson('GET', `/api/matters/${warm.id}/recent-narratives`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.entries.map((e) => e.narrative), [
+      'Draft response to the landlord.',
+      'Call with W. Hammond regarding the lease.',
+    ]);
+    assert.equal(r.body.entries[1].uses, 2);
+    assert.equal(r.body.entries[1].date, '2026-07-02'); // the most recent use
+    assert.equal(r.body.entries[0].total, 0.5);
+  }));
+
+test('recent-narratives: limit is clamped, and a deleted entry drops out', () =>
+  withServer(async (t) => {
+    const { warm } = await seed(t);
+    const made = [];
+    for (const [date, text] of [['2026-07-01', 'One.'], ['2026-07-02', 'Two.'], ['2026-07-03', 'Three.']]) {
+      made.push((await t.fetchJson('POST', '/api/entries', {
+        date, cm_id: warm.id, narrative: text,
+        tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+      })).body);
+    }
+    const one = await t.fetchJson('GET', `/api/matters/${warm.id}/recent-narratives?limit=1`);
+    assert.equal(one.body.entries.length, 1);
+    assert.equal(one.body.entries[0].narrative, 'Three.');
+
+    const junk = await t.fetchJson('GET', `/api/matters/${warm.id}/recent-narratives?limit=nonsense`);
+    assert.equal(junk.body.entries.length, 3);
+
+    await t.fetchJson('DELETE', `/api/entries/${made[2].id}`);
+    const after = await t.fetchJson('GET', `/api/matters/${warm.id}/recent-narratives`);
+    assert.deepEqual(after.body.entries.map((e) => e.narrative), ['Two.', 'One.']);
+  }));
+
+test('recent-narratives: unknown matter is a 404', () =>
+  withServer(async (t) => {
+    const r = await t.fetchJson('GET', '/api/matters/9999/recent-narratives');
+    assert.equal(r.status, 404);
+  }));

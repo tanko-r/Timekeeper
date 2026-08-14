@@ -486,6 +486,59 @@ await step('ghost-text: phrasebook completion in the entry editor, Tab accepts',
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
+await step('Reuse: pick past narratives for this matter and insert them', async () => {
+  // Seed two dated narratives on the Acme matter so the list has something to
+  // offer regardless of what earlier steps left behind.
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const acme = cms.find((c) => (c.short_name || '').includes('Acme'));
+  const seedEntry = (date, narrative) => fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date, cm_id: acme.id, narrative,
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    }),
+  }).then((r) => r.json());
+  const first = await seedEntry('2026-06-01', 'Call with W. Hammond regarding the easement.');
+  const second = await seedEntry('2026-06-02', 'Draft response to the landlord.');
+
+  await page.reload({ waitUntil: 'networkidle0' });
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'Acme');
+  await clickText('.modal-wide button', 'Reuse');
+  await waitFor('.narrative-history-row');
+  // pick by text, not position — earlier steps leave their own entries on
+  // this matter, and today's beat June's in the newest-first list
+  const pick = (text) => page.evaluate((t) => {
+    const row = [...document.querySelectorAll('.narrative-history-row')]
+      .find((el) => el.textContent.includes(t));
+    if (!row) throw new Error(`no history row for "${t}"`);
+    row.querySelector('input[type="checkbox"]').click();
+  }, text);
+  await pick('Draft response to the landlord.');
+  await pick('Call with W. Hammond regarding the easement.');
+  await page.waitForFunction(() => {
+    const p = document.querySelector('.narrative-history-preview .narrative');
+    return p && p.textContent.includes('Draft response') && p.textContent.includes('W. Hammond');
+  }, { timeout: 4000 });
+  await shot('narrative-history');
+  await clickText('.modal .row-end button', 'Insert');
+  await page.waitForFunction(() => !document.querySelector('.narrative-history-row'), { timeout: 4000 });
+  const val = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
+  if (val !== 'Draft response to the landlord; Call with W. Hammond regarding the easement.') {
+    throw new Error(`Reuse inserted the wrong text: "${val}"`);
+  }
+
+  // leave the day as we found it
+  await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
+  await clickText('.modal-wide button', 'Delete');
+  await clickText('.modal:not(.modal-wide) button', 'Delete');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+  for (const e of [first, second]) await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
+});
+
 await step('shortcuts: save-from-selection, inline expansion, settings list', async () => {
   await page.keyboard.press('n');
   await waitFor('.modal .cmpicker input');
