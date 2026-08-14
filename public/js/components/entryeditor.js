@@ -189,6 +189,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   function applyAutoEdit(text) {
     if (aiUndo) setAiUndo(null); // manual edit supersedes the last AI rewrite
     if (local.aiAuto) update({ aiAuto: false }); // a typed fragment is the attorney's
+    // Emptying the box is not "typing over AUTO" — there is nothing left to
+    // protect, so AUTO stays on and refills from the task lines instead of
+    // detaching into a permanently blank manual narrative (2026-08-14).
+    if (!String(text).trim()) { update({ narrative: '' }); return; }
     const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling });
     if (!parsed) { update({ narrative: text, auto: false }); return; }
     let changed = false;
@@ -236,7 +240,11 @@ export function EntryEditor({ spec, settings, onClose }) {
       // narrative is durably manual (1) and syncNarrative must stop
       // regenerating it. A single-line entry has no AUTO box to detach from,
       // so it always stays 0 (matches narrative_auto's own ≥2-line gate).
-      narrative_manual: l.auto ? 0 : (substantiveTasks.length >= 2 ? 1 : 0),
+      // A blank narrative is never durably manual — the server would refill it
+      // from the task lines anyway, so claiming the detach here only makes the
+      // two disagree for one round trip.
+      narrative_manual: (l.auto || !String(l.narrative || '').trim())
+        ? 0 : (substantiveTasks.length >= 2 ? 1 : 0),
       // AI provenance (spec 2026-08-01 §5). The narrative counts as AI-written
       // only while it still reads EXACTLY as generated — the moment David
       // types over it the comparison fails, the flag clears, and the entry
@@ -275,6 +283,13 @@ export function EntryEditor({ spec, settings, onClose }) {
         // choice, so trusting it here would silently clobber a just-typed
         // manual narrative on the very next autosave.
         if (cur.auto && saved.narrative_auto) next.narrative = saved.narrative;
+        // A detached-but-blank narrative the server has just refilled from the
+        // task lines: adopt the text and follow it back into AUTO, so the box
+        // shows what the entry actually holds.
+        else if (!String(cur.narrative || '').trim() && saved.narrative_auto && saved.narrative) {
+          next.narrative = saved.narrative;
+          next.auto = true;
+        }
         return next;
       });
       return saved;

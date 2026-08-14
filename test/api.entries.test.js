@@ -165,6 +165,50 @@ test('manual narrative (narrative_manual=1) survives a task-touching PATCH and r
     assert.equal(reloaded.narrative_auto, false);
   }));
 
+test('an EMPTY narrative is never durably manual — task lines refill it', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+
+    // Clearing the narrative box detaches AUTO (narrative_manual=1) with
+    // nothing left to protect. The task lines must fill it back in.
+    const cleared = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      narrative: '   ', narrative_manual: 1,
+    })).body;
+    assert.equal(cleared.narrative, 'Review lease (1.2); draft email to landlord (0.3).');
+
+    const reloaded = (await t.fetchJson('GET', `/api/entries/${created.id}`)).body;
+    assert.equal(reloaded.narrative, 'Review lease (1.2); draft email to landlord (0.3).');
+    // the detach flag is cleared with the refill, so the entry reopens in AUTO
+    // and keeps tracking further task-line edits
+    assert.equal(reloaded.narrative_auto, true);
+    assert.equal(reloaded.narrative_manual, 0);
+    const touched = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      tasks: [
+        { task_code: 'Review', duration: 1.0, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.5, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(touched.narrative, 'Review lease (1.0); draft email to landlord (0.5).');
+  }));
+
+test('an empty narrative that arrives with the task lines themselves still refills', () =>
+  withServer(async (t, cm) => {
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: '', narrative_manual: 1,
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review lease' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to landlord' },
+      ],
+    })).body;
+    assert.equal(created.narrative, 'Review lease (1.2); draft email to landlord (0.3).');
+  }));
+
 test('flipping narrative_manual back to 0 regenerates the narrative (task- and block-billing)', () =>
   withServer(async (t, cm) => {
     const clientId = t.db.prepare('SELECT client_id FROM matters WHERE id=?').get(cm.id).client_id;

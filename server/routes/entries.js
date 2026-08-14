@@ -112,17 +112,26 @@ export function syncNarrative(db, entryId) {
     'SELECT task_code, duration, fragment FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entryId);
   const rounding = getSetting(db, 'rounding') || {};
   const client = db.prepare(`
-    SELECT COALESCE(clients.task_billing, 1) AS task_billing, entries.narrative_manual AS narrative_manual
+    SELECT COALESCE(clients.task_billing, 1) AS task_billing,
+      entries.narrative_manual AS narrative_manual, entries.narrative AS narrative
     FROM entries
     LEFT JOIN matters ON matters.id = entries.cm_id
     LEFT JOIN clients ON clients.id = matters.client_id
     WHERE entries.id = ?
   `).get(entryId);
-  if (client && client.narrative_manual) return;
+  // An EMPTY narrative is never a manual narrative worth protecting. Clearing
+  // the AUTO box detaches it (narrative_manual=1) with nothing left to keep,
+  // and the entry would then sit blank forever with fully written task lines
+  // right above it — no way back short of toggling AUTO (2026-08-14 feedback:
+  // "task filling doesn't seem to be working here").
+  if (client && client.narrative_manual && String(client.narrative || '').trim()) return;
   const taskBilling = !client || !!client.task_billing;
   const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling });
   if (generated != null) {
-    db.prepare('UPDATE entries SET narrative=? WHERE id=?').run(generated, entryId);
+    // Clear the detach flag alongside the refill, or the entry would keep a
+    // regenerated narrative that no longer tracks its task lines, and reopen
+    // with AUTO showing off over text AUTO itself just wrote.
+    db.prepare('UPDATE entries SET narrative=?, narrative_manual=0 WHERE id=?').run(generated, entryId);
   }
 }
 

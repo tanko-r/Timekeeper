@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-08-14
 
+- **An emptied narrative no longer sticks empty under written task lines.**
+  Clearing the AUTO box marked the narrative "durably manual", and the server
+  then refused to regenerate it — so an entry could sit blank and unfinalizable
+  with two fully written task lines directly above it. An empty narrative is
+  now never treated as manual, on either side.
+
 - **New client/matter now gets a Task billing checkbox, and starts off.** A
   matter created inline behaved as though its client required task billing:
   the client row defaulted to `task_billing = 1`, and the create modal had no
