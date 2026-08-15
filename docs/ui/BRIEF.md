@@ -48,6 +48,40 @@ Judge every piece against all three.
    neighbours. A component that looks right but fights the components around
    it, or that only works in one theme or one viewport, fails.
 
+## Data integrity: non-negotiable, and above every other rule here
+
+Stated by the owner, and it outranks every design goal, every critic, every
+measurement, and every task prompt in this run. A defect in this section is
+never "minor" and never deferred to a later wave.
+
+**1. No narrative text may ever cross from one matter to another.** Not
+between clients, and not between two matters of the SAME client. If a piece
+of text was written for matter A, it may never be shown as belonging to,
+suggested for, pre-filled into, or written onto an entry for matter B.
+
+**2. Every suggestion source is scoped to its own matter.** That includes the
+stop-timer chips, the phrasebook, recent narratives, ghost text, close-out
+pre-fill, quick capture, and anything else that proposes words. If a matter
+has no history of its own, the correct behaviour is to offer nothing, or to
+offer GENERIC text that belongs to no client — never another matter's text,
+however good a match it looks.
+
+**3. The AI prompts obey the same rule.** Where a prompt includes before/after
+narrative pairs as examples, those pairs must come from the same matter. If
+that matter has no pairs, use generic, fully synthetic examples. Never put one
+client's or one matter's real narrative into a prompt used to write another's.
+
+**4. No time and no narrative may ever be lost.** No silent overwrite without
+an undo. No entry dropped, skipped, or double-counted on export. No entry
+marked exported that did not actually make it into the file. Nothing that
+could cause the owner to leak billable time before an export or during one.
+
+**5. Every rule above is enforced by a test, not by care.** A fix without a
+regression test does not count as fixed.
+
+If you find a violation of this section while doing something else, stop and
+report it immediately, whatever your task was.
+
 ## Hard constraints
 
 - **Stack is fixed.** Node 24 ESM, Express 5, better-sqlite3. Frontend is
