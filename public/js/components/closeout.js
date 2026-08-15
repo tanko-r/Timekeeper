@@ -3,152 +3,264 @@ import {
   html, React, useState, useEffect, useRef, useMemo, useCallback, Overlay,
   fmtHours, emitToast, Icon, Spinner, ValidationList,
 } from '/js/ui.js';
-import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { GhostInput } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 
-// One-sweep close-out (spec §7): silent drafts → one card at a time,
-// centered, pre-filled from memory — Enter confirms and advances. At the
-// end, a single Finalize & export action closes the day. Keys: Enter accept
-// · e edit (opens the full editor, closes the sweep) · ↓ skip · Esc quit
-// (nothing lost — drafts stay drafts either way).
+// ===========================================================================
+// CLOSE THE DAY — a review LIST, not a card carousel  (teardown §18, wave-1 F2)
 //
-// All four of those outcomes are labelled buttons, not just keys. Quit used to
-// be the header ✕ alone — accessible name "Close" — so three of the four
-// choices were named and the fourth was an anonymous glyph.
+// The wave-1 review's single biggest number: a five-entry day cost 18
+// interactions, and 23 if the lawyer used the new one-tap stop chips — the
+// fast path made the day LONGER. The cause was measured and confirmed:
+//
+//   "The stop chip and the close-out sweep are not connected. An entry that
+//    already has a narrative — because you chipped it thirty seconds earlier —
+//    still gets its own card in the sweep and still costs an Enter. Close-out
+//    charges 1 + N + 2 where N is EVERY draft. The wave's own new capability —
+//    the phrasebook pre-fill and the chip — should be able to retire cards,
+//    not just pre-fill them."
+//
+// So the sweep no longer charges for finished work:
+//
+//   1. A DRAFT THAT ALREADY HAS A NARRATIVE IS NOT A CARD. It goes in the
+//      "Ready" list, which the lawyer reads and confirms ONCE with the
+//      primary. Chipping an entry now removes a step from the day instead of
+//      adding one.
+//   2. WHAT IS LEFT IS A LIST, NOT A CAROUSEL. The teardown: "you cannot tell
+//      at a glance which of the four drafts still need work, and you cannot
+//      skip ahead to the one you know is wrong. For 4 drafts a carousel is
+//      fine; for 12 it is a trap." Every remaining draft is on screen with its
+//      pre-filled narrative in an editable field. The keyboard contract
+//      survives and reads better on a list than it did on a stack: Enter
+//      accepts the row and drops to the next, ↑/↓ walk the fields, `e` opens
+//      the full editor, Esc quits.
+//   3. ACCEPT ALL, for the ordinary day where every suggestion is right.
+//   4. EDIT NO LONGER DESTROYS THE SWEEP. It used to call onClose(true), so
+//      correcting one entry cost the whole pass — measured: Edit on card 1 of
+//      4 unmounted the sweep, and Escape left you on Today with no sweep at
+//      all. The editor opens OVER the review now (the overlay primitive is a
+//      LIFO stack and handles this natively) and the review is still there,
+//      with that row re-read from the server, when the editor closes.
+//   5. THE TERMINAL STATE IS A TOAST WHEN IT CARRIES NO DECISION. A dialog is
+//      for urgent information or a decision (Material 3); "the day closed and
+//      the CSV downloaded" is neither, and charging a tap for `Done` on the
+//      clean path is the last fixed cost in the flow. The panel STAYS — and
+//      says considerably more than it used to — whenever something is left
+//      over, because then there IS a decision.
+//
+// Phases: loading · empty · review · warn · blocked · closed.
+// The summary phase is gone: it existed only to show a count between the last
+// card and the commit, and the review list shows that count the whole time.
+// ===========================================================================
+
+// A draft is "ready" when it already says what the work was — chipped from the
+// stop offer, typed on the row, written in the editor, or built from task
+// lines (AUTO). Ready drafts cost nothing at close-out.
+const isReady = (d) => (
+  d.narrative_auto ? !!String(d.narrative || '').trim() : !!String(d.narrative || '').trim());
+
 export function CloseOut({ onClose, openEditor }) {
-  const [cards, setCards] = useState(null); // null = loading; frozen at open
+  const [drafts, setDrafts] = useState(null); // null = loading; frozen at open
   const [date, setDate] = useState(null);
-  const [idx, setIdx] = useState(0);
   const [phase, setPhase] = useState('loading');
-  // sweep totals — for the summary card's "X drafts narrated · Y skipped"
-  const [accepted, setAccepted] = useState(0);
-  const [skipped, setSkipped] = useState(0);
-  const [text, setText] = useState('');
+  const [texts, setTexts] = useState({});     // entry id → what the field holds
+  const [skip, setSkip] = useState({});       // entry id → deliberately left a draft
+  const [sugg, setSugg] = useState({});       // cm id → phrasebook lines
+  const [readyOpen, setReadyOpen] = useState(true);
   const [warnInfo, setWarnInfo] = useState(null); // { warnOnly, hard, newDrafts? }
-  const [closedInfo, setClosedInfo] = useState(null); // { total, stillBlocked }
-  const [blockedInfo, setBlockedInfo] = useState(null); // { n }
+  const [closedInfo, setClosedInfo] = useState(null); // { total, blocked: [] }
+  const [blockedInfo, setBlockedInfo] = useState(null); // { blocked: [] }
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState(null); // an entry open in the editor OVER this
   const changedRef = useRef(false); // anything saved/finalized/exported/edited
-  const prevIdxRef = useRef(-1);
-  const lastAutoRef = useRef(''); // last programmatically-set text (vs. user edits)
+  const savedRef = useRef(0);       // narratives written during this pass
 
-  const current = cards && phase === 'sweep' ? cards[idx] : null;
-  const cardById = useMemo(() => {
-    const m = {};
-    (cards || []).forEach((c) => { m[c.id] = c; });
-    return m;
-  }, [cards]);
-
-  // Ghost-text suggestions for the current card's matter (Task 4's phrasebook,
-  // same component the entry editor uses); expand wired exactly like it too.
-  const phrases = useMatterSuggestions(current && !current.narrative_auto ? (current.cm?.id ?? null) : null);
   const shortcuts = useShortcuts();
   const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
 
+  const ready = useMemo(() => (drafts || []).filter(isReady), [drafts]);
+  const needs = useMemo(
+    () => (drafts || []).filter((d) => !isReady(d) && !skip[d.id]), [drafts, skip]);
+  const parked = useMemo(
+    () => (drafts || []).filter((d) => !isReady(d) && skip[d.id]), [drafts, skip]);
+  const draftById = useMemo(() => {
+    const m = {};
+    (drafts || []).forEach((d) => { m[d.id] = d; });
+    return m;
+  }, [drafts]);
+
+  // The field's value: what the lawyer typed, else the matter's top clean
+  // phrasebook line, so the primary CONFIRMS rather than composes. Resolved at
+  // render instead of synced by an effect — an effect that pre-fills has to
+  // know whether the field was touched, and the touched case is exactly
+  // `texts[id] !== undefined`.
+  const valueOf = useCallback((d) => {
+    if (texts[d.id] !== undefined) return texts[d.id];
+    return (sugg[d.cm?.id] || [])[0] || '';
+  }, [texts, sugg]);
+
   // Fresh fetch on open — the dashboard's copy behind this overlay may be
   // stale (a stop-chip pick, another tab, etc.).
-  useEffect(() => {
-    let alive = true;
-    api.get('/api/dashboard').then((d) => {
-      if (!alive) return;
-      const drafts = d.entries.filter((e) => e.status === 'draft');
+  const load = useCallback(async (first) => {
+    setPhase('loading');
+    try {
+      const d = await api.get('/api/dashboard');
+      const list = d.entries.filter((e) => e.status === 'draft');
       setDate(d.date);
-      setCards(drafts);
-      setPhase(drafts.length === 0 ? 'empty' : 'sweep');
-    }).catch((e) => {
+      setDrafts(list);
+      setTexts({});
+      setSkip({});
+      setWarnInfo(null);
+      setPhase(list.length === 0 ? 'empty' : 'review');
+    } catch (e) {
       emitToast(e.message, { error: true });
-      onClose(false);
-    });
+      onClose(first ? false : changedRef.current);
+    }
+  }, [onClose]);
+
+  useEffect(() => { load(true); }, []); // eslint-disable-line
+
+  // One phrasebook read per matter that still needs a narrative — the same
+  // endpoint the entry editor and the stop chips use, asked for the whole list
+  // at once because a list of N rows cannot call a per-matter hook N times.
+  const needKey = needs.map((d) => d.cm?.id || 0).join(',');
+  useEffect(() => {
+    const ids = [...new Set(needs.map((d) => d.cm?.id).filter(Boolean))];
+    if (ids.length === 0) return undefined;
+    let alive = true;
+    Promise.all(ids.map((id) => api.get(`/api/matters/${id}/suggestions`)
+      .then((r) => [id, r.phrases.map((p) => p.text).filter((t) => !containsTimeAmounts(t))])
+      .catch(() => [id, []])))
+      .then((pairs) => {
+        if (!alive) return;
+        setSugg((prev) => {
+          const next = { ...prev };
+          let changed = false;
+          for (const [id, list] of pairs) {
+            if (!(id in next)) { next[id] = list; changed = true; }
+          }
+          return changed ? next : prev;
+        });
+      });
     return () => { alive = false; };
-  }, []); // eslint-disable-line
+  }, [needKey]); // eslint-disable-line
 
-  // Pre-fill the field: the stored narrative, or — when blank — the matter's
-  // top clean suggestion, so Enter-through confirms rather than composes.
-  // Re-syncs when phrases finish loading (async) as long as the user hasn't
-  // typed anything of their own yet; always resets on a new card.
+  // Keyboard-first on desktop: the caret starts in the first field that still
+  // needs words. THUMB-first on a phone — a bottom sheet that throws the soft
+  // keyboard up over its own list before the lawyer has read it is the
+  // opposite of what this dialog is for, and every action here has a button.
   useEffect(() => {
-    if (!current) return;
-    const isNewCard = prevIdxRef.current !== idx;
-    prevIdxRef.current = idx;
-    const base = current.narrative_auto
-      ? (current.narrative || '')
-      : (String(current.narrative || '').trim()
-          ? current.narrative
-          : (phrases.find((p) => !containsTimeAmounts(p)) || ''));
-    setText((prev) => {
-      if (isNewCard || prev === lastAutoRef.current) {
-        lastAutoRef.current = base;
-        return base;
-      }
-      return prev;
-    });
-  }, [idx, current, phrases]); // eslint-disable-line
-
-  // The dialog mounts while the drafts are still loading, so the Overlay's
-  // initial focus lands on the only thing in it at that moment — the header ✕.
-  // The narrative field takes over the moment the first card arrives: it is
-  // what the sweep is FOR, and it is also what makes Enter mean "accept"
-  // rather than "press the focused button". Deliberately per-phase and not
-  // per-card: once you are working the buttons, tapping Skip should not throw
-  // a phone keyboard up in your face on every card.
-  useEffect(() => {
-    if (phase !== 'sweep') return;
-    const el = document.querySelector('.closeout-card textarea');
+    if (phase !== 'review') return;
+    if (window.matchMedia('(max-width: 767px)').matches) return;
+    const el = document.querySelector('.closeout-card .co-item textarea');
     if (el) el.focus();
   }, [phase]);
 
-  function advance(wasAccepted) {
-    if (wasAccepted) setAccepted((c) => c + 1); else setSkipped((c) => c + 1);
-    setIdx((i) => {
-      const next = i + 1;
-      if (!cards || next >= cards.length) setPhase('summary');
-      return next;
+  // ---------- writes ----------
+
+  async function save(d, text) {
+    if (d.narrative_auto) return true;
+    if (text === (d.narrative || '')) return true;
+    try {
+      await api.patch(`/api/entries/${d.id}`, { narrative: text });
+      changedRef.current = true;
+      savedRef.current += 1;
+      setDrafts((list) => list.map((x) => (x.id === d.id ? { ...x, narrative: text } : x)));
+      return true;
+    } catch (e) {
+      emitToast(e.message, { error: true });
+      return false;
+    }
+  }
+
+  // Enter on a row: write it and drop to the next one that still needs words.
+  // The row leaves the list the moment it is saved, so the next field has to be
+  // chosen before the write and focused after the re-render.
+  async function acceptRow(id) {
+    const d = draftById[id];
+    if (!d) return;
+    const i = needs.findIndex((x) => x.id === id);
+    const nextId = i > -1 && needs[i + 1] ? needs[i + 1].id : null;
+    const text = valueOf(d);
+    if (String(text).trim()) await save(d, text);
+    requestAnimationFrame(() => {
+      const el = nextId
+        ? document.querySelector(`.co-item[data-entry-id="${nextId}"] textarea`)
+        : document.querySelector('.closeout-card .co-primary');
+      if (el) el.focus();
     });
   }
 
-  async function acceptCurrent() {
-    const c = cards[idx];
-    if (!c.narrative_auto && text !== (c.narrative || '')) {
-      try {
-        await api.patch(`/api/entries/${c.id}`, { narrative: text });
-        changedRef.current = true;
-      } catch (e) {
-        emitToast(e.message, { error: true });
+  async function acceptAll() {
+    setBusy(true);
+    try {
+      for (const d of needs) {
+        const text = valueOf(d);
+        if (String(text).trim()) await save(d, text); // eslint-disable-line no-await-in-loop
       }
-    }
-    advance(true);
+    } finally { setBusy(false); }
   }
 
-  function skipCurrent() { advance(false); }
-
-  function editCurrent() {
-    const c = cards[idx];
+  // ---------- the editor, OVER the review ----------
+  //
+  // The overlay primitive is a LIFO stack, so the entry editor opens on top and
+  // answers Escape first; this dialog stays mounted underneath with its list,
+  // its typed text and its place intact. Two things have to follow from that:
+  // this component's capture-phase key handler must stand down while it is
+  // covered (below), and the row has to be re-read when the editor closes,
+  // because the editor is exactly where its narrative may have been written.
+  function editEntry(id) {
     changedRef.current = true;
-    openEditor({ id: c.id });
-    onClose(true);
-  }
-
-  function editBlocked(id) {
-    changedRef.current = true;
+    setEditingId(id);
     openEditor({ id });
-    onClose(true);
   }
+
+  useEffect(() => {
+    if (editingId == null) return undefined;
+    let seen = false;
+    const iv = setInterval(async () => {
+      const open = !!document.querySelector('.ovl-panel.modal');
+      if (open) { seen = true; return; }
+      if (!seen) return; // the editor has not mounted yet
+      clearInterval(iv);
+      const id = editingId;
+      setEditingId(null);
+      try {
+        const fresh = await api.get(`/api/entries/${id}`);
+        setDrafts((list) => (fresh.status === 'draft' && !fresh.deleted_at
+          ? list.map((x) => (x.id === id ? { ...x, ...fresh } : x))
+          : list.filter((x) => x.id !== id)));
+        setTexts((t) => { const n = { ...t }; delete n[id]; return n; });
+      } catch { /* deleted, or offline — leave the row as it stands */ }
+    }, 150);
+    return () => clearInterval(iv);
+  }, [editingId]);
+
+  // ---------- finalize / export ----------
 
   async function finalizeAndExport(ack) {
     setBusy(true);
     try {
+      // Everything the lawyer left in a field is his answer — write it before
+      // the day is locked, or the primary would finalize past his own text.
+      if (!ack) {
+        for (const d of needs) {
+          const text = valueOf(d);
+          if (String(text).trim()) await save(d, text); // eslint-disable-line no-await-in-loop
+        }
+      }
       if (ack) {
         // finalize-day applies ack DATE-WIDE, not per-entry (and the plan
         // forbids changing it): a draft filed while this warning card sat on
         // screen (background timer stop, another tab) would get its warnings
         // acknowledged and finalized sight unseen. Guard client-side: only
-        // ack if today's draft set is still exactly what this sweep reviewed
-        // (the frozen cards + the blocked ids the warning screen listed).
+        // ack if today's draft set is still exactly what this pass reviewed
+        // (the frozen list + the blocked ids the warning screen listed).
         const freshD = await api.get('/api/dashboard');
         const reviewed = new Set([
-          ...(cards || []).map((c) => c.id),
+          ...(drafts || []).map((d) => d.id),
           ...(warnInfo ? [...warnInfo.warnOnly, ...warnInfo.hard].map((b) => b.id) : []),
         ]);
         const newDrafts = freshD.entries.filter((e) => e.status === 'draft' && !reviewed.has(e.id));
@@ -157,9 +269,9 @@ export function CloseOut({ onClose, openEditor }) {
           return;
         }
       }
-      // Deliberately no markJustFinalized() for the bulk path: the closed-
-      // moment card is the confirmation here; a row of chips pulsing behind
-      // the backdrop would be decoration (spec §7 restraint).
+      // Deliberately no markJustFinalized() for the bulk path: the closed
+      // moment is its own confirmation here; a row of chips pulsing behind the
+      // backdrop would be decoration (spec §7 restraint).
       const r = await api.post('/api/finalize-day', { date, ack });
       changedRef.current = true;
       const warnOnly = r.blocked.filter((b) => b.blocks.length === 0);
@@ -169,106 +281,123 @@ export function CloseOut({ onClose, openEditor }) {
         setPhase('warn');
         return;
       }
-      await doExport(hard.length);
+      await doExport(hard);
     } finally {
       setBusy(false);
     }
   }
 
-  // Re-run the whole sweep from a fresh snapshot (used when new drafts
-  // appeared mid-sweep and the warning ack was refused).
-  async function restartSweep() {
-    setPhase('loading');
-    setWarnInfo(null);
-    setAccepted(0);
-    setSkipped(0);
-    setIdx(0);
-    prevIdxRef.current = -1;
-    lastAutoRef.current = '';
-    try {
-      const d = await api.get('/api/dashboard');
-      const drafts = d.entries.filter((e) => e.status === 'draft');
-      setDate(d.date);
-      setCards(drafts);
-      setPhase(drafts.length === 0 ? 'empty' : 'sweep');
-    } catch (e) {
-      emitToast(e.message, { error: true });
-      onClose(changedRef.current);
-    }
-  }
-
-  async function doExport(stillBlocked) {
+  async function doExport(hard) {
+    const left = hard || [];
     const r = await api.post('/api/export', { from: date, to: date });
     changedRef.current = true;
     if (r.count === 0) {
-      setBlockedInfo({ n: stillBlocked || cards.length });
+      setBlockedInfo({ blocked: left.length ? left : (drafts || []).map((d) => ({ id: d.id, blocks: [] })) });
       setPhase('blocked');
       return;
     }
     downloadText(`timekeeper-${date}.csv`, r.csv);
     const fresh = await api.get('/api/dashboard');
-    setClosedInfo({ total: fresh.today.total, stillBlocked });
+    if (left.length === 0) {
+      // NOTHING LEFT TO DECIDE — so this is a snackbar, not a dialog. The
+      // export has downloaded and the day behind the scrim is finalized; a
+      // modal whose only control is "Done" was the last fixed interaction in
+      // the whole flow and it bought the lawyer nothing.
+      emitToast(`Day closed — ${fmtHours(fresh.today.total)}h finalized and exported as CSV`);
+      onClose(true);
+      return;
+    }
+    setClosedInfo({ total: fresh.today.total, blocked: left });
     setPhase('closed');
   }
 
-  // Document-level capture-phase listener (StopChips pattern): guards
-  // e/ArrowDown while typing, EXCEPT Enter — which must accept the card even
-  // while the GhostInput textarea has focus (Shift+Enter still inserts a
-  // newline, since multiline narratives are expected here).
+  // ---------- keyboard ----------
   //
-  // Escape is NOT handled here any more: the Overlay primitive owns it for
-  // every dialog in the app, and its listener runs first (a child effect
-  // flushes before its parent's), so quitting the sweep also restores focus to
-  // whatever opened it. onClose still receives `changed`, via the Overlay's
-  // onClose below.
+  // Document-level capture listener (the StopChips pattern). Escape is NOT
+  // handled here — the Overlay primitive owns it for every dialog in the app.
   useEffect(() => {
+    // While the entry editor (or anything else) is open OVER this dialog, this
+    // listener has to be silent: it runs in the CAPTURE phase at document
+    // level, so a stray stopPropagation here would swallow keystrokes before
+    // the dialog above ever saw them.
+    const covered = () => {
+      const panels = document.querySelectorAll('.ovl-panel');
+      const top = panels[panels.length - 1];
+      return !top || !top.classList.contains('closeout-card');
+    };
     function onKey(e) {
+      if (covered()) return;
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = ['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable;
-      // A focused BUTTON owns its own Enter/Space — the sweep's Accept, Edit
-      // and Skip are real buttons now, and this handler must not fire the
-      // accept a second time on top of the button's own click.
+      // A focused BUTTON owns its own Enter/Space — Accept all, Edit, Skip and
+      // the primary are real buttons, and this must not fire twice on top of a
+      // button's own click.
       const onButton = !!(e.target.closest && e.target.closest('button'));
-      if (e.key === 'Enter' && phase === 'sweep' && !e.shiftKey && !onButton
-          && (!typing || e.target.closest('.closeout-card'))) {
+      const item = e.target.closest ? e.target.closest('.co-item') : null;
+
+      if (phase === 'review' && e.key === 'Enter' && !e.shiftKey && !onButton) {
         e.preventDefault();
         e.stopPropagation();
-        acceptCurrent();
+        if (item) acceptRow(Number(item.dataset.entryId));
+        else if (!busy) finalizeAndExport(false);
         return;
       }
-      if (typing) return; // never fence real typing — the field must see its own keys
-      if (!(e.metaKey || e.ctrlKey || e.altKey)) {
-        if (e.key === 'e' && phase === 'sweep') {
-          e.preventDefault();
-          e.stopPropagation();
-          editCurrent();
-          return;
+
+      // ↑/↓ walk the list. Inside a field they only leave it once the caret has
+      // no line left to travel to, which is how every list-of-textareas worth
+      // copying behaves — a narrative can be two lines and the arrow keys still
+      // have to edit it.
+      if (phase === 'review' && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.altKey) {
+        if (typing) {
+          if (!item || tag !== 'textarea') return;
+          const v = e.target.value || '';
+          const c = e.target.selectionStart;
+          const free = e.key === 'ArrowDown'
+            ? !v.slice(c).includes('\n')
+            : !v.slice(0, c).includes('\n');
+          if (!free) return;
         }
-        if (e.key === 'ArrowDown' && phase === 'sweep') {
+        const fields = [...document.querySelectorAll('.closeout-card .co-item textarea')];
+        if (fields.length === 0) return;
+        const i = fields.indexOf(document.activeElement);
+        const next = i < 0 ? (e.key === 'ArrowDown' ? 0 : fields.length - 1) : i + (e.key === 'ArrowDown' ? 1 : -1);
+        if (next < 0 || next >= fields.length) return;
+        e.preventDefault();
+        e.stopPropagation();
+        fields[next].focus();
+        return;
+      }
+
+      if (typing) return; // never fence real typing — the field must see its own keys
+      if (!(e.metaKey || e.ctrlKey || e.altKey) && e.key === 'e' && phase === 'review') {
+        const id = item ? Number(item.dataset.entryId) : (needs[0] && needs[0].id);
+        if (id) {
           e.preventDefault();
           e.stopPropagation();
-          skipCurrent();
+          editEntry(id);
           return;
         }
       }
       // FENCE: app.js's global shortcut handler (n/t/q/c///g/?) is a
-      // document-level BUBBLE listener that only knows to stand down for the
-      // editor and quick-capture — this overlay is dashboard-local state it
-      // can't see, so without this a stray `n` would open the entry editor
-      // invisibly UNDER the close-out backdrop (z-index 100 vs 300). Stop
-      // propagation (capture runs before bubble) for every key we don't
-      // explicitly handle when the target isn't a form field. No
-      // preventDefault — browser defaults (button Enter/Space, etc.) survive.
+      // document-level BUBBLE listener. It stands down for any open overlay
+      // now, but this capture fence predates that and still costs nothing —
+      // stop propagation for every key we do not handle when the target is not
+      // a form field. No preventDefault: browser defaults (button Enter/Space)
+      // survive.
       e.stopPropagation();
     }
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [phase, idx, cards, text]); // eslint-disable-line
+  }, [phase, drafts, texts, skip, sugg, needs, busy, editingId]); // eslint-disable-line
 
   // ---------- render ----------
 
+  const totalOf = (list) => list.reduce((s, d) => s + Number(d.total || 0), 0);
+  const label = (d) => (d.cm ? d.cm.short_name : 'No matter yet');
+
   let body;
   let title = 'Close the day';
+
   if (phase === 'loading') {
     body = html`<${Spinner} />`;
   } else if (phase === 'empty') {
@@ -276,70 +405,129 @@ export function CloseOut({ onClose, openEditor }) {
       <${React.Fragment}>
         <p>Nothing to close — no drafts today.</p>
         <div class="ovl-actions">
-          <button class="btn btn-primary" onClick=${() => onClose(false)}>Close</button>
+          <button class="btn btn-primary" onClick=${() => onClose(changedRef.current)}>Close</button>
         </div>
       <//>`;
-  } else if (phase === 'sweep') {
-    // the dashboard's cm object carries no client_name (see enrich()); the
-    // short name alone matches how EntryList labels entries today
-    const label = current.cm ? current.cm.short_name : 'No matter yet';
-    title = `Close the day — ${idx + 1} of ${cards.length}`;
+  } else if (phase === 'review') {
+    const nNeed = needs.length;
+    const nReady = ready.length;
+    const willSave = needs.filter((d) => String(valueOf(d)).trim()).length;
+    const willStay = (nNeed - willSave) + parked.length;
+    title = nNeed === 0 ? 'Close the day' : `Close the day — ${nNeed} to write`;
+
     body = html`
       <${React.Fragment}>
-        <div class="closeout-dots" role="presentation">
-          ${cards.map((_, i) => html`<span key=${i} class=${'closeout-dot' + (i <= idx ? ' on' : '')}></span>`)}
-        </div>
-        <div class="closeout-head">
-          <strong>${label}</strong>
-          <span class="closeout-hours mono">${fmtHours(current.total)}h</span>
-        </div>
-        ${current.narrative_auto ? html`
-          <div class="narrative-preview">
-            <span class="auto-badge">AUTO</span>
-            <textarea readOnly value=${current.narrative || ''}></textarea>
-          </div>` : html`
-          <${GhostInput} multiline rows=${3} value=${text} suggestions=${phrases} expand=${expand}
-            placeholder="What did you do?" onChange=${setText} />`}
-        ${/* The reassurance the sweep needs BEFORE the buttons, not after: it is
-              what makes Quit safe to press, and on a phone it was invisible —
-              the old key legend carried it and the legend is desktop-only.
-              It also has to sit above the action row because on a phone that row
-              is lifted out of the scrolling body and anchored to the sheet, and
-              only the LAST child of .ovl-body is pinned (overlays.css). */''}
-        <p class="closeout-note muted small">Nothing is lost either way — a skipped draft stays a draft.</p>
-        ${/* FOUR OUTCOMES, FOUR LABELS. Accept, Edit and Skip were buttons and
-              the fourth — abandoning the review — was only the header ✕, whose
-              accessible name is the generic "Close": three named choices and one
-              anonymous one, for a decision the lawyer makes as deliberately as
-              the other three. Quit is a peer now, first in the row because the
-              committing action goes last. The ✕ stays as the sheet's ordinary
-              dismiss, and Esc still does it from the keyboard.
-              The <kbd> chips ride inside their own button, hidden at phone width
-              and aria-hidden everywhere, so a screen reader hears "Accept", not
-              "Accept Enter". */''}
+        ${/* THE DAY'S SHAPE, in one line, before anything asks for a decision.
+              It replaces the dot pagination, which could only say "card 3 of 5"
+              — a position in a stack, never how much work was left. */''}
+        <p class="co-shape">
+          <strong>${drafts.length} draft${drafts.length === 1 ? '' : 's'}</strong>
+          <span class="co-shape-hours mono">${fmtHours(totalOf(drafts))}h</span>
+          <span class="muted">${nNeed === 0
+            ? 'every one already has a narrative'
+            : `${nReady} ready · ${nNeed} still need${nNeed === 1 ? 's' : ''} a narrative`}</span>
+        </p>
+
+        ${nNeed > 0 ? html`
+          <section class="co-group">
+            <div class="co-group-head">
+              <h3 class="co-group-title">Needs a narrative <span class="co-count">${nNeed}</span></h3>
+              ${willSave > 1 ? html`
+                <button class="btn btn-sm co-acceptall" disabled=${busy} onClick=${acceptAll}
+                  title="Save every suggestion below as it stands">
+                  <${Icon} name="check" size=${14} /> Accept all ${willSave}
+                </button>` : null}
+            </div>
+            <ul class="co-list">
+              ${needs.map((d) => html`
+                <li key=${d.id} class="co-item" data-entry-id=${d.id}>
+                  <div class="co-item-head">
+                    <strong>${label(d)}</strong>
+                    <span class="co-item-hours mono">${fmtHours(d.total)}h</span>
+                  </div>
+                  <${GhostInput} multiline rows=${2} value=${valueOf(d)}
+                    suggestions=${sugg[d.cm?.id] || []} expand=${expand}
+                    aria-label=${`Narrative for ${label(d)}`}
+                    placeholder="What did you do?"
+                    onChange=${(t) => setTexts((p) => ({ ...p, [d.id]: t }))} />
+                  <div class="co-item-acts">
+                    <button class="btn btn-sm" onClick=${() => setSkip((s) => ({ ...s, [d.id]: true }))}
+                      title="Leave this one as a draft — nothing is lost">Skip</button>
+                    <button class="btn btn-sm" onClick=${() => editEntry(d.id)}
+                      title="Open the full editor over this review">
+                      <${Icon} name="edit" size=${14} /> Edit<kbd class="ovl-kbd" aria-hidden="true">e</kbd>
+                    </button>
+                  </div>
+                </li>`)}
+            </ul>
+          </section>` : null}
+
+        ${parked.length > 0 ? html`
+          <section class="co-group">
+            <div class="co-group-head">
+              <h3 class="co-group-title">Staying a draft <span class="co-count">${parked.length}</span></h3>
+            </div>
+            <ul class="co-list co-list-quiet">
+              ${parked.map((d) => html`
+                <li key=${d.id} class="co-row">
+                  <span class="co-row-name">${label(d)}</span>
+                  <span class="co-row-hours mono">${fmtHours(d.total)}h</span>
+                  <button class="btn btn-sm"
+                    onClick=${() => setSkip((s) => { const n = { ...s }; delete n[d.id]; return n; })}
+                    title="Put this one back in the list">Undo</button>
+                </li>`)}
+            </ul>
+          </section>` : null}
+
+        ${/* READY — the whole point of this rewrite. A draft that was finished
+              at the moment the timer stopped (a stop chip, the row's own field,
+              the editor) is not a card to be walked through: it is work already
+              done, and it is confirmed once, with everything else, by the
+              primary below. */''}
+        ${nReady > 0 ? html`
+          <section class=${'co-group co-ready' + (readyOpen ? '' : ' co-shut')}>
+            <button class="co-disclosure" aria-expanded=${readyOpen ? 'true' : 'false'}
+              onClick=${() => setReadyOpen((v) => !v)}>
+              <${Icon} name=${readyOpen ? 'chevronDown' : 'chevronRight'} size=${16} />
+              <span class="co-group-title">Ready <span class="co-count">${nReady}</span></span>
+              <span class="co-row-hours mono">${fmtHours(totalOf(ready))}h</span>
+            </button>
+            ${readyOpen ? html`
+              <ul class="co-list co-list-quiet">
+                ${ready.map((d) => html`
+                  <li key=${d.id} class="co-row">
+                    <span class="co-row-name">
+                      ${label(d)}
+                      ${d.narrative_auto ? html`<span class="auto-badge">AUTO</span>` : null}
+                    </span>
+                    <span class="co-row-hours mono">${fmtHours(d.total)}h</span>
+                    <span class="co-row-narr" title=${d.narrative}>${d.narrative}</span>
+                    <button class="btn btn-sm btn-icon" aria-label=${`Edit ${label(d)}`}
+                      title=${`Edit ${label(d)}`} onClick=${() => editEntry(d.id)}>
+                      <${Icon} name="edit" size=${14} />
+                    </button>
+                  </li>`)}
+              </ul>` : null}
+          </section>` : null}
+
+        ${/* The reassurance goes ABOVE the buttons, not after them: it is what
+              makes the primary safe to press, and on a phone the action row is
+              lifted out of the scrolling body and pinned to the sheet, so only
+              the last child before it is guaranteed to be read. */''}
+        <p class="closeout-note muted small">
+          ${willStay > 0
+            ? `${willStay} will stay ${willStay === 1 ? 'a draft' : 'drafts'} — nothing is lost, and it will be here tomorrow.`
+            : 'Nothing is lost either way — a draft left alone stays a draft.'}
+        </p>
+
         <div class="ovl-actions">
           <button class="btn" onClick=${() => onClose(changedRef.current)}>
-            Quit<kbd class="ovl-kbd" aria-hidden="true">Esc</kbd>
+            Not yet<kbd class="ovl-kbd" aria-hidden="true">Esc</kbd>
           </button>
-          <button class="btn" onClick=${skipCurrent}>
-            Skip<kbd class="ovl-kbd" aria-hidden="true">↓</kbd>
-          </button>
-          <button class="btn" onClick=${editCurrent}>
-            <${Icon} name="edit" size=${16} /> Edit<kbd class="ovl-kbd" aria-hidden="true">e</kbd>
-          </button>
-          <button class="btn btn-primary" onClick=${acceptCurrent}>
-            <${Icon} name="check" size=${16} /> Accept<kbd class="ovl-kbd" aria-hidden="true">Enter</kbd>
-          </button>
-        </div>
-      <//>`;
-  } else if (phase === 'summary') {
-    body = html`
-      <${React.Fragment}>
-        <p>${accepted} draft${accepted === 1 ? '' : 's'} narrated · ${skipped} skipped</p>
-        <div class="ovl-actions">
-          <button class="btn" onClick=${() => onClose(changedRef.current)}>Not yet</button>
-          <button class="btn btn-primary" disabled=${busy} onClick=${() => finalizeAndExport(false)}>
-            <${Icon} name="lock" size=${16} /> Finalize & export
+          <button class="btn btn-primary co-primary" disabled=${busy}
+            data-autofocus=${nNeed === 0 ? '' : undefined}
+            onClick=${() => finalizeAndExport(false)}>
+            <${Icon} name="lock" size=${16} /> Finalize & export<kbd class="ovl-kbd" aria-hidden="true">Enter</kbd>
           </button>
         </div>
       <//>`;
@@ -351,7 +539,7 @@ export function CloseOut({ onClose, openEditor }) {
           <div class="closeout-warnlist">
             ${warnInfo.warnOnly.map((b) => html`
               <div key=${b.id} class="closeout-warnitem">
-                <strong>${cardById[b.id]?.cm?.short_name || `entry #${b.id}`}</strong>
+                <strong>${draftById[b.id] ? label(draftById[b.id]) : `entry #${b.id}`}</strong>
                 <${ValidationList} findings=${b.warns} compact />
               </div>`)}
           </div>
@@ -365,7 +553,7 @@ export function CloseOut({ onClose, openEditor }) {
                   <span key=${e.id} class="small">${e.cm ? e.cm.short_name : 'No matter yet'} · ${fmtHours(e.total)}h</span>`)}
               </div>
               <div class="ovl-actions">
-                <button class="btn btn-primary" onClick=${restartSweep}>Restart the sweep</button>
+                <button class="btn btn-primary" onClick=${() => load(false)}>Start the review again</button>
               </div>
             </div>` : html`
             <div class="ovl-actions">
@@ -379,41 +567,60 @@ export function CloseOut({ onClose, openEditor }) {
           <div class="closeout-warnlist">
             ${warnInfo.hard.map((b) => html`
               <div key=${b.id} class="closeout-warnitem">
-                <span>${cardById[b.id]?.cm?.short_name || `entry #${b.id}`}</span>
+                <span>${draftById[b.id] ? label(draftById[b.id]) : `entry #${b.id}`}</span>
                 <${ValidationList} findings=${b.blocks} compact />
-                <button class="btn btn-sm" onClick=${() => editBlocked(b.id)}>Edit</button>
+                <button class="btn btn-sm" onClick=${() => editEntry(b.id)}>Edit</button>
               </div>`)}
           </div>` : null}
       <//>`;
-  } else if (phase === 'blocked') {
+  } else if (phase === 'blocked' || phase === 'closed') {
+    // ONE SCREEN FOR "SOMETHING IS LEFT OVER", and it says what and why.
+    // The wave-1 review, D12: the closed panel "reads '1 draft still need
+    // attention' — grammar, and a state question: the sweep accepted 5 of 5 and
+    // one draft is still outstanding, unexplained." It is explained now: each
+    // leftover is named, with the validation finding that blocked it and a
+    // button that opens it.
+    const info = phase === 'closed' ? closedInfo : blockedInfo;
+    const left = info.blocked || [];
+    const n = left.length;
+    title = phase === 'closed' ? 'Day closed' : 'Nothing exported yet';
     body = html`
       <${React.Fragment}>
-        <p>Nothing exported — ${blockedInfo.n} draft${blockedInfo.n === 1 ? '' : 's'} still need attention.</p>
-        <div class="ovl-actions">
-          <button class="btn btn-primary" onClick=${() => onClose(true)}>Done</button>
+        ${phase === 'closed' ? html`
+          <p class="closeout-hours mono">Day closed — ${fmtHours(info.total)}h · exported</p>` : null}
+        <p>
+          ${phase === 'closed'
+            ? `Everything else is finalized and in the CSV. ${n} ${n === 1 ? 'draft could' : 'drafts could'} not be finalized:`
+            : `Nothing could be finalized, so nothing was exported. ${n} ${n === 1 ? 'draft needs' : 'drafts need'} attention:`}
+        </p>
+        <div class="closeout-warnlist">
+          ${left.map((b) => html`
+            <div key=${b.id} class="closeout-warnitem">
+              <strong>${draftById[b.id] ? label(draftById[b.id]) : `entry #${b.id}`}</strong>
+              ${b.blocks && b.blocks.length ? html`<${ValidationList} findings=${b.blocks} compact />` : null}
+              <button class="btn btn-sm" onClick=${() => editEntry(b.id)}>
+                <${Icon} name="edit" size=${14} /> Fix it now
+              </button>
+            </div>`)}
         </div>
-      <//>`;
-  } else if (phase === 'closed') {
-    title = 'Day closed';
-    body = html`
-      <${React.Fragment}>
-        <p class="closeout-hours mono">Day closed — ${fmtHours(closedInfo.total)}h · exported</p>
-        ${closedInfo.stillBlocked ? html`
-          <p class="muted small">${closedInfo.stillBlocked} draft${closedInfo.stillBlocked === 1 ? '' : 's'} still need attention.</p>` : null}
+        <p class="muted small">
+          They stay as drafts on ${date}. Nothing was lost, and closing the day
+          again once they are fixed exports just them.
+        </p>
         <div class="ovl-actions">
           <button class="btn btn-primary" onClick=${() => onClose(true)}>Done</button>
         </div>
       <//>`;
   }
 
-  // One dialog, every phase. The panel keeps `closeout-card` (the sweep's own
-  // Enter handler and the e2e suite both select by it) and carries the phase
+  // One dialog, every phase. The panel keeps `closeout-card` (this component's
+  // own key handler and the e2e suite both select by it) and carries the phase
   // as data, where the backdrop used to.
   return html`
     <${Overlay} title=${title} onClose=${() => onClose(changedRef.current)}
       className=${'closeout-card' + (phase === 'closed' ? ' closeout-closed' : '')}
       panelAttrs=${{ 'data-phase': phase }}
-      initialFocus="textarea">
+      initialFocus=".co-item textarea">
       ${body}
     <//>`;
 }

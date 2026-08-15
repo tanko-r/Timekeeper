@@ -1,8 +1,9 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback, useAsync, Spinner, ErrorBox, fmtHours,
-  fmtDateLong, fmtDateFull, addDays, todayStr, emitToast, Icon, Confirm, ContextMenu, Overlay,
+  fmtDateLong, fmtDateFull, addDays, todayStr, emitToast, Icon, Confirm,
 } from '/js/ui.js';
+import { Menu, menuTriggerProps } from '/js/components/menu.js';
 import { rangeFor, shiftAnchor } from '/js/lib/daterange.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
 import { EntryList } from '/js/components/entrylist.js';
@@ -203,39 +204,10 @@ function BarList({ rows, labelKey, max, title }) {
     </div>`;
 }
 
-// ---------------------------------------------------------------------------
-// THE DAY-ACTIONS OVERFLOW, in the shape each pointer deserves.
-//
-// The three capabilities Calendar absorbed from the deleted Day view — read
-// the day back as prose, finalize it without exporting, download it as CSV —
-// live behind one "⋯". On a desktop that is a menu popover anchored under its
-// trigger, which is what Primer's ActionMenu, Polaris's Popover and Fluent's
-// ContextualMenu all render. On a phone the same popover measured 230×28 rows
-// (the wave critic: "a 28px-tall row is the sole affordance for Summary,
-// Finalize day and Export") and rendered left-anchored at x=8 while its
-// trigger sat at x≈190, spilling past the panel and butting into the bottom
-// navigation.
-//
-// So below 768px it is a bottom sheet through the app's ONE overlay primitive
-// — Material 3's answer for a menu on a phone, and the reason it is built on
-// `Overlay` rather than on a second copy of `.ctx-menu`: the scrim, the focus
-// trap, the scroll lock, Escape, hardware Back and the safe-area inset all
-// come from the same place every other dialog in the app gets them, and the
-// shared `.ctx-item` primitive is left exactly as the entry-row menu needs it.
-// ---------------------------------------------------------------------------
-function DayActionsSheet({ items, onClose }) {
-  return html`
-    <${Overlay} title="Day actions" onClose=${() => onClose()} size="sm" className="day-actions">
-      <div class="sheet-menu">
-        ${items.filter((it) => !it.hr).map((it, i) => html`
-          <button key=${i} type="button" class="sheet-item"
-            onClick=${() => { onClose(); it.onClick(); }}>
-            <${Icon} name=${it.icon} size=${18} />
-            <span>${it.label}</span>
-          </button>`)}
-      </div>
-    <//>`;
-}
+// THE DAY-ACTIONS OVERFLOW used to be a private popover/sheet pair defined
+// here — one of the app's three menu components. It goes through the shared
+// `Menu` (components/menu.js) now, which is the same popover-above-1024 /
+// bottom-sheet-below split this file was already making, built once.
 
 // ---------------------------------------------------------------------------
 // The selected day — the whole of the old Day view, inline, no navigation.
@@ -248,7 +220,7 @@ function DayActionsSheet({ items, onClose }) {
 // ---------------------------------------------------------------------------
 function DayPanel({
   selected, scope, setScope, customFrom, customTo, setCustomFrom, setCustomTo,
-  entries, loading, settings, openEditor, bumpRefresh, onStep, onMenu, title, panelRef,
+  entries, loading, settings, openEditor, bumpRefresh, onStep, onMenu, menuOpen, title, panelRef,
 }) {
   const total = entries.reduce((a, e) => a + e.total, 0);
   const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
@@ -269,18 +241,13 @@ function DayPanel({
           <span> · </span><span class="mono">${fmtHours(total)}h</span> total
         </span>
         <div class="spacer"></div>
-        ${/* Right-aligned UNDER its trigger, which is where a menu belongs and
-              where it was not: `r.left - 200` clamped to x=8 on a phone, so
-              the popover opened at the far edge of the screen from the button
-              that opened it. `.ctx-menu` is 240 wide (overlays.css), so its
-              right edge is the trigger's. On a phone this callback opens the
-              bottom sheet instead and the coordinates are ignored. */''}
+        ${/* The trigger element itself, not a pair of coordinates: the shared
+              menu measures its own height against it, right-aligns to it, flips
+              above it when the window is short, and gives focus back to it. */''}
         <button class="btn btn-icon day-panel-menu" aria-label="Day actions"
           title="Day actions — summary, finalize, download CSV"
-          onClick=${(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            onMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
-          }}><${Icon} name="more" size=${16} /></button>
+          ...${menuTriggerProps(menuOpen)}
+          onClick=${(e) => onMenu({ anchor: e.currentTarget })}><${Icon} name="more" size=${16} /></button>
         <button class="btn btn-primary" title="Record time on this day by hand (n)"
           onClick=${() => openEditor({ template: { date: selected } })}>
           <${Icon} name="plus" size=${16} /> New entry</button>
@@ -782,13 +749,12 @@ export function CalendarView({
           setCustomFrom=${setCustomFrom} setCustomTo=${setCustomTo}
           entries=${panelEntries} loading=${panelLoading}
           settings=${settings} openEditor=${openEditor} bumpRefresh=${bumpRefresh}
-          onStep=${stepSelection} onMenu=${setDayMenu} title=${panelTitle}
+          onStep=${stepSelection} onMenu=${setDayMenu} menuOpen=${!!dayMenu} title=${panelTitle}
           panelRef=${panelRef} />` : null}
     </div>
-    ${dayMenu ? (phone ? html`
-      <${DayActionsSheet} items=${dayMenuItems} onClose=${() => setDayMenu(null)} />` : html`
-      <${ContextMenu} x=${dayMenu.x} y=${dayMenu.y} items=${dayMenuItems}
-        onClose=${() => setDayMenu(null)} />`) : null}
+    ${dayMenu ? html`
+      <${Menu} anchor=${dayMenu.anchor} title="Day actions" items=${dayMenuItems}
+        onClose=${() => setDayMenu(null)} />` : null}
     ${summary ? html`
       <${SummaryModal} text=${summary} title=${`Summary — ${summaryTitle}`}
         filename=${`timekeeper-summary-${panelRange.from}${panelRange.to !== panelRange.from ? `_${panelRange.to}` : ''}.txt`}

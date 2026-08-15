@@ -35,8 +35,9 @@ import { api, downloadText } from '/js/api.js';
 import {
   html, React, useState, useEffect, useRef, useAsync, Spinner, ErrorBox, Icon,
   fmtHours, fmtStamp, todayStr, addDays, emitToast, markJustFinalized,
-  BillableBadge, StatusChip, Modal, Confirm, ContextMenu,
+  BillableBadge, StatusChip, Modal, Confirm,
 } from '/js/ui.js';
+import { Menu, menuTriggerProps, rowMenuItems as sharedRowMenuItems } from '/js/components/menu.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 // The shared overlay primitive, used directly rather than through ui.js's
 // Modal for one reason: Modal fixes the panel's className, and this dialog
@@ -311,6 +312,9 @@ export function LedgerTable({
 }) {
   const [menu, setMenu] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  // "Write narrative here" — the shared row menu's item, so the ledger reaches
+  // the inline editor by thumb the same way the two work lists do.
+  const [writingId, setWritingId] = useState(null);
   const allSelected = entries.length > 0 && entries.every((e) => selected.has(e.id));
   const someSelected = entries.some((e) => selected.has(e.id));
 
@@ -350,16 +354,21 @@ export function LedgerTable({
     });
   }
 
-  const rowMenuItems = (e) => [
-    { label: e.status === 'draft' ? 'Open entry…' : 'View entry…', icon: 'eye', onClick: () => openEditor({ id: e.id }) },
-    ...(e.status === 'draft'
-      ? [{ label: 'Finalize this entry', icon: 'lock', onClick: () => finalize(e) }]
-      : [{ label: 'Unlock for editing', icon: 'unlock', onClick: () => unlock(e) }]),
-    { label: 'Copy to today', icon: 'copy', onClick: () => openEditor({ copyFrom: e.id }) },
-    ...(e.status === 'draft'
-      ? [{ hr: true }, { label: 'Delete entry', icon: 'trash', danger: true, onClick: () => setDeleting(e) }]
-      : []),
-  ];
+  // THE SAME ROW MENU THE TWO WORK LISTS CARRY (components/menu.js). It was a
+  // fourth hand-written item list until this wave; building it from the shared
+  // model is what makes `Delete entry` appear on every row that has an entry
+  // — present and disabled with its reason on a finalized one, rather than
+  // silently absent on half the ledger.
+  const rowMenuItems = (e) => sharedRowMenuItems({
+    entries: [e], focus: e, fmtHours: (h) => fmtHours(h, increment),
+  }, {
+    openEntry: (x) => openEditor({ id: x.id }),
+    writeNarrative: (x) => setWritingId(x.id),
+    finalize: (x) => finalize(x),
+    unlock: (x) => unlock(x),
+    copyToToday: (x) => openEditor({ copyFrom: x.id }),
+    deleteEntry: (x) => setDeleting(x),
+  });
 
   // The export stamp. Four real states, and the one column on this screen that
   // answers "has this left the building?".
@@ -428,7 +437,8 @@ export function LedgerTable({
                         onClick=${() => openEditor({ id: e.id })}>Assign matter</button>`}
                   </td>
                   <td data-col="narrative">
-                    <${InlineNarrative} entry=${e} onChanged=${onChanged} />
+                    <${InlineNarrative} entry=${e} onChanged=${onChanged}
+                      autoEdit=${writingId === e.id} onDone=${() => setWritingId(null)} />
                   </td>
                   <td data-col="status">
                     <div class="ledger-chipset">
@@ -444,12 +454,10 @@ export function LedgerTable({
                   <td data-col="exported" class="small">${exportCell(e)}</td>
                   <td data-col="actions">
                     <button type="button" class="btn btn-ghost btn-sm btn-icon ledger-more"
-                      title="More actions for this entry" aria-label="More actions for this entry"
-                      aria-haspopup="menu"
-                      onClick=${(ev) => {
-                        const r = ev.currentTarget.getBoundingClientRect();
-                        setMenu({ x: r.left, y: r.bottom + 2, entry: e });
-                      }}><${Icon} name="more" size=${16} /></button>
+                      title="Row menu" aria-label=${`Row menu — ${e.cm ? e.cm.short_name : 'entry with no matter'}`}
+                      ...${menuTriggerProps(!!menu && menu.entry === e)}
+                      onClick=${(ev) => setMenu({ anchor: ev.currentTarget, entry: e })}>
+                      <${Icon} name="more" size=${16} /></button>
                   </td>
                 </tr>`);
               return rows;
@@ -458,7 +466,9 @@ export function LedgerTable({
         </table>
       </div>
       ${menu ? html`
-        <${ContextMenu} x=${menu.x} y=${menu.y} items=${rowMenuItems(menu.entry)}
+        <${Menu} anchor=${menu.anchor}
+          title=${menu.entry.cm ? menu.entry.cm.short_name : 'Entry'}
+          items=${rowMenuItems(menu.entry)}
           onClose=${() => setMenu(null)} />` : null}
       ${deleting ? html`
         <${Confirm} title="Delete entry" danger confirmLabel="Delete"

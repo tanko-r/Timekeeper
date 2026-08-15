@@ -11,24 +11,160 @@
   margin: 0 auto 10px; border: 1px solid var(--border); border-radius: 6px;
 }
 
-/* ---------- context menu ---------- */
+/* ===========================================================================
+   MENU — ONE COMPONENT, TWO SHAPES  (public/js/components/menu.js)
+
+   The wave-1 review, D6: "Three overflow-menu components now coexist, which
+   contradicts wave 0b's 'every dialog goes through one overlay primitive':
+   `.ovl` full-screen sheets with 44px rows, `.ctx-menu` anchored popovers with
+   28px rows, and `.act-menu` with 36px rows. The already-queued '28px rows'
+   item is a symptom; the disease is that there are three menus."
+
+   There is one now, and this is both of its shapes:
+
+     .ctx-menu / .ctx-item      the ≥1024px anchored popover — Primer
+                                ActionMenu's proportions, the plain-text rows
+                                and quiet icon column of
+                                shots/refs-v2/attio-overflow-settings-menu
+                                .desktop.png, and a permanent :focus tint,
+                                because the roving focus IS this component's
+                                selection marker and has to show whether the
+                                menu was opened by Enter or by a click.
+     .menu-sheet / .sheet-item  the <1024px bottom sheet, riding on the shared
+                                overlay primitive so the grip, scrim, trap,
+                                scroll lock, Escape and safe-area inset all come
+                                from one place. 48px rows — Material 3's list
+                                item inside a modal sheet, four clear of the
+                                44px floor. The row metrics themselves are
+                                established in views.css (`.sheet-item`) and
+                                entries.css; what is here is the delta the
+                                unified menu adds.
+
+   The class names are the OLD ones on purpose: they are what the e2e suite
+   binds to, and a unification that renamed every hook would have been
+   indistinguishable from one that broke every hook.
+   =========================================================================== */
+
 .ctx-menu {
-  position: fixed; z-index: 300; min-width: 240px; max-height: 480px; overflow-y: auto;
-  background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
-  box-shadow: var(--shadow); padding: 4px;
+  position: fixed; z-index: var(--z-menu);
+  min-width: 240px;
+  max-width: min(360px, calc(100vw - 2 * var(--space-2)));
+  max-height: min(70vh, calc(100vh - 2 * var(--space-2)));
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
 }
+.ctx-menu:focus { outline: none; }
+
 .ctx-item {
-  display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px;
-  border: 0; background: none; border-radius: 6px; font-size: 13.5px; text-align: left;
-  cursor: pointer; color: var(--text-primary);
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; min-height: var(--control-h-md);
+  padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-primary);
+  font-family: inherit; font-size: var(--fs-label); line-height: var(--lh-body);
+  font-weight: var(--fw-regular); letter-spacing: var(--ls-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
 }
-.ctx-item:hover:not(:disabled) { background: var(--surface-2); }
-.ctx-item:disabled { opacity: .4; cursor: default; }
-.ctx-item.danger { color: var(--status-critical); }
-.ctx-hr { border-top: 1px solid var(--border); margin: 4px 6px; }
-.ctx-inline { display: flex; align-items: center; gap: 4px; padding: 4px 10px; flex-wrap: wrap; }
-.ctx-inline select { padding: 3px 6px; font-size: 13px; width: auto; flex: 1; }
-.ctx-spacer { width: 16px; }
+.ctx-item:hover:not(:disabled) { background: var(--state-hover); }
+/* Not :focus-visible. Focus lands here only because the menu put it here, so
+   the ring is the active-item marker and must show however the menu opened. */
+.ctx-item:focus {
+  background: var(--state-hover);
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: calc(-1 * var(--focus-w));
+}
+.ctx-item:disabled { opacity: var(--state-disabled-opacity); cursor: default; }
+.ctx-item:disabled:hover { background: none; }
+
+/* DESTRUCTIVE ITEMS ARE VISUALLY DISTINCT — not merely last. The colour is
+   carried by the icon as well as the label, so the row reads as dangerous
+   before it is read at all. */
+.ctx-item.danger, .sheet-item.danger { color: var(--danger); }
+.ctx-item.danger .ctx-ico, .sheet-item.danger svg { color: currentColor; }
+
+.ctx-ico { flex: none; color: var(--text-muted); }
+.ctx-label { min-width: 0; }
+.ctx-spacer { width: var(--icon-md); flex: none; }
+.ctx-hr {
+  border-top: var(--border-w) solid var(--border-subtle);
+  margin: var(--space-1) var(--space-2);
+}
+
+/* SECTION LABELS. A flat list of seventeen is not a menu (teardown §5): a long
+   one is grouped, the group is named, and the name is a caption — quiet enough
+   that it never reads as a row you could press. */
+.ctx-group + .ctx-group { margin-top: var(--space-1); }
+.ctx-section {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: var(--fw-micro);
+  letter-spacing: var(--ls-micro); text-transform: uppercase;
+  color: var(--text-muted);
+}
+.ctx-group + .ctx-group .ctx-section {
+  border-top: var(--border-w) solid var(--border-subtle);
+  margin-top: var(--space-1);
+}
+
+/* A row that carries controls rather than a verb — the list's Show/Group/Order
+   switches, a row's backdate chips, the batch menu's group picker. */
+.ctx-inline {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-1); padding: var(--space-1) var(--space-2);
+}
+.ctx-inline select { width: auto; flex: 1 1 8rem; }
+
+/* A tablet is a coarse pointer that can still be wide enough for the popover
+   (an external keyboard on a large iPad), so the popover has to meet the floor
+   too — the same guard settings.css used to carry for `.act-item`. */
+@media (pointer: coarse) {
+  .ctx-item { min-height: var(--tap-min); padding: var(--space-2); }
+  .ctx-ico, .ctx-spacer { width: var(--icon-lg); }
+}
+
+/* ---------- the same menu as a bottom sheet ----------
+   `.sheet-menu` / `.sheet-item` are shared with the sheets views.css and
+   entries.css already established, so the phone menu is one component and not
+   a look-alike. These are the pieces the unified menu adds: the 48px row, the
+   section label, and the disabled state a state-driven menu now needs (the
+   `Delete entry` row is present on every row that has an entry, and disabled
+   with its reason on a finalized one). */
+.tk-menu-sheet .sheet-menu { display: flex; flex-direction: column; }
+.tk-menu-sheet .sheet-item { min-height: var(--control-h-xl); }
+.tk-menu-sheet .sheet-label { min-width: 0; }
+.tk-menu-sheet .sheet-item:disabled { opacity: var(--state-disabled-opacity); cursor: default; }
+.tk-menu-sheet .sheet-item:disabled:hover { background: none; }
+.tk-menu-sheet .sheet-group + .sheet-group { margin-top: var(--space-2); }
+.tk-menu-sheet .sheet-section {
+  padding: var(--space-3) 0 var(--space-1);
+  font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: var(--fw-micro);
+  letter-spacing: var(--ls-micro); text-transform: uppercase;
+  color: var(--text-muted);
+}
+.tk-menu-sheet .sheet-group + .sheet-group .sheet-section {
+  border-top: var(--border-w) solid var(--border);
+  margin: 0 calc(var(--space-4) * -1);
+  padding-inline: var(--space-4);
+}
+/* A separator inside a sheet runs the full width of the sheet, like the row
+   dividers above and below it. */
+.tk-menu-sheet .sheet-hr {
+  border-top: var(--border-w) solid var(--border);
+  margin: var(--space-2) calc(var(--space-4) * -1);
+}
+.tk-menu-sheet .sheet-custom {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline); padding: var(--space-2) 0;
+}
+.tk-menu-sheet .sheet-custom .ctx-inline { flex: 1 1 100%; padding: 0; gap: var(--gap-inline); }
+.tk-menu-sheet .sheet-custom .ctx-inline select { flex: 1 1 8rem; }
+.tk-menu-sheet .sheet-custom + .sheet-custom {
+  border-top: var(--border-w) solid var(--border-subtle);
+}
 
 /* ---------- modal, toast ----------
    The dialog SHELL — backdrop, panel, header, body, sizes, the phone bottom

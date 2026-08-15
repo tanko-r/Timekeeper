@@ -3,7 +3,8 @@ import {
   html, React, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
   fmtDateFull, addDays, todayStr, emitToast, Confirm, Icon,
 } from '/js/ui.js';
-import { ActionMenu, usePhone } from '/js/components/entrylist.js';
+import { usePhone } from '/js/components/entrylist.js';
+import { Menu, menuTriggerProps } from '/js/components/menu.js';
 import { TodayList } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
@@ -257,11 +258,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
             used to be two visually prominent header buttons that were both
             strict subsets of Close the day (teardown §2). */''}
       <button class="btn btn-icon day-menu-btn" title="Day actions — new entry, summary, finalize, export"
-        aria-label="Day actions"
-        onClick=${(e) => {
-          const r = e.currentTarget.getBoundingClientRect();
-          setDayMenu({ x: Math.max(8, r.left - 40), y: r.bottom + 4 });
-        }}><${Icon} name="more" size=${16} /></button>
+        aria-label="Day actions" ...${menuTriggerProps(!!dayMenu)}
+        onClick=${(e) => setDayMenu({ anchor: e.currentTarget })}><${Icon} name="more" size=${16} /></button>
       <div class="spacer"></div>
       ${/* ONE primary, and it is the app's most frequent verb — on a phone it
             is the first control on the screen, where the first thing that
@@ -300,21 +298,20 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         </p>
         ${phone && attnItems.length > 1 ? html`
           <button class="btn btn-sm attn-more" title="Everything else that needs attention today"
-            onClick=${(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              setAttnMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
-            }}>+${attnItems.length - 1} more</button>` : null}
+            ...${menuTriggerProps(!!attnMenu)}
+            onClick=${(e) => setAttnMenu({ anchor: e.currentTarget })}>
+            +${attnItems.length - 1} more</button>` : null}
       </div>` : null}
 
     <${TodayList} settings=${settings} entries=${d.entries} onEntryChanged=${bumpRefresh}
       openEditor=${openEditor} />
 
     ${dayMenu ? html`
-      <${ActionMenu} x=${dayMenu.x} y=${dayMenu.y} title="Day actions" items=${dayMenuItems}
+      <${Menu} anchor=${dayMenu.anchor} title="Day actions" items=${dayMenuItems}
         onClose=${() => setDayMenu(null)} />` : null}
 
     ${attnMenu ? html`
-      <${ActionMenu} x=${attnMenu.x} y=${attnMenu.y} title="Needs attention" items=${attnMenuItems}
+      <${Menu} anchor=${attnMenu.anchor} title="Needs attention" items=${attnMenuItems}
         onClose=${() => setAttnMenu(null)} />` : null}
 
     ${warnGate ? html`

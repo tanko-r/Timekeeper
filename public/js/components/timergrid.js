@@ -7,7 +7,8 @@ import {
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
-import { InlineNarrative, EmptyState, ActionMenu } from '/js/components/entrylist.js';
+import { InlineNarrative, EmptyState } from '/js/components/entrylist.js';
+import { Menu, rowMenuItems as buildRowMenu, rowMenuTitle, menuTriggerProps } from '/js/components/menu.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
@@ -47,8 +48,8 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   const [, forceTick] = useState(0);
   const [editing, setEditing] = useState(null);       // timer | 'new'
   const [groupModal, setGroupModal] = useState(null); // 'new' | group
-  const [menu, setMenu] = useState(null);             // {x, y, row} | {x, y, ids}
-  const [listMenu, setListMenu] = useState(null);     // {x, y} — the list's own options
+  const [menu, setMenu] = useState(null);             // { anchor|x,y, row } | { anchor|x,y, ids }
+  const [listMenu, setListMenu] = useState(null);     // { anchor } — the list's own options
   const [stopPopup, setStopPopup] = useState(null);   // {timer, result}
   const [deleting, setDeleting] = useState(null);
   const [deletingEntry, setDeletingEntry] = useState(null);
@@ -509,97 +510,45 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
   // ---------- row menu ----------
 
-  // THE ROW MENU: SEVENTEEN ITEMS DOWN TO EIGHT (wave-2).
+  // ONE ROW MENU, SHARED WITH THE ENTRY LIST AND THE LEDGER.
   //
-  // The wave critic measured it at 390×844 and found the object the teardown
-  // §5 had named as the app's tell still standing: a 280×480 popover covering
-  // 57% of the phone, seventeen rows, internally scrolled, with its last two
-  // items ("Edit timer…", "Delete timer") below the viewport entirely. The
-  // previous pass had relabelled and reordered it; the COUNT was unchanged.
+  // The wave critic measured the seventeen-item popover the teardown named as
+  // the app's tell and the previous pass cut it to ten — but into TWO menus:
+  // `Timer menu` (10 items) on a row with a timer, `Entry menu` (6) on one
+  // without, and `Delete entry` present in one and absent from the other, with
+  // nothing on the row to say which you were about to get (wave-1 review, D7).
   //
-  // The split is by subject, which is the only split that survives contact
-  // with a hurry. What a lawyer does to TODAY'S WORK stays here — stop it,
-  // start it as of a few minutes ago, open it, write its narrative, finalize
-  // it, copy it. What he does to the TIMER ITSELF — duplicate, group, reorder,
-  // pin, zero, delete — is timer maintenance, and it now lives in the
-  // Edit-timer dialog, which this menu still reaches in one row and which is
-  // where the timer's name, matter, task code, group and template already
-  // were. Nothing is gone; six rows became one row plus a dialog section, and
-  // every one of them is a 44px target there instead of a 28px one here.
+  // There is one now. It is built by `rowMenuItems` in components/menu.js from
+  // what the row IS — timer or not, running or not, entry or not, draft or
+  // finalized — and it is grouped: Timer, then Entry, then Manage, then the one
+  // destructive item alone under a rule. `Delete entry` is on every row that
+  // has an entry; on a finalized one it is present, disabled, and says that it
+  // needs unlocking first, because that is what the server says too.
   //
-  // "Start at last stop" folded into the backdate chip row it belonged with
-  // rather than costing a row of its own.
+  // The split by subject survives: what a lawyer does to TODAY'S WORK is in the
+  // menu, and what he does to the TIMER ITSELF — duplicate, group, reorder,
+  // pin, zero, delete — is one row (`Edit timer…`) into the dialog that already
+  // owned the timer's name, matter, task code, group and template. Nothing is
+  // gone; every one of those is a 44px target there.
   function rowMenuItems(row) {
-    const { timer } = row;
-    const entries = row.entries || [];
-    const focus = row.focus || null;
-    const running = !!(timer && timer.running);
-    const items = [];
-    if (timer) {
-      items.push(running
-        ? { label: 'Stop & file time', icon: 'stop', onClick: () => guard(stop(timer)) }
-        : { label: 'Start', icon: 'play', onClick: () => guard(start(timer)) });
-      items.push({
-        custom: () => html`
-          <div class="ctx-inline">
-            <span class="muted small">Start</span>
-            ${[10, 30].map((m) => html`
-              <button key=${m} class="btn btn-sm" disabled=${running}
-                title=${`Start as if it had begun ${m} minutes ago`}
-                onClick=${() => { setMenu(null); guard(start(timer, { minutesAgo: m })); }}>${m}m ago</button>`)}
-            <button class="btn btn-sm" disabled=${running || !timer.last_stopped_at}
-              title="Start as if it had begun the moment this timer last stopped"
-              onClick=${() => { setMenu(null); guard(start(timer, { atLastStop: true })); }}>at last stop</button>
-          </div>`,
-      });
-      items.push({ hr: true });
-    }
-    const linked = focus;
-    if (linked) {
-      // A matter can carry more than one entry today (one the timer filed, one
-      // keyed by hand). The row states the total; the menu opens them one by
-      // one rather than splitting the matter back into two rows.
-      if (entries.length > 1) {
-        for (const e of entries) {
-          const snippet = (e.narrative || '').trim().replace(/\s+/g, ' ').slice(0, 32);
-          items.push({
-            label: `Open ${fmtHours(e.total)}h${e.status === 'draft' ? '' : ` · ${e.status}`} — ${snippet || 'no narrative yet'}`,
-            icon: 'eye',
-            onClick: () => openEditor({ id: e.id }),
-          });
-        }
-      } else {
-        items.push({ label: 'Open entry…', icon: 'eye', onClick: () => openEditor({ id: linked.id }) });
-      }
-      if (linked.status === 'draft') {
-        items.push({ label: 'Write narrative here', icon: 'edit', onClick: () => { setFocusKey(row.key); setWritingKey(row.key); setWriteEntryId(linked.id); } });
-        items.push({ label: 'Finalize this entry', icon: 'lock', onClick: () => guard(finalizeEntry(linked)) });
-      } else {
-        items.push({ label: 'Unlock for editing', icon: 'unlock', onClick: () => guard(unlockEntry(linked)) });
-      }
-      items.push({ label: 'Copy to today', icon: 'copy', onClick: () => openEditor({ copyFrom: linked.id }) });
-    } else if (timer) {
-      items.push({
-        label: 'Open today’s entry',
-        icon: 'eye',
-        disabled: !timer.linked_entry_id,
-        onClick: () => openEditor({ id: timer.linked_entry_id }),
-      });
-    }
-    if (timer) {
-      items.push({ hr: true });
-      // ONE ROW carries the whole of timer maintenance: duplicate, move to a
-      // group, reorder, pin to the float window, zero the clock, delete.
-      items.push({ label: 'Edit timer…', icon: 'edit', onClick: () => setEditing(timer) });
-    }
-    if (!timer && linked) {
-      items.push({ hr: true });
-      items.push({ label: 'Start a timer on this matter', icon: 'play', onClick: () => guard(startForEntry(linked)) });
-      if (linked.status === 'draft') {
-        items.push({ label: 'Delete entry', icon: 'trash', danger: true, onClick: () => setDeletingEntry(linked) });
-      }
-    }
-    return items;
+    return buildRowMenu({
+      timer: row.timer,
+      entries: row.entries || [],
+      focus: row.focus || null,
+      fmtHours,
+    }, {
+      start: (t) => guard(start(t)),
+      stop: (t) => guard(stop(t)),
+      startBackdated: (t, opts) => { setMenu(null); guard(start(t, opts)); },
+      startForEntry: (e) => guard(startForEntry(e)),
+      openEntry: (e) => openEditor({ id: e.id }),
+      writeNarrative: (e) => { setFocusKey(row.key); setWritingKey(row.key); setWriteEntryId(e.id); },
+      finalize: (e) => guard(finalizeEntry(e)),
+      unlock: (e) => guard(unlockEntry(e)),
+      copyToToday: (e) => openEditor({ copyFrom: e.id }),
+      editTimer: (t) => setEditing(t),
+      deleteEntry: (e) => setDeletingEntry(e),
+    });
   }
 
   async function startForEntry(entry) {
@@ -617,7 +566,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       await reload();
     };
     return [
-      { custom: () => html`<div class="ctx-inline"><span class="muted small">${ids.length} timers selected</span></div>` },
+      { section: `${ids.length} timers selected` },
       {
         custom: () => html`
           <div class="ctx-inline">
@@ -966,7 +915,11 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
           </span>
         </div>`,
     });
+    // GROUPED, because a flat list of eleven is not a menu (teardown §5). What
+    // shapes the list comes first, what reorganises it second, and the one
+    // destructive row last and alone — the same anatomy the row menu uses.
     const items = [
+      { section: 'View' },
       seg('Show', activityKey, setActivityKey, [
         ['', 'All'], ['act-today', 'Today'], ['act-yesterday', 'Yesterday'],
         ['act-week', 'Week'], ['act-recent', 'Recent'],
@@ -987,24 +940,24 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       });
     }
     items.push(seg('Order', order, setOrder, [['activity', 'Recent activity'], ['manual', 'Manual']]));
-    items.push({ hr: true });
+    items.push({ section: 'Organise' });
     items.push({ label: 'Sort A–Z (writes the manual order)', icon: 'sortAZ', onClick: () => guard(sortAZ()) });
     items.push({ label: 'Select several…', icon: 'check', onClick: () => setSelectMode(true) });
-    items.push({ hr: true });
     items.push({ label: 'New group…', icon: 'folder', onClick: () => setGroupModal('new') });
-    if (byGroupMode && only) {
-      const sec = sections.find((s) => s.key === only);
-      if (sec && sec.group) {
-        items.push({ label: `Rename “${sec.group.name}”…`, icon: 'edit', onClick: () => setGroupModal(sec.group) });
-        items.push({
-          label: `Delete “${sec.group.name}” (timers kept)`,
-          icon: 'trash',
-          danger: true,
-          onClick: () => guard(api.del(`/api/timer-groups/${sec.group.id}`).then(() => { setOnlyKey(''); return reload(); })),
-        });
-      }
+    const sec = byGroupMode && only ? sections.find((x) => x.key === only) : null;
+    if (sec && sec.group) {
+      items.push({ label: `Rename “${sec.group.name}”…`, icon: 'edit', onClick: () => setGroupModal(sec.group) });
     }
     items.push({ label: 'Import timers from CSV…', icon: 'download', onClick: () => setImporting(true) });
+    if (sec && sec.group) {
+      items.push({ hr: true });
+      items.push({
+        label: `Delete “${sec.group.name}” (timers kept)`,
+        icon: 'trash',
+        danger: true,
+        onClick: () => guard(api.del(`/api/timer-groups/${sec.group.id}`).then(() => { setOnlyKey(''); return reload(); })),
+      });
+    }
     return items;
   }
 
@@ -1028,10 +981,8 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         <${Icon} name="search" size=${16} />
       </button>
       <button class="btn btn-sm today-menu-btn" title="List options — filter, group, order, import"
-        aria-label="List options" onClick=${(e) => {
-          const r = e.currentTarget.getBoundingClientRect();
-          setListMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
-        }}>
+        aria-label="List options" ...${menuTriggerProps(!!listMenu)}
+        onClick=${(e) => setListMenu({ anchor: e.currentTarget })}>
         <${Icon} name="more" size=${16} />
       </button>
     </div>
@@ -1050,10 +1001,8 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         <span class="muted small">Tick the rows you want, then choose an action.</span>
         <span class="spacer" style=${{ flex: 1 }}></span>
         <button class="btn btn-sm" disabled=${selected.size === 0}
-          onClick=${(e) => {
-            const r = e.currentTarget.getBoundingClientRect();
-            setMenu({ x: Math.max(8, r.left - 120), y: r.bottom + 4, ids: [...selected] });
-          }}>Actions…</button>
+          ...${menuTriggerProps(!!menu && !!menu.ids)}
+          onClick=${(e) => setMenu({ anchor: e.currentTarget, ids: [...selected] })}>Actions…</button>
         <button class="btn btn-sm" onClick=${exitSelectMode}>Done (Esc)</button>
       </div>` : null}
 
@@ -1114,9 +1063,10 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
                     onOpenEntry=${() => r.focus && openEditor({ id: r.focus.id })}
                     onAssignMatter=${() => (r.focus ? openEditor({ id: r.focus.id }) : setEditing(r.timer))}
                     onEntryChanged=${onEntryChanged}
-                    onMenu=${(x, y) => {
-                      if (r.timer && selected.size > 1 && selected.has(r.timer.id)) setMenu({ x, y, ids: [...selected] });
-                      else { clearSelection(); setMenu({ x, y, row: r }); }
+                    menuOpen=${!!menu && menu.row === r}
+                    onMenu=${(at) => {
+                      if (r.timer && selected.size > 1 && selected.has(r.timer.id)) setMenu({ ...at, ids: [...selected] });
+                      else { clearSelection(); setMenu({ ...at, row: r }); }
                     }}
                     onDragStart=${() => { dragId.current = r.timer.id; setDraggingId(r.timer.id); }}
                     onDragEnd=${endDrag}
@@ -1139,13 +1089,13 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     </div>
 
     ${menu ? html`
-      <${ActionMenu} x=${menu.x} y=${menu.y}
-        title=${menu.ids ? `${menu.ids.length} timers` : (menu.row?.timer ? 'Timer actions' : 'Entry actions')}
+      <${Menu} anchor=${menu.anchor} x=${menu.x} y=${menu.y}
+        title=${menu.ids ? `${menu.ids.length} timers` : rowMenuTitle(menu.row)}
         items=${menu.ids ? batchMenuItems(menu.ids) : rowMenuItems(menu.row)}
         onClose=${() => setMenu(null)} />` : null}
 
     ${listMenu ? html`
-      <${ActionMenu} x=${listMenu.x} y=${listMenu.y} title="List options" items=${listMenuItems()}
+      <${Menu} anchor=${listMenu.anchor} title="List options" items=${listMenuItems()}
         onClose=${() => setListMenu(null)} />` : null}
 
     ${editing ? html`
@@ -1219,7 +1169,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 function WorkRow({
   row, secs, idleAfter, roundMode, canDrag = true, dragging = false,
   selectMode = false, selected = false, tabbable = false, writing = false,
-  onFocusRow, onSelect, onToggleSelected, onStart, onStop, onSet, onSetHours, onRename, onMenu,
+  onFocusRow, onSelect, onToggleSelected, onStart, onStop, onSet, onSetHours, onRename, onMenu, menuOpen = false,
   onOpenEntry, onAssignMatter, onEntryChanged, onWritingDone,
   onDragStart, onDragEnd, onDragOverRow, onDropOn,
 }) {
@@ -1357,7 +1307,9 @@ function WorkRow({
       onDragEnd=${() => onDragEnd && onDragEnd()}
       onDragOver=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); if (onDragOverRow) onDragOverRow(); }}
       onDrop=${(e) => { if (!canDrag) return; e.preventDefault(); e.stopPropagation(); onDropOn(); }}
-      onContextMenu=${(e) => { e.preventDefault(); onMenu(e.clientX, e.clientY); }}>
+      ${/* A right-click has no trigger element to hang off, so it is the one
+            caller that passes a point instead of an anchor. */''}
+      onContextMenu=${(e) => { e.preventDefault(); onMenu({ x: e.clientX, y: e.clientY }); }}>
 
       ${selectMode ? html`
         <label class="work-pick"
@@ -1471,9 +1423,16 @@ function WorkRow({
           </span>`}
       </div>
 
+      ${/* ONE NAME FOR ONE MENU. Two visually identical rows used to say
+            "Timer menu" and "Entry menu" and open two different item lists —
+            the wave-1 review's D7. The menu is state-driven now, so the
+            trigger names the ROW rather than promising a menu shape, and the
+            element itself is handed over: it is what the popover hangs off and
+            what focus returns to. */''}
       <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1}
-        title=${timer ? 'Timer menu' : 'Entry menu'} aria-label=${timer ? 'Timer menu' : 'Entry menu'}
-        onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(Math.max(8, r.right - 240), r.bottom + 2); }}>
+        title="Row menu" aria-label=${`Row menu — ${name}`}
+        ...${menuTriggerProps(menuOpen)}
+        onClick=${(e) => onMenu({ anchor: e.currentTarget })}>
         <${Icon} name="more" size=${15} />
       </button>
     </div>`;

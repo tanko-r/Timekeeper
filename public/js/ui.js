@@ -2,6 +2,7 @@
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
 import { Overlay } from '/js/components/overlay.js';
+import { Menu } from '/js/components/menu.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
@@ -173,43 +174,17 @@ export function Modal({ title, onClose, children, wide, initialFocus }) {
     <//>`;
 }
 
-// Right-click menu at a fixed position. items: {label, icon?, onClick,
-// disabled?, danger?, hr?, custom? (render fn — row supplies its own content)}
-export function ContextMenu({ x, y, items, onClose }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    const away = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
-    const key = (e) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('mousedown', away);
-    document.addEventListener('contextmenu', away);
-    document.addEventListener('keydown', key);
-    return () => {
-      document.removeEventListener('mousedown', away);
-      document.removeEventListener('contextmenu', away);
-      document.removeEventListener('keydown', key);
-    };
-  }, [onClose]);
-
-  // keep the menu on-screen
-  const style = {
-    left: Math.min(x, window.innerWidth - 280) + 'px',
-    top: Math.min(y, window.innerHeight - Math.min(items.length * 34 + 16, 480)) + 'px',
-  };
-
-  return createPortal(html`
-    <div class="ctx-menu" ref=${ref} style=${style} role="menu">
-      ${items.map((item, i) => {
-        if (item.hr) return html`<div key=${i} class="ctx-hr"></div>`;
-        if (item.custom) return html`<div key=${i} class="ctx-custom">${item.custom()}</div>`;
-        return html`
-          <button key=${i} class=${'ctx-item' + (item.danger ? ' danger' : '')}
-            disabled=${item.disabled}
-            onClick=${() => { onClose(); item.onClick(); }}>
-            ${item.icon ? html`<${Icon} name=${item.icon} size=${16} />` : html`<span class="ctx-spacer"></span>`}
-            <span>${item.label}</span>
-          </button>`;
-      })}
-    </div>`, document.body);
+// THE APP'S MENU, kept here only as an alias.
+//
+// This used to BE a menu — a 28px-row popover with no keyboard model and no
+// phone shape, one of the three the wave-1 review found coexisting (D6). The
+// one menu lives in components/menu.js now; this signature survives so the
+// entry editor's AI dropdown, which is owned by another builder this wave,
+// keeps working unchanged and gets the popover-or-sheet split, the roving
+// focus, the type-ahead and the 44px rows for free. New callers should import
+// `Menu` directly.
+export function ContextMenu({ x, y, items, onClose, title = 'Actions' }) {
+  return html`<${Menu} x=${x} y=${y} items=${items} title=${title} onClose=${onClose} />`;
 }
 
 // Even split helper mirroring the server's tenth allocation.

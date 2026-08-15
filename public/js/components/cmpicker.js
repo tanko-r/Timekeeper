@@ -1,11 +1,43 @@
 import { api } from '/js/api.js';
 import {
-  html, React, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel,
+  html, React, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel, Icon,
 } from '/js/ui.js';
 import { useDismissLayer } from '/js/components/overlay.js';
 
 const SIX_RE = /^\d{6}$/;
 const CM_RE = /^\d{6}-\d{6}$/;
+
+// THE RESTING LIST, CACHED, so the picker is instant rather than merely fast.
+//
+// Measured before this: every open fired GET /api/cms/picker?q= and rendered
+// `items = []` while it was in flight — so the first frame of the app's
+// most-used control was the words "No matches", replaced a moment later by the
+// six matters that were always going to be there. On a phone, over the tunnel,
+// that flash is the whole interaction.
+//
+// The empty query is the same answer for every caller, so it is fetched once
+// per session and served synchronously on the next open; a background refresh
+// keeps it honest (a matter created in this session shows up on the following
+// open). Only the EMPTY query is cached — a typed query is cheap server-side
+// (one ranked pass over active matters) and caching it would be the wrong
+// trade.
+let restingCache = null;
+let restingAt = 0;
+const RESTING_TTL = 30_000;
+
+function primeResting() {
+  if (restingCache && Date.now() - restingAt < RESTING_TTL) return;
+  api.get('/api/cms/picker?q=')
+    .then((rows) => { restingCache = rows; restingAt = Date.now(); })
+    .catch(() => {});
+}
+// Warm it as soon as anything imports the picker: by the time a dialog opens,
+// the list is already in memory.
+primeResting();
+
+// Invalidated by the create/edit paths below so a matter made seconds ago is
+// in the resting list the next time the picker opens.
+function invalidateResting() { restingCache = null; restingAt = 0; }
 
 // A DOM id is a document-wide fact and there can be two pickers on one screen
 // (the entry editor's, and the ledger filter's), so the ids that wire the
@@ -35,23 +67,55 @@ const uid = () => React.useId().replace(/:/g, '');
 // is the single most common command-palette accessibility bug; it is not what
 // this does, and `hover` was already the virtual cursor. It just had no name
 // assistive technology could read.
-export function CmPicker({ value, onChange, autoFocus, allowCreate = true, placeholder = 'Search client or matter…' }) {
+// `variant`: 'field' (default — the control IS the row) or 'row' (label-left /
+// value-right: the picked matter renders as a quiet right-aligned value with a
+// chevron, the way Harvest's Project/Task rows do, and only turns into a search
+// box while it is open).
+// `onOpenChange(open)` lets the containing row restyle itself while the listbox
+// is down — the value cell of a label/value row is too narrow to search in.
+export function CmPicker({
+  value, onChange, autoFocus, allowCreate = true,
+  placeholder = 'Search client or matter…', variant = 'field', onOpenChange, disabled = false,
+}) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const [items, setItems] = useState([]);
+  // Seeded from the session cache so the first paint of an open picker already
+  // has rows in it (see primeResting above).
+  const [items, setItems] = useState(() => restingCache || []);
+  const [loading, setLoading] = useState(false);
   const [hover, setHover] = useState(0);
   const [creating, setCreating] = useState(false);
   const boxRef = useRef(null);
+  const listRef = useRef(null);
+  const seq = useRef(0); // request ordering: a slow old query must never win
   const id = uid();
   const listId = `${id}-list`;
   const optId = (i) => `${id}-opt-${i}`;
 
+  const openChangeRef = useRef(onOpenChange);
+  openChangeRef.current = onOpenChange;
+  useEffect(() => { if (openChangeRef.current) openChangeRef.current(open); }, [open]);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open) return undefined;
+    const query = q.trim();
+    // The resting list is already on screen; refresh it in the background
+    // rather than blanking the menu.
+    const cached = query === '' ? restingCache : null;
+    if (cached) { setItems(cached); setHover(0); }
+    else setLoading(true);
+    const mine = seq.current + 1;
+    seq.current = mine;
     let alive = true;
-    api.get(`/api/cms/picker?q=${encodeURIComponent(q)}`)
-      .then((rows) => { if (alive) { setItems(rows); setHover(0); } })
-      .catch(() => {});
+    api.get(`/api/cms/picker?q=${encodeURIComponent(query)}`)
+      .then((rows) => {
+        if (!alive || seq.current !== mine) return; // superseded by a later keystroke
+        if (query === '') { restingCache = rows; restingAt = Date.now(); }
+        setItems(rows);
+        setHover(0);
+        setLoading(false);
+      })
+      .catch(() => { if (alive && seq.current === mine) setLoading(false); });
     return () => { alive = false; };
   }, [q, open]);
 
@@ -62,6 +126,16 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
+
+  // Keep the virtual cursor on screen. Arrowing past the bottom of a 25-row
+  // menu used to move aria-activedescendant onto a row nobody could see, which
+  // is the one thing a virtual cursor must never do.
+  useEffect(() => {
+    if (!open) return;
+    const list = listRef.current;
+    const row = list && list.querySelector('[aria-selected="true"]');
+    if (row) row.scrollIntoView({ block: 'nearest' });
+  }, [hover, open, items.length]);
 
   // The open listbox is a LAYER, not a detail of the input. Registering it with
   // the overlay primitive is what makes the first Escape close just this list
@@ -81,6 +155,8 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
     const max = items.length - 1 + (allowCreate ? 1 : 0);
     if (e.key === 'ArrowDown') { e.preventDefault(); setHover((h) => Math.min(h + 1, max)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setHover((h) => Math.max(h - 1, 0)); }
+    else if (e.key === 'Home') { e.preventDefault(); setHover(0); }
+    else if (e.key === 'End') { e.preventDefault(); setHover(Math.max(0, max)); }
     else if (e.key === 'Enter') {
       e.preventDefault();
       if (hover < items.length) pick(items[hover]);
@@ -89,8 +165,18 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
     // Escape is not handled here — useDismissLayer above owns it.
   }
 
-  const favorites = items.filter((c) => c.favorite);
-  const rest = items.filter((c) => !c.favorite);
+  // THREE GROUPS, not two. The server already ranks favourite → last-used →
+  // alpha and returns `last_used_at`, so "Recent" is a real group rather than a
+  // heading over everything that was not starred: a matter you touched this
+  // week and a matter you have never billed are not the same kind of answer,
+  // and on the resting list they were previously run together under
+  // "Recent & all". While a query is typed the ranking is by MATCH, so the
+  // groups are dropped — splitting a ranked result set by recency would put the
+  // best match second.
+  const searching = q.trim() !== '';
+  const favorites = searching ? [] : items.filter((c) => c.favorite);
+  const recent = searching ? [] : items.filter((c) => !c.favorite && c.last_used_at);
+  const rest = searching ? items : items.filter((c) => !c.favorite && !c.last_used_at);
   // How many rows the cursor can land on, and therefore whether there is an
   // active option to point aria-activedescendant at. An empty result set with
   // no "New…" row has no cursor, so the attribute is omitted rather than
@@ -111,19 +197,38 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
       <span class="num">${cm.cm_number}</span>
     </div>`;
 
+  const group = (key, label, rows) => (rows.length ? html`
+    <div key=${key} role="group" aria-labelledby=${`${id}-g-${key}`}>
+      <div class="cmpicker-section" id=${`${id}-g-${key}`}>${label}</div>
+      ${rows.map((cm) => renderItem(cm, items.indexOf(cm)))}
+    </div>` : null);
+
   return html`
-    <div class="cmpicker" ref=${boxRef}>
-      ${value && !open ? html`
+    <div class=${'cmpicker' + (variant === 'row' ? ' cmpicker-row' : '') + (open ? ' open' : '')} ref=${boxRef}>
+      ${value && !open ? (variant === 'row' ? html`
+        ${/* Label-left / value-right, the shape Harvest's Project and Task rows
+              use: the matter reads as the row's VALUE with a chevron saying it
+              opens a picker, not as a button competing with the narrative above
+              it. Same control, same title, same handler as the field variant. */''}
+        <button type="button" class="cm-value" disabled=${disabled}
+          onClick=${() => setOpen(true)} title="Change CM">
+          <span class="cm-value-text">
+            <span class="cm-value-name">${value.favorite ? '★ ' : ''}${value.short_name || '(unnamed)'}</span>
+            <span class="cm-value-num mono">${value.cm_number}</span>
+          </span>
+          <${Icon} name="chevronRight" size=${16} />
+        </button>` : html`
         <div class="row" style=${{ flexWrap: 'nowrap' }}>
           <button type="button" class="btn" style=${{ flex: 1, justifyContent: 'space-between', overflow: 'hidden' }}
-            onClick=${() => setOpen(true)} title="Change CM">
+            disabled=${disabled} onClick=${() => setOpen(true)} title="Change CM">
             <span style=${{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
               ${value.favorite ? '★ ' : ''}${value.short_name || '(unnamed)'}
             </span>
             <span class="muted mono small">${value.cm_number}</span>
           </button>
-        </div>` : html`
+        </div>`) : html`
         <input type="search" value=${q} placeholder=${placeholder} autoFocus=${autoFocus}
+          aria-label=${placeholder} disabled=${disabled}
           role="combobox" aria-expanded=${open ? 'true' : 'false'}
           aria-controls=${open ? listId : undefined}
           aria-activedescendant=${activeId}
@@ -138,20 +243,19 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
               options and groups; the visible section heading names its group
               through aria-labelledby instead of being a stray text node inside
               the list. */''}
-        <div class="cmpicker-menu" id=${listId} role="listbox" aria-label=${placeholder}>
-          ${favorites.length ? html`
-            <div role="group" aria-labelledby=${`${id}-g-fav`}>
-              <div class="cmpicker-section" id=${`${id}-g-fav`}>Favorites</div>
-              ${favorites.map((cm) => renderItem(cm, items.indexOf(cm)))}
-            </div>` : null}
-          ${favorites.length && rest.length ? html`
-            <div role="group" aria-labelledby=${`${id}-g-rest`}>
-              <div class="cmpicker-section" id=${`${id}-g-rest`}>Recent & all</div>
-              ${rest.map((cm) => renderItem(cm, items.indexOf(cm)))}
-            </div>` : null}
-          ${!favorites.length ? rest.map((cm) => renderItem(cm, items.indexOf(cm))) : null}
-          ${items.length === 0 ? html`
-            <div class="cmpicker-item muted" role="presentation">No matches</div>` : null}
+        <div class="cmpicker-menu" id=${listId} role="listbox" aria-label=${placeholder} ref=${listRef}>
+          ${group('fav', 'Favorites', favorites)}
+          ${group('recent', 'Recent', recent)}
+          ${group('all', favorites.length || recent.length ? 'All matters' : '', searching ? [] : rest)}
+          ${searching ? rest.map((cm) => renderItem(cm, items.indexOf(cm))) : null}
+          ${/* "No matches" is an ANSWER, and an answer must not be shown before
+                the question has been asked: rendering it while the first
+                request is still in flight told the reader their matter did not
+                exist, a beat before six of them appeared. */''}
+          ${items.length === 0 && loading ? html`
+            <div class="cmpicker-item muted" role="presentation" aria-live="polite">Searching…</div>` : null}
+          ${items.length === 0 && !loading ? html`
+            <div class="cmpicker-item muted" role="presentation" aria-live="polite">No matches</div>` : null}
           ${allowCreate ? html`
             <div id=${optId(items.length)} role="option" aria-selected=${hover === items.length}
               class=${'cmpicker-item' + (hover === items.length ? ' hover' : '')}
@@ -204,6 +308,7 @@ function EditCmModal({ existing, onCreated, onClose }) {
       if (hasClient && (taskBilling ? 1 : 0) !== (existing.client_task_billing ?? 1)) {
         await api.patch(`/api/clients/${existing.client_id}`, { task_billing: taskBilling ? 1 : 0 });
       }
+      invalidateResting();
       emitToast('CM updated');
       onCreated(cm);
     } catch (err) {
@@ -348,6 +453,7 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
         await api.patch(`/api/clients/${effective.id}`, { task_billing: taskBilling ? 1 : 0 });
         cm.client_task_billing = taskBilling ? 1 : 0;
       }
+      invalidateResting();
       emitToast(`CM ${cm.cm_number} created`);
       onCreated(cm);
     } catch (err) {

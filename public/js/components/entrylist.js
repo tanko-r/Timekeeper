@@ -1,42 +1,27 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
-  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, todayStr, Confirm, ContextMenu, Overlay,
+  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, todayStr, Confirm,
 } from '/js/ui.js';
+import { Menu, rowMenuItems, rowMenuTitle, menuTriggerProps } from '/js/components/menu.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 
-// ===========================================================================
-// THE OVERFLOW MENU, IN THE SHAPE EACH POINTER DESERVES.
+// THE OVERFLOW MENU MOVED OUT OF THIS FILE.
 //
-// Every demoted capability on the Today screen lives behind a "⋯" — the row
-// menu, the list's options, the day's actions — so the brief's "anything you
-// demote must keep a touch path" is a claim about THESE menus and nothing
-// else. The wave critic opened them at 390×844 and measured what the claim was
-// worth: twenty rows at 270×28, 313×28 and 234×28, every one of them under the
-// 44px floor, in a 280px popover anchored wherever its trigger happened to be.
-// The `uishots --strict` fence passed only because it never opens a menu.
+// `ActionMenu` used to live here and was one of the app's THREE menu
+// components (the wave-1 review, D6). There is one now, in
+// public/js/components/menu.js, and every call site — this list, the Today
+// list, the day header, the attention line, the ledger, Clients & matters and
+// the calendar day panel — goes through it. The row menu those two lists carry
+// is one state-driven menu built by `rowMenuItems` there.
 //
-// So this is ONE component with two shapes, the same lesson the overlay
-// primitive was built on (public/js/components/overlay.js):
-//
-//   ≥768px  an anchored popover — Primer ActionMenu, Polaris Popover, Fluent
-//           ContextualMenu. Unchanged: it is the app's `.ctx-menu`.
-//   <768px  a bottom sheet through the app's ONE overlay primitive, which is
-//           Material 3's answer for a menu on a phone and Apple's action
-//           sheet. Full-width rows, a 48px minimum, a visible drag handle
-//           (.ovl-grip), and the scrim / focus trap / scroll lock / Escape /
-//           hardware-Back that every other dialog in the app already gets from
-//           the same place.
-//
-// It carries `custom` and `hr` rows as well as plain ones, because the menus
-// that needed this most are the ones holding segmented controls and selects —
-// and at phone width base.css already gives every .btn, select and .seg button
-// inside them a real 44×44 box.
-// ===========================================================================
+// `usePhone` stays: it is the app's 767px LAYOUT question ("is this the phone
+// layout?"), which several callers still need and which is a different
+// question from the menu's own 1024px shape question (`useMenuPopover`).
 const PHONE_MQ = '(max-width: 767px)';
 
 export function usePhone() {
@@ -51,28 +36,6 @@ export function usePhone() {
     return () => mq.removeEventListener('change', on);
   }, []);
   return phone;
-}
-
-export function ActionMenu({ x, y, items, title = 'Actions', onClose }) {
-  const phone = usePhone();
-  if (!phone) return html`<${ContextMenu} x=${x} y=${y} items=${items} onClose=${onClose} />`;
-  return html`
-    <${Overlay} title=${title} onClose=${() => onClose()} size="sm" className="menu-sheet">
-      <div class="sheet-menu">
-        ${items.map((item, i) => {
-          if (item.hr) return html`<div key=${i} class="sheet-hr" role="separator"></div>`;
-          if (item.custom) return html`<div key=${i} class="sheet-custom">${item.custom()}</div>`;
-          return html`
-            <button key=${i} type="button"
-              class=${'sheet-item' + (item.danger ? ' danger' : '')}
-              disabled=${item.disabled}
-              onClick=${() => { onClose(); item.onClick(); }}>
-              ${item.icon ? html`<${Icon} name=${item.icon} size=${18} />` : html`<span class="sheet-spacer"></span>`}
-              <span>${item.label}</span>
-            </button>`;
-        })}
-      </div>
-    <//>`;
 }
 
 // Inline narrative editing (2026-07-10 feedback): click a draft entry's
@@ -229,7 +192,11 @@ export function EntryList({
 }) {
   const increment = (settings?.rounding?.increment) || 0.1;
   const [deleting, setDeleting] = useState(null);
-  const [menu, setMenu] = useState(null); // {x, y, card}
+  const [menu, setMenu] = useState(null); // { anchor, card }
+  // "Write narrative here" — the row menu's item on both lists now, so the
+  // fastest path to the narrative is reachable by thumb on this screen too and
+  // not only on Today.
+  const [writingId, setWritingId] = useState(null);
 
   const TODAY = todayStr();
   const hasToday = (entries || []).some((e) => e.date === TODAY);
@@ -335,40 +302,30 @@ export function EntryList({
     emitToast('Unlocked — edits will be tracked in the audit log.');
   }
 
-  // Every capability the old five-icon cluster carried, one menu deep and
-  // labelled. Nothing was dropped: view/edit became the row's name button and
-  // the first menu item. A card that carries more than one entry names each of
-  // them, so the reopen can say which one it means.
-  const cardMenuItems = (card) => {
-    const es = card.entries;
-    const focus = card.focus;
-    const items = [];
-    if (es.length > 1) {
-      for (const e of es) {
-        const snippet = (e.narrative || '').trim().replace(/\s+/g, ' ').slice(0, 32);
-        items.push({
-          label: `Open ${fmtHours(liveTotal(card, e), increment)}h — ${snippet || 'no narrative yet'}`,
-          icon: 'eye',
-          onClick: () => openEditor({ id: e.id }),
-        });
-      }
-    } else {
-      items.push({
-        label: focus.status === 'draft' ? 'Open entry…' : 'View entry…',
-        icon: 'eye',
-        onClick: () => openEditor({ id: focus.id }),
-      });
-    }
-    items.push(focus.status === 'draft'
-      ? { label: 'Finalize this entry', icon: 'lock', onClick: () => finalize(focus) }
-      : { label: 'Unlock for editing', icon: 'unlock', onClick: () => unlock(focus) });
-    items.push({ label: 'Copy to today', icon: 'copy', onClick: () => openEditor({ copyFrom: focus.id }) });
-    if (focus.status === 'draft') {
-      items.push({ hr: true });
-      items.push({ label: 'Delete entry', icon: 'trash', danger: true, onClick: () => setDeleting(focus) });
-    }
-    return items;
-  };
+  // ONE ROW MENU, SHARED WITH THE TODAY LIST (components/menu.js). The
+  // capabilities are the same on both screens now and are decided by what the
+  // row IS — the wave-1 review's D7 was that two different menus hung off
+  // visually identical rows and `Delete entry` existed on only one of them.
+  // `Edit timer…` and the backdate chips are the two items this surface cannot
+  // supply (the Edit-timer dialog lives with the Today list), and rows here
+  // have never offered them.
+  const cardMenuItems = (card) => rowMenuItems({
+    timer: card.timer,
+    entries: card.entries,
+    focus: card.focus,
+    fmtHours: (h) => fmtHours(h, increment),
+    liveTotal: (e) => liveTotal(card, e),
+  }, {
+    start: () => startTimer(card.focus),
+    stop: (t) => stopTimer(t),
+    startForEntry: (e) => startTimer(e),
+    openEntry: (e) => openEditor({ id: e.id }),
+    writeNarrative: (e) => setWritingId(e.id),
+    finalize: (e) => finalize(e),
+    unlock: (e) => unlock(e),
+    copyToToday: (e) => openEditor({ copyFrom: e.id }),
+    deleteEntry: (e) => setDeleting(e),
+  });
 
   if (!entries || entries.length === 0) {
     // Every empty state needs a ROUTE FORWARD, not just an explanation
@@ -478,13 +435,15 @@ export function EntryList({
               ${fmtHours(liveTotal(c, x), increment)}h</span>
             ${isLive(x) && !(x.narrative || '').trim()
               ? html`<span class="muted small">running — files at the next stop</span>`
-              : html`<${InlineNarrative} entry=${x} onChanged=${onChanged} />`}
+              : html`<${InlineNarrative} entry=${x} onChanged=${onChanged}
+                  autoEdit=${writingId === x.id} onDone=${() => setWritingId(null)} />`}
           </div>`);
       }
     } else if (isLive(e) && !(e.narrative || '').trim()) {
       body.push(html`<p key="live" class="work-hint muted small">Running — files at the next stop.</p>`);
     } else {
-      body.push(html`<${InlineNarrative} key="narr" entry=${e} onChanged=${onChanged} />`);
+      body.push(html`<${InlineNarrative} key="narr" entry=${e} onChanged=${onChanged}
+        autoEdit=${writingId === e.id} onDone=${() => setWritingId(null)} />`);
     }
     // Only a SPLIT is worth a line — the same rule the Today row uses, so a
     // row does not grow a line on one screen and lose it on the other. A lone
@@ -556,12 +515,14 @@ export function EntryList({
           </span>
         </div>
 
-        <button class="btn btn-ghost btn-sm entry-more timer-more" title="More actions for this entry"
-          aria-label="More actions for this entry"
-          onClick=${(ev) => {
-            const r = ev.currentTarget.getBoundingClientRect();
-            setMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 2, card: c });
-          }}><${Icon} name="more" size=${16} /></button>
+        ${/* The trigger stores the ELEMENT, not a pair of coordinates: it is
+              what the popover hangs off, what edge-collision measures against,
+              and what focus returns to when the menu closes. */''}
+        <button class="btn btn-ghost btn-sm entry-more timer-more" title="Row menu"
+          aria-label=${`Row menu — ${name || 'this entry'}`}
+          ...${menuTriggerProps(!!menu && menu.card === c)}
+          onClick=${(ev) => setMenu({ anchor: ev.currentTarget, card: c })}>
+          <${Icon} name="more" size=${16} /></button>
 
         <div class="work-body">${body}</div>
       </div>`;
@@ -574,7 +535,7 @@ export function EntryList({
       onClose=${() => setDeleting(null)} />` : null;
 
   const rowMenu = menu ? html`
-    <${ActionMenu} x=${menu.x} y=${menu.y} title="Entry actions" items=${cardMenuItems(menu.card)}
+    <${Menu} anchor=${menu.anchor} title=${rowMenuTitle(menu.card)} items=${cardMenuItems(menu.card)}
       onClose=${() => setMenu(null)} />` : null;
 
   if (!showDate) {
