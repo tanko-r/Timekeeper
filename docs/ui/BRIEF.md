@@ -110,7 +110,20 @@ same directory lists every shot and any console errors seen while taking it.
 The pre-overhaul baseline is in `shots/baseline/` — same file names. Use it
 for before/after comparison.
 
-Reference screenshots of the three bars are in `shots/refs/`.
+Reference screenshots of the three bars are in `shots/refs/` and, better, in
+`shots/refs-v2/`.
+
+**Prefer `shots/refs-v2/`.** The first set was captured from marketing home
+pages, and a critic found that only three of its 42 files contain usable
+product interface — the rest are hero copy, feature grids, and cookie
+banners. `shots/refs-v2/` is 40 curated files of real, signed-in product
+interface pulled from help centres, changelogs, and app-store listings, each
+one read and judged before it was kept. `shots/refs-v2/INDEX.md` says what
+every file shows and what to look at it for. Read that index before you pick
+a comparison image. The flagship references are
+`harvest-timesheet-day.desktop.webp` (the closest existing analog to this
+app's core screen), `attio-record-detail-page.desktop.png`, and
+`mercury-dashboard-dark.desktop.jpg`.
 
 For a blind comparison:
 
