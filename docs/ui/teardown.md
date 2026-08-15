@@ -1602,5 +1602,15 @@ Therefore:
    filters, sorting, rename, reorder, duplicate, import and batch actions all
    keep working, and each keeps a touch path.
 4. Timer search must be excellent rather than merely present.
+5. **Compact is the right default, and denser than today is better — provided
+   it expands.** His words: making the timer list more compact is "totally
+   fine, better even. just so long as I can expand it. and search it with
+   keyboard." So the resting list should be dense enough to scan many timers
+   at a glance, with expansion in two forms, both built: a row that expands in
+   place to reveal the narrative, task lines and secondary controls — by
+   keyboard, click and touch — and a compact-versus-comfortable density
+   control for the whole list that persists across sessions. Density is a
+   default, never a cage: the compact row still carries the matter, the state,
+   the hours and the start/stop control.
 
 Everything else in this document stands.

@@ -182,6 +182,20 @@ teardown, every critic, and every task prompt in this run:
   overlay documenting that fork is correct too. Do not "fix" it.
 - Timer search must be excellent, not merely present: fast, forgiving, and
   reachable by touch as well as by keyboard.
+- **Compact is the right default, and denser than today is better — provided
+  it expands.** The owner's words: making the timer list more compact is
+  "totally fine, better even. just so long as I can expand it. and search it
+  with keyboard." So push the resting density hard: a dense list of many
+  timers scanned at a glance beats a comfortable list of a few. Then give
+  expansion two forms, and build both:
+  1. **Per row.** A row expands in place to show what the compact form hides —
+     the narrative, the task lines, the secondary controls. Reachable by
+     keyboard from the focused row, by click, and by touch.
+  2. **The whole list.** A density control — compact and comfortable — that
+     persists across sessions, so his choice survives a reload and a restart.
+  Density is a default, never a cage. Nothing may be readable only when
+  expanded and unreachable when compact: the compact row still shows the
+  matter, the state, the hours, and the start/stop control.
 - Timer capabilities — groups, filters, sorting, renaming, reordering,
   duplicating, importing, batch actions — are demoted in the surface, never in
   reach. Every one keeps a touch path.
