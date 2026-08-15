@@ -165,6 +165,30 @@ Styles live in `public/css/`, split into modules, each loaded by its own
 If you find a hardcoded color, font size, or spacing value outside
 `tokens.css`, that is a defect.
 
+## Owner constraint: this is fundamentally a timers app
+
+Stated by the person who uses this app every working day, and it outranks the
+teardown, every critic, and every task prompt in this run:
+
+- **He uses the timer list extensively.** Timers are the spine of the app, not
+  a feature of the dashboard. The merged Today list is a list of timers that
+  also carries the day's recorded hours and narratives — never an entry list
+  that happens to show timers.
+- **`/` on Today filters the timer list, and he uses it constantly. It stays.**
+  Any instruction anywhere in this run to fold, repurpose, or remove the `/`
+  timer filter — including the wave-1 review's suggestion to fold it into the
+  quick-capture surface — is **void**. `/` searching timers on Today and `/`
+  searching entries elsewhere is a deliberate, correct fork, and the shortcut
+  overlay documenting that fork is correct too. Do not "fix" it.
+- Timer search must be excellent, not merely present: fast, forgiving, and
+  reachable by touch as well as by keyboard.
+- Timer capabilities — groups, filters, sorting, renaming, reordering,
+  duplicating, importing, batch actions — are demoted in the surface, never in
+  reach. Every one keeps a touch path.
+
+If a task you are given conflicts with this section, this section wins. Say so
+in your report and build to this.
+
 ## The standing teardown critic
 
 One principal critic tore the whole app down screen by screen, judging every

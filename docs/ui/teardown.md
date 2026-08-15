@@ -1574,3 +1574,33 @@ inherit the app theme (§20).
 `public/js/views/search.js`, `public/js/components/summary.js`.
 5386 CSS px for 23 entries does not survive a year of data. And `s` currently
 has no visible control on the phone.
+
+---
+
+# Owner constraint — 2026-08-15, overrides this document
+
+The person who uses this app every working day has ruled on one point, and it
+overrides anything in this teardown or its wave-1 review:
+
+**This is fundamentally a timers app.** He uses the timer list extensively,
+and he uses `/` to search that timer list frequently.
+
+Therefore:
+
+1. **`/` on Today filters the timer list. It stays exactly as it is.** Wave-2
+   item 5 of the wave-1 review proposed folding Today's `/` timer filter into
+   the quick-capture surface "so search stops forking by route". That proposal
+   is **withdrawn**. The fork is deliberate and correct: `/` searches timers on
+   Today and entries elsewhere, because those are the two things a lawyer looks
+   for in those two places. The shortcut overlay documenting the fork is right
+   to document it.
+2. **The merged Today list is a list of timers** that also carries the day's
+   recorded hours and narratives — not an entry list that happens to show
+   timers. When a judgement call about the row's reading order or its primary
+   action could go either way, it goes the timer's way.
+3. **Timer capabilities are demoted in the surface, never in reach.** Groups,
+   filters, sorting, rename, reorder, duplicate, import and batch actions all
+   keep working, and each keeps a touch path.
+4. Timer search must be excellent rather than merely present.
+
+Everything else in this document stands.
