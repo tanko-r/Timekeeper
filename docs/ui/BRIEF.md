@@ -54,29 +54,39 @@ Stated by the owner, and it outranks every design goal, every critic, every
 measurement, and every task prompt in this run. A defect in this section is
 never "minor" and never deferred to a later wave.
 
-**1. No narrative text may ever cross from one matter to another.** Not
-between clients, and not between two matters of the SAME client. If a piece
-of text was written for matter A, it may never be shown as belonging to,
-suggested for, pre-filled into, or written onto an entry for matter B.
+**What must never cross a matter boundary: a NARRATIVE.** A narrative is the
+client-facing sentence that lands on a bill and describes work actually done
+on a specific matter. It carries facts — parties, documents, deadlines, what
+happened. A narrative written for matter A may never be shown as belonging
+to, suggested for, pre-filled into, or written onto an entry for matter B.
+Not across clients, and not between two matters of the SAME client.
 
-**2. Every suggestion source is scoped to its own matter.** That includes the
-stop-timer chips, the phrasebook, recent narratives, ghost text, close-out
-pre-fill, quick capture, and anything else that proposes words. If a matter
-has no history of its own, the correct behaviour is to offer nothing, or to
-offer GENERIC text that belongs to no client — never another matter's text,
-however good a match it looks.
+**What may be shared freely: generic language.** The phrasebook, ghost text,
+and text expansions are reusable phrasing, not client facts, and they are
+SUPPOSED to be shared across every matter. Do not scope them per matter, do
+not "fix" them, and do not report them as leaks. The line is: reusable
+wording is shared; a sentence describing what happened on a particular matter
+is not.
 
-**3. The AI prompts obey the same rule.** Where a prompt includes before/after
-narrative pairs as examples, those pairs must come from the same matter. If
-that matter has no pairs, use generic, fully synthetic examples. Never put one
-client's or one matter's real narrative into a prompt used to write another's.
+**Stop-timer chips suggest two things, both matter-scoped:**
+1. The last couple of narratives used on THAT matter.
+2. One AI-generated narrative that extrapolates the likely next step from
+   that matter's own prior narratives.
+If the matter has no prior narratives, offer generic phrasing or offer
+nothing — never another matter's sentence, however good a match it looks.
 
-**4. No time and no narrative may ever be lost.** No silent overwrite without
-an undo. No entry dropped, skipped, or double-counted on export. No entry
-marked exported that did not actually make it into the file. Nothing that
-could cause the owner to leak billable time before an export or during one.
+**The AI prompts obey the same line.** Where a prompt includes before/after
+narrative pairs as examples, those pairs come from the same matter; where a
+matter has none, use fully synthetic examples. Never put one client's or one
+matter's real narrative into a prompt that writes another's. Generic phrasing
+and style guidance in a prompt are fine.
 
-**5. Every rule above is enforced by a test, not by care.** A fix without a
+**No time and no narrative may ever be lost.** No silent overwrite without an
+undo. No entry dropped, skipped, or double-counted on export. No entry marked
+exported that did not actually reach the file. Nothing that could cause the
+owner to leak billable time before an export or during one.
+
+**Every rule above is enforced by a test, not by care.** A fix without a
 regression test does not count as fixed.
 
 If you find a violation of this section while doing something else, stop and
