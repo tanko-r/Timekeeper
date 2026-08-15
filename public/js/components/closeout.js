@@ -1,6 +1,6 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useRef, useMemo, useCallback, createPortal,
+  html, React, useState, useEffect, useRef, useMemo, useCallback, Overlay,
   fmtHours, emitToast, Icon, Spinner, ValidationList,
 } from '/js/ui.js';
 import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
@@ -81,6 +81,19 @@ export function CloseOut({ onClose, openEditor }) {
       return prev;
     });
   }, [idx, current, phrases]); // eslint-disable-line
+
+  // The dialog mounts while the drafts are still loading, so the Overlay's
+  // initial focus lands on the only thing in it at that moment — the header ✕.
+  // The narrative field takes over the moment the first card arrives: it is
+  // what the sweep is FOR, and it is also what makes Enter mean "accept"
+  // rather than "press the focused button". Deliberately per-phase and not
+  // per-card: once you are working the buttons, tapping Skip should not throw
+  // a phone keyboard up in your face on every card.
+  useEffect(() => {
+    if (phase !== 'sweep') return;
+    const el = document.querySelector('.closeout-card textarea');
+    if (el) el.focus();
+  }, [phase]);
 
   function advance(wasAccepted) {
     if (wasAccepted) setAccepted((c) => c + 1); else setSkipped((c) => c + 1);
@@ -195,14 +208,24 @@ export function CloseOut({ onClose, openEditor }) {
   }
 
   // Document-level capture-phase listener (StopChips pattern): guards
-  // e/ArrowDown/Escape while typing, EXCEPT Enter — which must accept the
-  // card even while the GhostInput textarea has focus (Shift+Enter still
-  // inserts a newline, since multiline narratives are expected here).
+  // e/ArrowDown while typing, EXCEPT Enter — which must accept the card even
+  // while the GhostInput textarea has focus (Shift+Enter still inserts a
+  // newline, since multiline narratives are expected here).
+  //
+  // Escape is NOT handled here any more: the Overlay primitive owns it for
+  // every dialog in the app, and its listener runs first (a child effect
+  // flushes before its parent's), so quitting the sweep also restores focus to
+  // whatever opened it. onClose still receives `changed`, via the Overlay's
+  // onClose below.
   useEffect(() => {
     function onKey(e) {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = ['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable;
-      if (e.key === 'Enter' && phase === 'sweep' && !e.shiftKey
+      // A focused BUTTON owns its own Enter/Space — the sweep's Accept, Edit
+      // and Skip are real buttons now, and this handler must not fire the
+      // accept a second time on top of the button's own click.
+      const onButton = !!(e.target.closest && e.target.closest('button'));
+      if (e.key === 'Enter' && phase === 'sweep' && !e.shiftKey && !onButton
           && (!typing || e.target.closest('.closeout-card'))) {
         e.preventDefault();
         e.stopPropagation();
@@ -211,12 +234,6 @@ export function CloseOut({ onClose, openEditor }) {
       }
       if (typing) return; // never fence real typing — the field must see its own keys
       if (!(e.metaKey || e.ctrlKey || e.altKey)) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          onClose(changedRef.current);
-          return;
-        }
         if (e.key === 'e' && phase === 'sweep') {
           e.preventDefault();
           e.stopPropagation();
@@ -247,23 +264,25 @@ export function CloseOut({ onClose, openEditor }) {
   // ---------- render ----------
 
   let body;
+  let title = 'Close the day';
   if (phase === 'loading') {
-    body = html`<div class="closeout-card"><${Spinner} /></div>`;
+    body = html`<${Spinner} />`;
   } else if (phase === 'empty') {
     body = html`
-      <div class="closeout-card">
+      <${React.Fragment}>
         <p>Nothing to close — no drafts today.</p>
-        <div class="row-end">
+        <div class="ovl-actions">
           <button class="btn btn-primary" onClick=${() => onClose(false)}>Close</button>
         </div>
-      </div>`;
+      <//>`;
   } else if (phase === 'sweep') {
     // the dashboard's cm object carries no client_name (see enrich()); the
     // short name alone matches how EntryList labels entries today
     const label = current.cm ? current.cm.short_name : 'No matter yet';
+    title = `Close the day — ${idx + 1} of ${cards.length}`;
     body = html`
-      <div class="closeout-card">
-        <div class="closeout-dots">
+      <${React.Fragment}>
+        <div class="closeout-dots" role="presentation">
           ${cards.map((_, i) => html`<span key=${i} class=${'closeout-dot' + (i <= idx ? ' on' : '')}></span>`)}
         </div>
         <div class="closeout-head">
@@ -277,23 +296,36 @@ export function CloseOut({ onClose, openEditor }) {
           </div>` : html`
           <${GhostInput} multiline rows=${3} value=${text} suggestions=${phrases} expand=${expand}
             placeholder="What did you do?" onChange=${setText} />`}
-        <div class="closeout-keys muted small">
-          <kbd>Enter</kbd> accept · <kbd>e</kbd> edit · <kbd>↓</kbd> skip · <kbd>Esc</kbd> quit
+        ${/* Every key this step answers to is a real, tappable control — the
+              <kbd> chips ride inside their own button and only where there is
+              a keyboard to press. Quit is the ✕ in the header. */''}
+        <div class="ovl-actions">
+          <button class="btn" onClick=${skipCurrent}>
+            Skip<kbd class="ovl-kbd">↓</kbd>
+          </button>
+          <button class="btn" onClick=${editCurrent}>
+            <${Icon} name="edit" size=${16} /> Edit<kbd class="ovl-kbd">e</kbd>
+          </button>
+          <button class="btn btn-primary" onClick=${acceptCurrent}>
+            <${Icon} name="check" size=${16} /> Accept<kbd class="ovl-kbd">Enter</kbd>
+          </button>
         </div>
-      </div>`;
+        <p class="closeout-keys muted small"><kbd>Esc</kbd> quits — nothing is lost either way</p>
+      <//>`;
   } else if (phase === 'summary') {
     body = html`
-      <div class="closeout-card">
+      <${React.Fragment}>
         <p>${accepted} draft${accepted === 1 ? '' : 's'} narrated · ${skipped} skipped</p>
-        <div class="row-end">
+        <div class="ovl-actions">
+          <button class="btn" onClick=${() => onClose(changedRef.current)}>Not yet</button>
           <button class="btn btn-primary" disabled=${busy} onClick=${() => finalizeAndExport(false)}>
             <${Icon} name="lock" size=${16} /> Finalize & export
           </button>
         </div>
-      </div>`;
+      <//>`;
   } else if (phase === 'warn') {
     body = html`
-      <div class="closeout-card">
+      <${React.Fragment}>
         ${warnInfo.warnOnly.length > 0 ? html`
           <h3 class="closeout-warn-title">Finalize with warnings?</h3>
           <div class="closeout-warnlist">
@@ -312,11 +344,12 @@ export function CloseOut({ onClose, openEditor }) {
                 ${warnInfo.newDrafts.map((e) => html`
                   <span key=${e.id} class="small">${e.cm ? e.cm.short_name : 'No matter yet'} · ${fmtHours(e.total)}h</span>`)}
               </div>
-              <div class="row-end">
+              <div class="ovl-actions">
                 <button class="btn btn-primary" onClick=${restartSweep}>Restart the sweep</button>
               </div>
             </div>` : html`
-            <div class="row-end">
+            <div class="ovl-actions">
+              <button class="btn" onClick=${() => onClose(changedRef.current)}>Not yet</button>
               <button class="btn btn-primary" disabled=${busy} onClick=${() => finalizeAndExport(true)}>
                 Accept warnings & finalize
               </button>
@@ -331,30 +364,36 @@ export function CloseOut({ onClose, openEditor }) {
                 <button class="btn btn-sm" onClick=${() => editBlocked(b.id)}>Edit</button>
               </div>`)}
           </div>` : null}
-      </div>`;
+      <//>`;
   } else if (phase === 'blocked') {
     body = html`
-      <div class="closeout-card">
+      <${React.Fragment}>
         <p>Nothing exported — ${blockedInfo.n} draft${blockedInfo.n === 1 ? '' : 's'} still need attention.</p>
-        <div class="row-end">
+        <div class="ovl-actions">
           <button class="btn btn-primary" onClick=${() => onClose(true)}>Done</button>
         </div>
-      </div>`;
+      <//>`;
   } else if (phase === 'closed') {
+    title = 'Day closed';
     body = html`
-      <div class="closeout-card closeout-closed">
+      <${React.Fragment}>
         <p class="closeout-hours mono">Day closed — ${fmtHours(closedInfo.total)}h · exported</p>
         ${closedInfo.stillBlocked ? html`
           <p class="muted small">${closedInfo.stillBlocked} draft${closedInfo.stillBlocked === 1 ? '' : 's'} still need attention.</p>` : null}
-        <div class="row-end">
+        <div class="ovl-actions">
           <button class="btn btn-primary" onClick=${() => onClose(true)}>Done</button>
         </div>
-      </div>`;
+      <//>`;
   }
 
-  return createPortal(html`
-    <div class="closeout-backdrop" data-phase=${phase}
-      onMouseDown=${(e) => { if (e.target === e.currentTarget) onClose(changedRef.current); }}>
+  // One dialog, every phase. The panel keeps `closeout-card` (the sweep's own
+  // Enter handler and the e2e suite both select by it) and carries the phase
+  // as data, where the backdrop used to.
+  return html`
+    <${Overlay} title=${title} onClose=${() => onClose(changedRef.current)}
+      className=${'closeout-card' + (phase === 'closed' ? ' closeout-closed' : '')}
+      panelAttrs=${{ 'data-phase': phase }}
+      initialFocus="textarea">
       ${body}
-    </div>`, document.body);
+    <//>`;
 }

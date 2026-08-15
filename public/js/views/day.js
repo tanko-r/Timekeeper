@@ -116,27 +116,39 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
       ${mode !== 'range' ? html`
         <button class="btn" title=${`Next ${mode} (])`} onClick=${() => step(1)}><${Icon} name="chevronRight" size=${16} /></button>` : null}
       ${day !== todayStr() ? html`<button class="btn btn-sm" onClick=${() => nav('#/')}>Today</button>` : null}
-      <div class="seg" role="group" aria-label="Range">
-        ${[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['range', 'Range']].map(([v, label]) => html`
-          <button key=${v} class=${mode === v ? 'on' : ''}
-            title=${v === 'range' ? 'Pick a custom from/to range' : `Show the ${label.toLowerCase()} around ${day}`}
-            onClick=${() => setMode(v)}>${label}</button>`)}
+      ${/* View controls, not page actions: shell.css gives .page-head-tools its
+            own line so this header wraps the same way the dashboard's does. */''}
+      <div class="page-head-tools">
+        <div class="seg" role="group" aria-label="Range">
+          ${[['day', 'Day'], ['week', 'Week'], ['month', 'Month'], ['range', 'Range']].map(([v, label]) => html`
+            <button key=${v} class=${mode === v ? 'on' : ''}
+              title=${v === 'range' ? 'Pick a custom from/to range' : `Show the ${label.toLowerCase()} around ${day}`}
+              onClick=${() => setMode(v)}>${label}</button>`)}
+        </div>
+        ${mode === 'range' ? html`
+          <span class="date-range">
+            <label class="range-field">
+              <span class="field-label">From</span>
+              <input type="date" value=${customFrom} onChange=${(e) => setCustomFrom(e.target.value)} />
+            </label>
+            <label class="range-field">
+              <span class="field-label">To</span>
+              <input type="date" value=${customTo} onChange=${(e) => setCustomTo(e.target.value)} />
+            </label>
+          </span>` : null}
+        <span class="muted">${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
       </div>
-      ${mode === 'range' ? html`
-        <span class="row" style=${{ gap: '4px' }}>
-          <input type="date" value=${customFrom} onChange=${(e) => setCustomFrom(e.target.value)} />
-          <span class="muted">–</span>
-          <input type="date" value=${customTo} onChange=${(e) => setCustomTo(e.target.value)} />
-        </span>` : null}
       <div class="spacer"></div>
-      <span class="muted">${fmtHours(billable)}h billable · ${fmtHours(total)}h total</span>
-      <button class="btn" title="Read the entries in view back as plain text — client, matter, hours, narrative (s)"
-        onClick=${showSummary}><${Icon} name="clipboard" size=${16} /> Summary</button>
-      <button class="btn" title="Download finalized entries in view as CSV (marks them exported)"
-        onClick=${exportRange}><${Icon} name="export" size=${16} /> Export</button>
-      ${mode === 'day' ? html`
-        <button class="btn" onClick=${() => finalizeDay()}><${Icon} name="lock" size=${16} /> Finalize day</button>
-        <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}><${Icon} name="plus" size=${16} /> Entry</button>` : null}
+      <div class="page-head-actions">
+        <button class="btn" title="Read the entries in view back as plain text — client, matter, hours, narrative (s)"
+          onClick=${showSummary}><${Icon} name="clipboard" size=${16} /> Summary</button>
+        <button class="btn" title="Download finalized entries in view as CSV (marks them exported)"
+          onClick=${exportRange}><${Icon} name="export" size=${16} /> Export</button>
+        ${mode === 'day' ? html`
+          <button class="btn" onClick=${() => finalizeDay()}><${Icon} name="lock" size=${16} /> Finalize day</button>
+          <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}>
+            <${Icon} name="plus" size=${16} /> New entry<kbd class="btn-kbd">n</kbd></button>` : null}
+      </div>
     </div>
     ${loading && !data ? html`<${Spinner} />` : html`
       <${EntryList} entries=${entries} openEditor=${openEditor} onChanged=${bumpRefresh}

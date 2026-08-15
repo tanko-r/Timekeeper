@@ -1,0 +1,740 @@
+/* ============================================================================
+   shell.css — the app shell: side navigation, bottom navigation, page header,
+   and the stacking contract between the shell's fixed bars and anything else
+   that pins itself to the bottom of the viewport.
+
+   THREE BREAKPOINTS, and only these three in this file:
+
+     phone    ≤  767px   no side nav at all. Five-slot bottom navigation bar
+                         (Today · Calendar · Search · Export · More) plus a
+                         modal bottom sheet for the overflow destinations and
+                         every action. Material 3 caps a navigation bar at 3–5
+                         destinations and Apple HIG caps a tab bar at 5 before
+                         a "More" tab; seven sidebar rows cannot go in a bar,
+                         so four go in and three move to the sheet.
+
+     tablet   768–1023   navigation rail: icon above a one-word label, 76px
+                         wide, persistent. This is Material 3's documented
+                         medium-width answer between a bar and a drawer. The
+                         Settings sub-pages move out of the rail (too narrow
+                         for ".TIM export") and render as a chip strip at the
+                         top of the page — see .pagenav.
+
+     desktop  ≥ 1024px   persistent 200px sidebar, split into two labelled
+                         groups: destinations you can BE at, and actions that
+                         DO something. Those were mixed into one list before.
+
+   State that survives colour-blindness: every active nav item carries three
+   simultaneous cues — a filled pill, a weight step (medium → semibold), and a
+   shape marker (a bar at the left edge in the sidebar, a pill behind the icon
+   in the rail and the bottom bar). Colour is the fourth cue, never the only
+   one. `aria-current="page"` carries the same fact to assistive tech.
+
+   Every value here comes from tokens.css. The three derived measurements
+   below are compositions of tokens, declared once so the day footer and the
+   toast host can clear the bottom bar without guessing its height.
+   ========================================================================== */
+
+:root {
+  /* Height of the phone bottom bar's content box: a 44px touch row plus
+     breathing space. Everything pinned to the bottom of the viewport clears
+     --shell-nav-total, which adds the border and the device's home-indicator
+     inset (padding, never margin, so the icons never sit under the gesture
+     bar). */
+  --shell-nav-h: calc(var(--tap-min) + var(--space-4));
+  --shell-safe-b: env(safe-area-inset-bottom, 0px);
+  --shell-nav-total: calc(var(--shell-nav-h) + var(--border-w) + var(--shell-safe-b));
+  /* Tablet navigation rail: a 44px touch column plus a gutter either side. */
+  --shell-rail-w: calc(var(--tap-min) + var(--space-7));
+  /* Content-column ceiling. Expressed off the sidebar token so the two scale
+     together rather than drifting apart. */
+  --shell-main-max: calc(var(--sidebar-w) * 6);
+}
+
+/* ---------------------------------------------------------------------------
+   Layout frame
+--------------------------------------------------------------------------- */
+
+.shell { display: flex; min-height: 100dvh; }
+
+.main {
+  flex: 1; min-width: 0;
+  max-width: var(--shell-main-max);
+  padding: var(--space-6) var(--page-gutter) var(--space-10);
+}
+
+/* ---------------------------------------------------------------------------
+   Sidebar (desktop) — brand, grouped destinations, grouped actions, foot hint
+--------------------------------------------------------------------------- */
+
+.sidebar {
+  width: var(--sidebar-w); flex: none;
+  display: flex; flex-direction: column; gap: var(--space-0-5);
+  padding: var(--space-4) var(--space-3) var(--space-3);
+  border-right: var(--border-w) solid var(--border);
+  background: var(--surface-1);
+  position: sticky; top: 0; height: 100dvh;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+
+.sidebar .brand {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  padding: var(--space-2) var(--space-3) var(--space-5);
+  font-size: var(--fs-heading); line-height: var(--lh-heading);
+  font-weight: var(--fw-bold); letter-spacing: var(--ls-heading);
+  color: var(--text-primary);
+}
+.sidebar .brand svg { flex: none; color: var(--accent); }
+.sidebar .brand-word span { color: var(--accent); }
+
+/* A group is a set of nav rows under one eyebrow label. The rule the brief
+   asks for lives here: destinations in one group, actions in another, with a
+   divider between them, so "Run /todo" never reads as a place to go. */
+.nav-group { display: flex; flex-direction: column; gap: var(--space-0-5); }
+.nav-group + .nav-group {
+  margin-top: var(--space-4); padding-top: var(--space-4);
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+.nav-label {
+  padding: var(--space-1) var(--space-3) var(--space-2);
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase; color: var(--text-muted);
+}
+
+.navlink {
+  position: relative;
+  display: flex; align-items: center; gap: var(--gap-inline);
+  width: 100%; min-height: var(--control-h-md);
+  padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.navlink-ind { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.navlink svg { flex: none; width: var(--icon-md); height: var(--icon-md); }
+.navlink-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.navlink-short { display: none; }        /* rail-only one-word label */
+
+.navlink:hover { background: var(--surface-2); color: var(--text-primary); text-decoration: none; }
+.navlink:active { background: var(--surface-3); }
+.navlink:disabled { opacity: 0.6; cursor: default; }
+.navlink:disabled:hover { background: none; color: var(--text-secondary); }
+
+.navlink.active {
+  background: var(--accent-soft); color: var(--text-primary);
+  font-weight: var(--fw-semibold);
+}
+.navlink.active .navlink-ind { color: var(--accent-strong); }
+
+/* Cue 3: a shape marker at the leading edge, so the active row is legible
+   with no colour vision at all. */
+.navlink.active::before, .subnavlink.active::before {
+  content: ''; position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: var(--space-1); height: calc(100% - var(--space-4));
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+/* "Run /todo" is a two-click launcher: armed = the second click will start a
+   full-permission agent, so it reads as a live, slightly alarming control. */
+.navlink.armed {
+  background: var(--danger); color: var(--text-on-danger);
+  font-weight: var(--fw-semibold);
+}
+.navlink.armed:hover { background: var(--danger-hover); color: var(--text-on-danger); }
+/* The ONE deliberate green left in the app chrome (tokens.css §7 spends the
+   hue budget on blue + amber). It is not part of the timekeeping vocabulary:
+   it says "a full-permission agent is running on your machine right now", it
+   exists for seconds at a time, and it must not read as either an action
+   (blue) or a warning (amber). */
+.navlink.agent-live { color: var(--status-good); }
+/* ~2s ambient loop. There is no token for a repeating pulse (the motion
+   tokens describe one-shot transitions), so it is expressed as a multiple of
+   the slowest one rather than as a fresh raw duration. */
+.navlink.agent-live svg {
+  animation: agent-pulse calc(var(--dur-slow) * 7) var(--ease-standard) infinite;
+}
+@keyframes agent-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .navlink.agent-live svg { animation: none; } }
+
+.sidebar .foot {
+  margin-top: auto; padding: var(--space-4) var(--space-3) var(--space-1);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  letter-spacing: var(--ls-caption); color: var(--text-muted);
+}
+
+/* Focus: nav items are the one place where the ring can be clipped by a
+   neighbouring filled row, so they also lift a layer while focused. */
+.navlink:focus-visible, .subnavlink:focus-visible,
+.botnav-item:focus-visible, .pagenav-item:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+  box-shadow: var(--focus-halo);
+  z-index: var(--z-raised);
+}
+/* Inside the bar the ring has no room to sit outside the control, so it sits
+   just inside its edge instead — same two bands, same contrast. */
+.botnav-item:focus-visible { outline-offset: calc(var(--focus-offset) * -1); }
+
+/* ---------------------------------------------------------------------------
+   Settings sub-navigation (desktop only). The Settings row expands into its
+   category pages while that route is active. Below 1024px the rail/bar has no
+   room for ".TIM export", so the same six links render as .pagenav instead.
+--------------------------------------------------------------------------- */
+
+.subnav {
+  display: flex; flex-direction: column; gap: var(--space-0-5);
+  margin: var(--space-1) 0 var(--space-2) var(--space-6);
+  padding-left: var(--space-2);
+  border-left: var(--border-w-thick) solid var(--border);
+}
+.subnavlink {
+  position: relative;
+  display: block; width: 100%; text-align: left;
+  min-height: var(--control-h-sm);
+  padding: var(--space-1) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-label);
+  cursor: pointer; transition: var(--transition-control);
+}
+.subnavlink:hover { background: var(--surface-2); color: var(--text-primary); }
+.subnavlink.active {
+  background: var(--accent-soft); color: var(--text-primary);
+  font-weight: var(--fw-semibold);
+}
+
+/* ---------------------------------------------------------------------------
+   Page header — ONE component, four named slots, every screen.
+
+   The wave-0 critic on the dashboard against the day view: "the page-header
+   pattern is inconsistent between two adjacent screens. Dashboard puts the
+   primary action in the header row at the right and labels the trio
+   'Finalize today / Export today / + New entry (n)'; day pushes the primary
+   action onto its own second line, left-aligned and alone, with the secondary
+   actions right-aligned above it, and relabels them 'Finalize day / Export /
+   + Entry'. Same three actions, different placement and different words."
+
+   The placement half was a layout accident: everything went into one wrapping
+   flex row, so a header with a segmented control in it wrapped differently
+   from one without. The slots below fix that by giving each kind of thing its
+   own place, whatever else is present:
+
+     [ back/date nav ] [ title ]            [ secondary actions · one primary ]
+     [ view controls — segmented control, custom range, totals             ]
+
+   .page-head-tools is CONTROLS THAT CHANGE WHAT YOU ARE LOOKING AT (Day /
+   Week / Month, a custom range). It always takes its own line — it is not a
+   page action and must never share the actions' row, which is what made the
+   two headers wrap differently. .page-head-actions is right-aligned, wraps as
+   a unit, and its last child is the screen's ONE primary action.
+
+   The wording half is fixed at the call sites: both screens now say
+   "Finalize day", "Export" and "New entry".
+
+   Two more rules make that survive a 390px phone without horizontal scroll or
+   three-words-to-a-line buttons:
+     1. below 1024px, .spacer becomes a zero-height full-width flex break, so
+        the title keeps its own line and the actions start a fresh one;
+     2. below 768px, the buttons AFTER that break grow to fill their line —
+        never squeezed, never clipped, and a lone primary action ends up full
+        width. The day arrows sit before the break and stay square at the 44px
+        touch minimum.
+--------------------------------------------------------------------------- */
+
+.page-head {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.page-head h1 { margin: 0; }
+.page-head .spacer { flex: 1 1 auto; }
+
+.page-head-actions {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  margin-left: auto;
+}
+/* Its own line, always: `order` puts it after the actions even though the
+   markup keeps it next to the title, where it reads. */
+.page-head-tools {
+  order: 1;
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  flex: 1 1 100%;
+}
+
+/* The keyboard hint that used to be spelled out in the label ("+ New entry
+   (n)"). A key cap beside the words on a desktop; nothing at all on a phone,
+   where there is no key to press. */
+.btn-kbd { margin-left: var(--space-1); }
+@media (max-width: 767px) { .btn-kbd { display: none; } }
+
+/* ---------------------------------------------------------------------------
+   Filter bar + date range — the shape a screen uses to say "show me this much
+   of the data". Export's filters and the day view's custom range are the two
+   call sites today, and they were two different improvisations.
+
+   The wave-0 critic on Export at 390px: "the filter controls are a naive
+   flex-wrap with no grid discipline, and the date range breaks apart as a
+   result: Today / Yesterday / This week / This month fill row one, then Last
+   month is stranded on row two beside the start-date field, the → arrow ends
+   that row orphaned from both dates, and the end-date field wraps to row three
+   next to the Include drafts checkbox. The range no longer reads as a range."
+
+   So: the presets are a group (a two-column grid on a phone, never a wrap),
+   the range is a group (a labelled From/To pair that takes a full row of its
+   own and stacks below 768px), and the actions are a group. A group can wrap;
+   the things inside one never wrap away from each other. The bare "→" is gone
+   — From and To are words, and they survive a phone.
+--------------------------------------------------------------------------- */
+
+.filter-bar {
+  display: flex; flex-wrap: wrap; align-items: flex-end;
+  gap: var(--gap-stack) var(--gap-inline);
+}
+.filter-bar .spacer { flex: 1 1 auto; }
+.filter-presets { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.filter-actions {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--gap-inline); margin-left: auto;
+}
+
+.date-range { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--gap-inline); }
+.range-field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.range-field input[type="date"] { min-width: 0; }
+
+@media (max-width: 767px) {
+  /* Two columns, equal width, in the order they read. Five presets means the
+     last one sits alone on the second row — which is a grid cell, not the
+     orphan a wrap produced. */
+  .filter-presets {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: var(--space-2); flex: 1 1 100%;
+  }
+  .filter-presets > .btn { width: 100%; }
+  /* The range owns a full row and stacks, each field under its own word. */
+  .date-range { flex: 1 1 100%; }
+  .range-field { flex: 1 1 100%; }
+  .filter-bar > .checkbox-row { flex: 1 1 100%; }
+  .filter-actions { flex: 1 1 100%; }
+  .filter-actions > .btn { flex: 1 1 auto; }
+}
+
+/* ---------------------------------------------------------------------------
+   Bottom navigation (phone) + its overflow sheet. Hidden by default; the
+   phone block below turns them on.
+--------------------------------------------------------------------------- */
+
+.botnav { display: none; }
+
+.botnav-item {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-0-5);
+  padding: var(--space-1) var(--space-0-5);
+  border: 0; background: none; cursor: pointer;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-caption);
+  transition: var(--transition-control);
+}
+.botnav-ind {
+  display: flex; align-items: center; justify-content: center; flex: none;
+  width: var(--space-10); height: var(--space-7);
+  border-radius: var(--radius-pill);
+  transition: var(--transition-control);
+}
+.botnav-item svg { width: var(--icon-lg); height: var(--icon-lg); }
+.botnav-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.botnav-item.active { color: var(--text-primary); font-weight: var(--fw-semibold); }
+.botnav-item.active .botnav-ind { background: var(--accent-soft); color: var(--accent-strong); }
+
+/* The More sheet. The sheet shape, the grabber, the scrim, tap-to-dismiss,
+   Escape, the focus trap and the inert background all come from the shared
+   .ovl primitive below — this only says what goes INSIDE it. */
+.navsheet .nav-group + .nav-group { margin-top: var(--space-3); padding-top: var(--space-3); }
+.navsheet .navlink {
+  min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+}
+.navsheet .navlink svg { width: var(--icon-lg); height: var(--icon-lg); }
+
+/* ---------------------------------------------------------------------------
+   Page-level sub-navigation (< 1024px): the Settings categories, as a chip
+   strip. Active state = filled + doubled ring + semibold, so it does not rely
+   on colour.
+
+   TWO THINGS THE WAVE-0 CRITIC FOUND HERE, both fixed below:
+
+   1. ORDER. The strip is rendered by the shell, above `${view()}`, so on
+      Settings the six chips came BEFORE the page's own <h1> — "roughly 300px
+      before the title appears" on a phone, and the only screen in the app
+      whose title is not the first thing on it. Title first is not negotiable:
+      it is what tells you where you are.
+
+      The shell cannot move the chips into the view (the view owns its own
+      .page-head), so it reorders them: .main becomes a flex column on the
+      Settings route and the page header is pulled to the front of it. The
+      chips then sit between the title and the content, which is where every
+      reference puts a section switcher.
+
+   2. SHAPE. Six chips wrapped onto three rows at 390px. A wrapped strip has
+      no shape — you cannot tell it is one control. Below the desktop width it
+      becomes a single horizontally scrollable row instead (Material's
+      scrollable tabs, Apple's segmented scroll), so it is always exactly one
+      row tall no matter how many categories there are.
+
+   3. OVERFLOW SIGNAL (round 3). A scroller that never says it scrolls is a
+      truncation: "hard-cut at the right viewport edge mid-word — 'Codes &
+      shor' — with no fade, no peeking partial pill and no scroll affordance,
+      and Validation and Remote & backups are entirely off-screen with nothing
+      to suggest they exist." Every mature scrollable-tab implementation
+      signals it. app.js publishes which edges still have strip beyond them as
+      data-overflow (start | end | both | none) and the rules below fade
+      exactly those edges — the fade appears only where there is something to
+      reach, and the last chip is never dimmed once you get there. (Note for
+      the next hand: do NOT add scroll-padding here. With `scroll-snap-type`
+      on, it offsets every snap position, and the strip then re-snaps away
+      from the chip this file just scrolled into view — the active category
+      ends up half off the right edge, which is the exact failure the scroll
+      was there to prevent.)
+--------------------------------------------------------------------------- */
+
+/* Applied to .main by app.js only while a route with a .pagenav is active, so
+   no other screen's block layout is turned into a flex column. */
+.main-pagenav { display: flex; flex-direction: column; }
+/* The view's own header, hoisted above the shell-rendered chip strip. The
+   chips (DOM index 0) and the rest of the view keep order 0 and therefore
+   stay in DOM order behind it. */
+.main-pagenav > .page-head { order: -1; }
+
+.pagenav { display: none; }
+.pagenav-item {
+  flex: none;
+  min-height: var(--control-h-md);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1); color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-label);
+  cursor: pointer; transition: var(--transition-control);
+}
+.pagenav-item:hover { background: var(--surface-2); color: var(--text-primary); }
+/* Same rule base.css applies to buttons: a coarse pointer gets the 44px
+   minimum, a mouse keeps the compact chip. */
+@media (pointer: coarse) { .pagenav-item { min-height: var(--tap-min); } }
+.pagenav-item.active {
+  background: var(--accent-soft); border-color: var(--accent);
+  color: var(--text-primary); font-weight: var(--fw-semibold);
+  box-shadow: inset 0 0 0 var(--border-w) var(--accent);
+}
+
+/* ===========================================================================
+   THE OVERLAY LAYER — one modal primitive, two shapes.
+
+   The shell owns this because a dialog is a shell-level fact: it dims the
+   shell's own fixed bars, it takes the shell's keyboard, and it locks the
+   shell's scroll. Before this there were four hand-rolled backdrops, each
+   implementing a different subset of what a modal owes its user. The markup
+   comes from public/js/components/overlay.js; every dialog in the app renders
+   through it.
+
+   WHAT THE WAVE-0 CRITIC FOUND, and where each is answered:
+
+   1. "Every overlay leaves the app's primary navigation live and undimmed…
+      a user halfway through a new entry can tap Search and silently lose the
+      dialog." → .ovl sits on --z-overlay (300), above --z-nav (95) and
+      --z-sticky (90), so the scrim covers the bottom bar and the day footer;
+      overlay.js additionally marks .shell and .botnav `inert` + aria-hidden,
+      so nothing behind the scrim can be tapped, focused or announced.
+
+   2. "The dialog is not modal in behaviour… tabbing 24 times walks focus out
+      to the page behind… the background is not scroll-locked." → the focus
+      trap and aria-modal live in overlay.js; the scroll lock is the
+      .tk-overlay-open rule immediately below.
+
+   3. "Close-out's only interactive element on a phone is the textarea… Accept,
+      edit, skip and quit are offered exclusively as non-clickable <kbd>
+      chips." → .ovl-actions gives every dialog a real button row, 44px at the
+      touch floor and 48px for the committing action, and .ovl-kbd renders the
+      key hint BESIDE its button — desktop only, never instead of it.
+
+   Below 768px the same panel is a full-width bottom sheet with a grabber
+   (Material 3's modal bottom sheet; Primer's responsive `position` prop is the
+   pattern being copied — one component, two shapes, never two components).
+   ========================================================================= */
+
+/* Background scroll lock. `overflow: hidden` stops the wheel and the finger;
+   pinning the body takes the document out of flow so there is nothing left to
+   scroll programmatically either (overlay.js offsets it by the current scroll
+   position and puts it back on close). base.css reserves the scrollbar gutter
+   so the page does not jump sideways as the bar disappears. */
+.tk-overlay-open, .tk-overlay-open body { overflow: hidden; }
+.tk-overlay-open body { position: fixed; left: 0; right: 0; width: 100%; }
+
+.ovl {
+  position: fixed; inset: 0; z-index: var(--z-overlay);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: var(--space-10) var(--page-gutter) var(--space-6);
+  background: var(--scrim);
+  overflow-y: auto; overscroll-behavior: contain;
+  animation: ovl-scrim var(--dur-base) var(--ease-out);
+}
+
+.ovl-panel {
+  position: relative;
+  width: 100%; max-width: var(--ovl-w-md);
+  background: var(--surface-raised);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  animation: ovl-rise var(--dur-slow) var(--ease-out);
+}
+.ovl-sm { max-width: var(--ovl-w-sm); }
+.ovl-lg { max-width: var(--ovl-w-lg); }
+/* The panel is focusable only as the fallback target of the focus trap (a
+   dialog with nothing focusable in it), so it never paints a ring of its own. */
+.ovl-panel:focus { outline: none; }
+
+@keyframes ovl-scrim { from { opacity: 0; } }
+@keyframes ovl-rise { from { opacity: 0; transform: translateY(var(--space-2)); } }
+@keyframes ovl-sheet-rise { from { transform: translateY(var(--space-9)); } }
+
+.ovl-grip { display: none; }          /* phone only — see the block below */
+
+.ovl-head {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  padding: var(--space-4) var(--space-5) 0;
+}
+.ovl-title {
+  margin: 0; flex: 1 1 auto; min-width: 0;
+  font-size: var(--fs-heading); line-height: var(--lh-heading);
+  font-weight: var(--fw-heading); letter-spacing: var(--ls-heading);
+}
+/* Pulled into the panel's own padding so the ✕ lines up with the title's cap
+   height rather than floating in from it. */
+.ovl-close { flex: none; margin-right: calc(var(--space-2) * -1); }
+
+/* Full padding by default, so a dialog that draws no header (quick capture)
+   is not short of a top edge; a header above it takes the step back down. */
+.ovl-body { padding: var(--space-5); }
+.ovl-head + .ovl-body { padding-top: var(--space-3); }
+
+/* The action row every dialog ends with. Secondary actions first, the one
+   committing action last — so it is rightmost on a desktop row and closest to
+   the thumb at the bottom of a sheet. */
+.ovl-actions {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--gap-inline);
+  justify-content: flex-end;
+  margin-top: var(--gap-block);
+}
+.ovl-actions .spacer { flex: 1 1 auto; }
+/* The keyboard hint that used to BE the affordance. It rides inside its own
+   button now, and only where a keyboard exists. */
+.ovl-kbd { margin-left: var(--space-1); }
+
+@media (max-width: 767px) {
+  /* Bottom sheet: full width, flush with the bottom edge, corners rounded at
+     the top only (Material 3's modal bottom sheet). */
+  .ovl { align-items: flex-end; padding: 0; }
+  .ovl-panel {
+    width: 100%; max-width: none;
+    max-height: var(--ovl-sheet-max-h);
+    display: flex; flex-direction: column;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    border-bottom: 0;
+    animation-name: ovl-sheet-rise;
+  }
+  /* The grabber. 4×32 like Material's, centred, and it is decoration only —
+     the ✕ in the header is the control, at the full touch floor. */
+  .ovl-grip {
+    display: block; flex: none;
+    width: var(--space-7); height: var(--space-1);
+    margin: var(--space-3) auto var(--space-0-5);
+    border-radius: var(--radius-pill); background: var(--border-strong);
+  }
+  .ovl-head { flex: none; padding: var(--space-2) var(--space-4) 0; }
+  /* Long dialogs scroll INSIDE the sheet, so the header and the grabber stay
+     put and the page behind stays locked. */
+  .ovl-body, .ovl-head + .ovl-body {
+    flex: 1 1 auto; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: var(--space-3) var(--space-4) calc(var(--space-5) + var(--shell-safe-b));
+  }
+  /* Every action is a real target: secondary actions share a row, the
+     committing one takes the full width of the row below them. */
+  .ovl-actions > .btn { flex: 1 1 auto; min-height: var(--control-h-touch); }
+  .ovl-actions > .btn-primary { flex: 1 1 100%; min-height: var(--control-h-xl); }
+  .ovl-kbd { display: none; }
+}
+
+/* ===========================================================================
+   TABLET — 768 to 1023px. Navigation rail.
+   ========================================================================= */
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .sidebar {
+    width: var(--shell-rail-w);
+    padding: var(--space-4) var(--space-1) var(--space-2);
+    gap: var(--space-1);
+  }
+  .sidebar .brand { justify-content: center; padding: var(--space-1) 0 var(--space-4); }
+  .sidebar .brand-word { display: none; }
+
+  .nav-label { display: none; }
+  .navlink {
+    flex-direction: column; gap: var(--space-0-5);
+    justify-content: center; text-align: center;
+    padding: var(--space-1) var(--space-0-5);
+    min-height: calc(var(--tap-min) + var(--space-3));
+    font-size: var(--fs-caption); line-height: var(--lh-caption);
+    letter-spacing: var(--ls-caption);
+  }
+  .navlink svg { width: var(--icon-lg); height: var(--icon-lg); }
+  .navlink-label { display: none; }
+  .navlink-short { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Active indicator becomes a pill behind the icon (Material 3 rail), so the
+     marker bar stands down. */
+  .navlink.active { background: none; }
+  .navlink.active::before { content: none; }
+  .navlink.active .navlink-ind { background: var(--accent-soft); }
+  .navlink-ind {
+    width: var(--space-10); height: var(--space-7);
+    border-radius: var(--radius-pill);
+    transition: var(--transition-control);
+  }
+
+  /* Actions have no one-word label that survives 76px, so they run icon-only
+     with their existing title tooltips. font-size:0 is the only way to hide
+     the bare text node inside <RunTodo>, whose markup this module does not
+     own; the spans below opt their own labels back in. */
+  .nav-actions .navlink { font-size: 0; gap: 0; }
+  .nav-actions .navlink .navlink-short { font-size: var(--fs-caption); }
+  .nav-actions .navlink.armed { background: var(--danger); }
+
+  /* (The six Settings category links have no room in a 76px rail; the
+     ≤1023px block below moves them into the page as .pagenav chips.) */
+  .sidebar .foot { display: none; }
+
+  .shell .today-footer { left: var(--shell-rail-w); }
+}
+
+@media (max-width: 1023px) {
+  /* One row, always. It scrolls sideways rather than wrapping — the vertical
+     padding is there so the focus ring has room inside the scroll box (an
+     `overflow-x: auto` element clips vertically too), and the negative margin
+     gives that padding back to the page so the strip still sits where a
+     16px-margin block would. */
+  .pagenav {
+    display: flex; flex-wrap: nowrap; gap: var(--space-2);
+    overflow-x: auto; overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    padding: var(--space-2) 0;
+    margin: calc(var(--space-2) * -1) 0 var(--space-3);
+    /* the bar itself is noise on a six-item strip; the fade below is the
+       affordance, and it is honest about which way there is more */
+    scrollbar-width: none;
+  }
+  .pagenav::-webkit-scrollbar { display: none; }
+  .pagenav-item { scroll-snap-align: start; }
+
+  /* The fade. Painted with a mask rather than an overlaid gradient so it works
+     on any page surface in either theme without knowing what is behind it. */
+  .pagenav[data-overflow="end"] {
+    mask-image: linear-gradient(to right, var(--mask-in) calc(100% - var(--mask-fade-w)), var(--mask-out));
+  }
+  .pagenav[data-overflow="start"] {
+    mask-image: linear-gradient(to left, var(--mask-in) calc(100% - var(--mask-fade-w)), var(--mask-out));
+  }
+  .pagenav[data-overflow="both"] {
+    mask-image: linear-gradient(to right, var(--mask-out), var(--mask-in) var(--mask-fade-w),
+                                var(--mask-in) calc(100% - var(--mask-fade-w)), var(--mask-out));
+  }
+  .subnav { display: none; }
+
+  /* Below the desktop width the page header stops trying to fit a title and
+     four actions on one line: .spacer becomes a zero-height full-width flex
+     break, so the title keeps its own line and the actions start a fresh one
+     instead of one lone button orphaning under the others. */
+  .page-head > .spacer { flex: 0 0 100%; height: 0; margin: 0; }
+}
+
+/* ===========================================================================
+   PHONE — ≤ 767px. Bottom navigation bar; no side navigation.
+
+   Stacking, deliberately, from the bottom edge up:
+     1. the device's safe-area inset (padding inside the bar)
+     2. the bottom navigation bar        z-index --z-nav   (95)
+     3. the day footer                   z-index --z-sticky (90), pushed up by
+        exactly --shell-nav-total so the two never overlap and "Close the day"
+        stays a full 44px target
+     4. toasts, above both
+     5. modals and sheets cover everything, as they should
+   .main reserves the height of the bar so the last card is never trapped
+   under it.
+   ========================================================================= */
+
+@media (max-width: 767px) {
+  .sidebar { display: none; }
+
+  .main {
+    max-width: none;
+    padding: var(--space-5) var(--page-gutter)
+             calc(var(--shell-nav-total) + var(--space-7));
+  }
+
+  .botnav {
+    display: flex; align-items: stretch;
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-nav);
+    height: calc(var(--shell-nav-h) + var(--shell-safe-b));
+    padding-bottom: var(--shell-safe-b);
+    background: var(--surface-1);
+    border-top: var(--border-w) solid var(--border);
+  }
+
+  /* Bars owned by other modules, moved out of the navigation bar's way. The
+     selectors are deliberately more specific than their own, because those
+     modules load after this one. */
+  .shell .today-footer { left: 0; right: 0; bottom: var(--shell-nav-total); }
+  #root .toast-host { bottom: calc(var(--shell-nav-total) + var(--space-3)); }
+
+  /* Page header: the title keeps its own line (break above), and the actions
+     share the lines below, growing to fill them — a lone primary action ends
+     up full width, which is where a thumb expects it. */
+  .page-head {
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+  }
+  /* Only the buttons AFTER the spacer are page actions; the ones before it
+     are the day arrows sitting either side of the title, which must stay
+     square. Sibling position is the reliable discriminator — an icon-only
+     button is not selectable any other way, since `svg:only-child` counts
+     elements and every one of these buttons is <svg> plus a text node.
+     (Screens that have adopted .page-head-actions are covered by the rules
+     below instead; this one still serves the ones that have not.) */
+  .page-head > .spacer ~ .btn:not(.btn-sm) { flex: 1 1 auto; }
+
+  /* The actions group owns its own full-width band, secondary actions share
+     the first row of it, and the ONE primary action takes the row under them
+     end to end — the same shape a bottom sheet's .ovl-actions uses, and where
+     a thumb expects the committing button to be. */
+  .page-head-actions { flex: 1 1 100%; }
+  .page-head-actions > .btn { flex: 1 1 auto; }
+  .page-head-actions > .btn-primary { flex: 1 1 100%; }
+}

@@ -29,7 +29,7 @@ export function TargetMeter({ billable, nonbillable, target }) {
           <span class="muted">Target <strong class="mono">${fmtHours(target)}h</strong>
             ${remaining > 0
               ? html` · <span>${fmtHours(remaining)}h to go</span>`
-              : html` · <span style=${{ color: 'var(--status-good)', fontWeight: 650 }}>✓ met</span>`}
+              : html` · <span style=${{ color: 'var(--accent)', fontWeight: 650 }}>✓ met</span>`}
           </span>` : null}
       </div>
     </div>`;

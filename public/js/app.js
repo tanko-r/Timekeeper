@@ -1,5 +1,5 @@
 import { api, accessSignInUrl } from '/js/api.js';
-import { html, React, useState, useEffect, useCallback, Spinner, Icon } from '/js/ui.js';
+import { html, React, useState, useEffect, useRef, useCallback, Spinner, Icon } from '/js/ui.js';
 import { runningTitle, IDLE_ICON, RUNNING_ICON } from '/js/lib/titlebar.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
@@ -10,6 +10,7 @@ import { StatsView } from '/js/views/stats.js';
 import { SettingsView, SETTINGS_CATEGORIES } from '/js/views/settings.js';
 import { CmsView } from '/js/views/cms.js';
 import { ExportView } from '/js/views/exportview.js';
+import { Overlay, overlayOpen } from '/js/components/overlay.js';
 import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
@@ -30,15 +31,144 @@ export function nav(to) {
   location.hash = to;
 }
 
+// ---------- overlay dismissal ----------
+//
+// Hardware Back is the primary dismiss gesture in the installed Android PWA,
+// and before this the app could be wedged with it: open the entry editor on
+// #/, press Back, and the route became #/calendar while the editor stayed
+// mounted on top of it, swallowing every other shortcut. Two rules together
+// close that off — see also the route effect in App(), which unmounts every
+// overlay whenever the route changes, whatever caused it.
+//
+// This hook is rule one: opening an overlay pushes a marker history entry at
+// the SAME url, so the route does not move. Back pops the marker, the hook
+// hears popstate and closes the overlay instead of navigating. Closing the
+// overlay any other way (Escape, ✕, save) consumes the marker with
+// history.back(), but only while the marker is still the current entry —
+// otherwise something else has navigated and going back would undo it.
+//
+// Nested overlays are LIFO: after a pop, whichever hook still sees its own
+// token as the current entry stays open, so Back dismisses one layer at a
+// time rather than collapsing the stack.
+function useBackDismiss(open, close) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!open) return undefined;
+    const token = `tk-overlay-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    history.pushState({ tkOverlay: token }, '');
+    let marked = true;
+    const onPop = () => {
+      // Our marker is still the current entry: a layer above us was popped,
+      // not us.
+      if (history.state && history.state.tkOverlay === token) return;
+      marked = false;
+      closeRef.current();
+    };
+    window.addEventListener('popstate', onPop);
+    return () => {
+      window.removeEventListener('popstate', onPop);
+      if (marked && history.state && history.state.tkOverlay === token) history.back();
+    };
+  }, [open]);
+}
+
+// Destinations. The fourth field is the one-word label used where there is no
+// room for the full one: the tablet rail (76px) and the phone bottom bar.
 const NAV = [
-  ['dashboard', 'Dashboard', 'layout'],
-  ['calendar', 'Calendar', 'calendar'],
-  ['search', 'Search', 'search'],
-  ['stats', 'Stats', 'stats'],
-  ['cms', 'Clients/Matters', 'briefcase'],
-  ['export', 'Export', 'export'],
-  ['settings', 'Settings', 'settings'],
+  ['dashboard', 'Dashboard', 'layout', 'Today'],
+  ['calendar', 'Calendar', 'calendar', 'Calendar'],
+  ['search', 'Search', 'search', 'Search'],
+  ['stats', 'Stats', 'stats', 'Stats'],
+  ['cms', 'Clients/Matters', 'briefcase', 'Clients'],
+  ['export', 'Export', 'export', 'Export'],
+  ['settings', 'Settings', 'settings', 'Settings'],
 ];
+
+// Phone bottom bar: four destinations plus More. Material 3 caps a navigation
+// bar at five items and Apple HIG at five before a "More" tab, so the three
+// lowest-frequency destinations move into the More sheet rather than being
+// crushed into the bar. These four are the daily chain: today's work, the day
+// you are looking for, finding an old narrative, sending the CSV.
+const BOTTOM_NAV = ['dashboard', 'calendar', 'search', 'export'];
+const SHEET_NAV = NAV.filter(([p]) => !BOTTOM_NAV.includes(p)).map(([p]) => p);
+
+const routeOf = (path) => (path === 'dashboard' ? '#/' : `#/${path}`);
+
+// One nav row, used by the sidebar, the rail and the More sheet. Both labels
+// are always in the DOM; CSS shows whichever one fits the width.
+function NavLink({ path, label, icon, short, active, onNav }) {
+  return html`
+    <button
+      class=${'navlink' + (active ? ' active' : '')}
+      aria-current=${active ? 'page' : undefined}
+      onClick=${() => { nav(routeOf(path)); if (onNav) onNav(); }}>
+      <span class="navlink-ind"><${Icon} name=${icon} size=${18} /></span>
+      <span class="navlink-label">${label}</span>
+      <span class="navlink-short">${short}</span>
+    </button>`;
+}
+
+// The action group — things that DO something rather than places to go. Same
+// three items on every width; only where they live changes (sidebar group on
+// desktop, icon column in the rail, More sheet on a phone).
+function NavActions({ onDone }) {
+  const after = () => { if (onDone) onDone(); };
+  return html`
+    <${React.Fragment}>
+      <button class="navlink" title="Jot a quick change onto TODO.md (no screenshot)"
+        onClick=${() => { window.dispatchEvent(new CustomEvent('tk:add-todo')); after(); }}>
+        <span class="navlink-ind"><${Icon} name="plus" size=${18} /></span>
+        <span class="navlink-label">Add todo</span>
+        <span class="navlink-short">Todo</span>
+      </button>
+      <${RunTodo} />
+      ${pipSupported() ? html`
+        <button class="navlink" title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
+          onClick=${() => { toggleTimerPip().catch((e) => window.dispatchEvent(
+            new CustomEvent('tk:toast', { detail: { message: String(e.message || e), error: true } }))); after(); }}>
+          <span class="navlink-ind"><${Icon} name="copy" size=${18} /></span>
+          <span class="navlink-label">Float timer</span>
+          <span class="navlink-short">Float</span>
+        </button>` : null}
+    <//>`;
+}
+
+// Phone overflow: a modal bottom sheet. It rides the shared Overlay primitive
+// like every other dialog, so the scrim, the focus trap, Escape-restores-focus,
+// the scroll lock and the inert background all come from one place — including
+// the bottom bar it was opened from, which used to stay live underneath it.
+// Everything the bottom bar could not hold lives here, one thumb-reach from it.
+function NavSheet({ active, onClose, onHelp }) {
+  useEffect(() => {
+    // The sheet only exists below the bottom-bar breakpoint. If the viewport
+    // grows past it (a phone turned landscape), CSS would hide the sheet while
+    // the trap kept holding focus — so close it instead.
+    const wide = window.matchMedia('(min-width: 768px)');
+    const onWide = (e) => { if (e.matches) onClose(); };
+    wide.addEventListener('change', onWide);
+    return () => wide.removeEventListener('change', onWide);
+  }, [onClose]);
+
+  return html`
+    <${Overlay} title=${null} label="More" className="navsheet" onClose=${() => onClose()}>
+      <div class="nav-group">
+        <div class="nav-label">Go to</div>
+        ${NAV.filter(([p]) => SHEET_NAV.includes(p)).map(([path, label, icon, short]) => html`
+          <${NavLink} key=${path} path=${path} label=${label} icon=${icon} short=${short}
+            active=${active === path} onNav=${onClose} />`)}
+      </div>
+      <div class="nav-group nav-actions">
+        <div class="nav-label">Actions</div>
+        <${NavActions} onDone=${onClose} />
+        <button class="navlink" onClick=${() => { onClose(); onHelp(); }}>
+          <span class="navlink-ind"><${Icon} name="keyboard" size=${18} /></span>
+          <span class="navlink-label">Keyboard shortcuts</span>
+          <span class="navlink-short">Keys</span>
+        </button>
+      </div>
+    <//>`;
+}
 
 // ---------- theme ----------
 
@@ -86,14 +216,6 @@ function ToastHost() {
 // ---------- keyboard help ----------
 
 function KeyboardHelp({ onClose }) {
-  // Raw backdrop div (not the shared Modal — kbd-help styling is custom), so
-  // Escape handling has to be added by hand here.
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-
   const rows = [
     ['n', 'New time entry'],
     ['t', 'Start / stop the last-used timer'],
@@ -114,17 +236,11 @@ function KeyboardHelp({ onClose }) {
     ['Ctrl+Enter (grid)', 'Open the focused timer’s entry'],
   ];
   return html`
-    <div class="modal-backdrop" onClick=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div class="modal kbd-help">
-        <div class="modal-head"><h3>Keyboard shortcuts</h3>
-          <button class="btn btn-ghost" onClick=${onClose}>✕</button></div>
-        <div class="modal-body">
-          <table>${rows.map(([k, d]) => html`
-            <tr key=${k}><td><kbd>${k}</kbd></td><td>${d}</td></tr>`)}
-          </table>
-        </div>
-      </div>
-    </div>`;
+    <${Overlay} title="Keyboard shortcuts" className="kbd-help" onClose=${() => onClose()}>
+      <table>${rows.map(([k, d]) => html`
+        <tr key=${k}><td><kbd>${k}</kbd></td><td>${d}</td></tr>`)}
+      </table>
+    <//>`;
 }
 
 // ---------- app root ----------
@@ -136,8 +252,10 @@ function App() {
   const [editor, setEditor] = useState(null); // {id} | {template:{...}} | null
   const [showHelp, setShowHelp] = useState(false);
   const [quickCapture, setQuickCapture] = useState(false);
+  const [navSheet, setNavSheet] = useState(false); // phone "More" bottom sheet
   const [refreshKey, setRefreshKey] = useState(0);
   const [accessExpired, setAccessExpired] = useState(false);
+  const pagenavRef = useRef(null);
 
   const reloadAuth = useCallback(async () => {
     try {
@@ -155,6 +273,19 @@ function App() {
 
   useEffect(() => { reloadAuth(); }, [reloadAuth]);
 
+  // Rule two of overlay dismissal (see useBackDismiss above): a route change
+  // unmounts EVERY overlay, however the navigation was made — a nav link, a
+  // `g d`, a deep link, a Back that moved the hash. An overlay left mounted
+  // over a screen it was not opened from wedges the app: it keeps the modal
+  // backdrop and its focus trap while the page underneath has changed, and
+  // every global shortcut stays dead behind it.
+  useEffect(() => {
+    setNavSheet(false);
+    setEditor(null);
+    setShowHelp(false);
+    setQuickCapture(false);
+  }, [route]);
+
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
     const onAuthRequired = () => reloadAuth();
@@ -168,6 +299,46 @@ function App() {
       window.removeEventListener('tk:access-expired', onAccessExpired);
     };
   }, [reloadAuth]);
+
+  // Below 1024px the Settings categories are a single horizontally scrollable
+  // chip strip (see .pagenav in shell.css). Six chips do not fit a phone, so
+  // the one you are actually on has to be brought into view — otherwise
+  // landing on "Remote & backups" shows a strip that starts at "General" and
+  // looks like nothing is selected. Scrolling the STRIP (not scrollIntoView)
+  // is deliberate: it can only ever move sideways, so the page itself never
+  // jumps under the reader.
+  //
+  // The wave-0 critic then found the other half of the problem: a strip that
+  // scrolls but never SAYS so — "hard-cut at the right viewport edge mid-word
+  // ('Codes & shor'), with no fade, no peeking partial pill and no scroll
+  // affordance; Validation and Remote & backups are entirely off-screen with
+  // nothing to suggest they exist." Mature scrollable-tab implementations
+  // always signal the overflow, so the strip publishes which edges have more
+  // beyond them (`data-overflow`) and shell.css fades exactly those.
+  useEffect(() => {
+    const box = pagenavRef.current;
+    if (!box) return undefined;
+    const el = box.querySelector('.pagenav-item.active');
+    if (el && box.scrollWidth > box.clientWidth) {
+      box.scrollLeft = Math.max(0, el.offsetLeft - (box.clientWidth - el.offsetWidth) / 2);
+    }
+    const mark = () => {
+      const max = box.scrollWidth - box.clientWidth;
+      box.dataset.overflow = max <= 1 ? 'none'
+        : box.scrollLeft <= 1 ? 'end'
+          : box.scrollLeft >= max - 1 ? 'start' : 'both';
+    };
+    mark();
+    box.addEventListener('scroll', mark, { passive: true });
+    const ro = new ResizeObserver(mark);
+    ro.observe(box);
+    return () => { box.removeEventListener('scroll', mark); ro.disconnect(); };
+    // `settings` is in here because it is what gates the whole shell: on a cold
+    // load this effect runs once against the loading spinner, when there is no
+    // strip in the DOM yet, and the route never changes afterwards — so with
+    // [route] alone neither the fade nor the scroll-into-view ever ran on the
+    // screen you actually landed on.
+  }, [route, settings]);
 
   // Refresh views when the editor closes with changes or timers write entries.
   const bumpRefresh = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -239,6 +410,16 @@ function App() {
     setEditor(null);
     if (changed) bumpRefresh();
   }, [bumpRefresh]);
+  const closeHelp = useCallback(() => setShowHelp(false), []);
+  const closeQuickCapture = useCallback(() => setQuickCapture(false), []);
+  const closeNavSheet = useCallback(() => setNavSheet(false), []);
+
+  // Back / the Android gesture dismisses the top overlay instead of leaving
+  // the screen under it. Order is irrelevant — each hook owns its own marker.
+  useBackDismiss(!!editor, closeEditor);
+  useBackDismiss(showHelp, closeHelp);
+  useBackDismiss(quickCapture, closeQuickCapture);
+  useBackDismiss(navSheet, closeNavSheet);
 
   const reloadSettings = useCallback(async () => {
     const s = await api.get('/api/settings');
@@ -255,11 +436,14 @@ function App() {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = ['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable;
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
-      // The editor and the quick-capture palette own their keys. While the
-      // palette is open, ALL global shortcuts must stay dead: a chip click
-      // moves focus off its input, and e.g. `n` would then open an editor
-      // invisibly UNDER the qc backdrop (z-index 100 vs 300).
-      if (editor || quickCapture) return;
+      // A dialog owns the keyboard while it is up. ALL global shortcuts stay
+      // dead: a chip click moves focus off its input, and e.g. `n` would then
+      // open an editor invisibly UNDER the scrim. `overlayOpen()` is the
+      // primitive's own answer, so this now covers every dialog in the app —
+      // the close-out sweep and the summary included, which this handler could
+      // not see before (they are view-local state) and which each had to fence
+      // the keyboard themselves. Escape belongs to the topmost overlay.
+      if (editor || quickCapture || navSheet || overlayOpen()) return;
       if (pendingG) {
         pendingG = false;
         clearTimeout(gTimer);
@@ -302,7 +486,7 @@ function App() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [editor, openEditor, route.path, showHelp, quickCapture]);
+  }, [editor, openEditor, route.path, showHelp, quickCapture, navSheet]);
 
   // Cloudflare Access expired (remote only). Checked before the spinner: on a
   // cold load every call 401s, so authState never arrives and the app would
@@ -344,46 +528,82 @@ function App() {
   }[route.path] || (() => html`<div class="card">Not found. <a href="#/">Go home</a></div>`);
 
   const active = route.path === 'day' ? 'calendar' : route.path;
+  // Same fallback SettingsView applies to its own content: an unknown category
+  // (a stale bookmark, a typo'd deep link) renders General, so the strip has to
+  // say General too. Without this the shell showed six chips with none of them
+  // active above a General page — the one state where the nav lies about where
+  // you are.
+  const rawSettingsPage = route.args[0] || 'general';
+  const settingsPage = SETTINGS_CATEGORIES.some(([k]) => k === rawSettingsPage)
+    ? rawSettingsPage : 'general';
+  const moreActive = SHEET_NAV.includes(active);
 
   return html`
     <div class="shell">
-      <nav class="sidebar">
-        <div class="brand"><${Icon} name="timer" size=${21} /> Time<span>keeper</span></div>
-        ${NAV.map(([path, label, icon]) => html`
-          <${React.Fragment} key=${path}>
-            <button
-              class=${'navlink' + (active === path ? ' active' : '')}
-              onClick=${() => nav(path === 'dashboard' ? '#/' : `#/${path}`)}>
-              <${Icon} name=${icon} size=${18} /> ${label}
-            </button>
-            ${path === 'settings' && active === 'settings' ? html`
-              <div class="subnav">
-                ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
-                  <button key=${key}
-                    class=${'subnavlink' + ((route.args[0] || 'general') === key ? ' active' : '')}
-                    onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
-              </div>` : null}
-          <//>`)}
-        <button class="navlink" title="Jot a quick change onto TODO.md (no screenshot)"
-          onClick=${() => window.dispatchEvent(new CustomEvent('tk:add-todo'))}>
-          <${Icon} name="plus" size=${18} /> Add todo
-        </button>
-        <${RunTodo} />
-        ${pipSupported() ? html`
-          <button class="navlink" title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
-            onClick=${() => toggleTimerPip().catch((e) =>
-              window.dispatchEvent(new CustomEvent('tk:toast', { detail: { message: String(e.message || e), error: true } })))}>
-            <${Icon} name="copy" size=${18} /> Float timer
-          </button>` : null}
+      <nav class="sidebar" aria-label="Main">
+        <div class="brand">
+          <${Icon} name="timer" size=${21} />
+          <span class="brand-word">Time<span>keeper</span></span>
+        </div>
+        <div class="nav-group">
+          <div class="nav-label">Go to</div>
+          ${NAV.map(([path, label, icon, short]) => html`
+            <${React.Fragment} key=${path}>
+              <${NavLink} path=${path} label=${label} icon=${icon} short=${short}
+                active=${active === path} />
+              ${path === 'settings' && active === 'settings' ? html`
+                <div class="subnav">
+                  ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
+                    <button key=${key}
+                      class=${'subnavlink' + (settingsPage === key ? ' active' : '')}
+                      aria-current=${settingsPage === key ? 'page' : undefined}
+                      onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
+                </div>` : null}
+            <//>`)}
+        </div>
+        <div class="nav-group nav-actions">
+          <div class="nav-label">Actions</div>
+          <${NavActions} />
+        </div>
         <div class="foot">Press <kbd>?</kbd> for shortcuts</div>
       </nav>
-      <main class="main">${view()}</main>
+      <main class=${'main' + (active === 'settings' ? ' main-pagenav' : '')}>
+        ${active === 'settings' ? html`
+          <div class="pagenav" role="group" aria-label="Settings sections" ref=${pagenavRef}>
+            ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
+              <button key=${key}
+                class=${'pagenav-item' + (settingsPage === key ? ' active' : '')}
+                aria-current=${settingsPage === key ? 'page' : undefined}
+                onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
+          </div>` : null}
+        ${view()}
+      </main>
     </div>
+    <nav class="botnav" aria-label="Main">
+      ${NAV.filter(([path]) => BOTTOM_NAV.includes(path)).map(([path, label, icon, short]) => html`
+        <button key=${path}
+          class=${'botnav-item' + (active === path ? ' active' : '')}
+          aria-current=${active === path ? 'page' : undefined}
+          title=${label}
+          onClick=${() => nav(routeOf(path))}>
+          <span class="botnav-ind"><${Icon} name=${icon} size=${20} /></span>
+          <span class="botnav-label">${short}</span>
+        </button>`)}
+      <button class=${'botnav-item' + (moreActive ? ' active' : '')}
+        aria-haspopup="dialog" aria-expanded=${navSheet ? 'true' : 'false'}
+        onClick=${() => setNavSheet(true)}>
+        <span class="botnav-ind"><${Icon} name="more" size=${20} /></span>
+        <span class="botnav-label">More</span>
+      </button>
+    </nav>
+    ${navSheet ? html`
+      <${NavSheet} active=${active} onClose=${closeNavSheet}
+        onHelp=${() => setShowHelp(true)} />` : null}
     <${ToastHost} />
     <${FeedbackCapture} />
     ${editor ? html`<${EntryEditor} spec=${editor} settings=${settings} onClose=${closeEditor} />` : null}
-    ${showHelp ? html`<${KeyboardHelp} onClose=${() => setShowHelp(false)} />` : null}
-    ${quickCapture ? html`<${QuickCapture} onClose=${() => setQuickCapture(false)} onFiled=${bumpRefresh} />` : null}
+    ${showHelp ? html`<${KeyboardHelp} onClose=${closeHelp} />` : null}
+    ${quickCapture ? html`<${QuickCapture} onClose=${closeQuickCapture} onFiled=${bumpRefresh} />` : null}
   `;
 }
 

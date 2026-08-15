@@ -90,30 +90,42 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom, openEdit
         ${attention !== 'all' ? html`
           <span class="muted small">${FILTERS.find(([k]) => k === attention)[2]}</span>` : null}
       </div>
-      <div class="row">
-        <button class="btn btn-sm" onClick=${() => { setFrom(todayStr()); setTo(todayStr()); }}>Today</button>
-        <button class="btn btn-sm" onClick=${() => { setFrom(addDays(todayStr(), -1)); setTo(addDays(todayStr(), -1)); }}>Yesterday</button>
-        <button class="btn btn-sm" onClick=${() => {
-          const t = todayStr();
-          const dow = (new Date().getDay() + 6) % 7;
-          setFrom(addDays(t, -dow)); setTo(t);
-        }}>This week</button>
-        <button class="btn btn-sm" onClick=${() => {
-          const t = todayStr();
-          setFrom(t.slice(0, 8) + '01'); setTo(t);
-        }}>This month</button>
-        <button class="btn btn-sm" onClick=${() => {
-          const t = todayStr();
-          const firstOfThis = new Date(t.slice(0, 8) + '01T12:00:00');
-          const lastMonthEnd = new Date(firstOfThis.getTime() - 86400000);
-          const y = lastMonthEnd.getFullYear();
-          const m = String(lastMonthEnd.getMonth() + 1).padStart(2, '0');
-          const d = String(lastMonthEnd.getDate()).padStart(2, '0');
-          setFrom(`${y}-${m}-01`); setTo(`${y}-${m}-${d}`);
-        }}>Last month</button>
-        <input type="date" value=${from} style=${{ width: '160px' }} onChange=${(e) => setFrom(e.target.value)} />
-        <span class="muted">→</span>
-        <input type="date" value=${to} style=${{ width: '160px' }} onChange=${(e) => setTo(e.target.value)} />
+      ${/* Three groups — presets, range, actions (shell.css .filter-bar). A
+            group may wrap; the controls inside one never wrap away from each
+            other, which is what tore the date range apart at 390px. */''}
+      <div class="filter-bar">
+        <div class="filter-presets" role="group" aria-label="Quick ranges">
+          <button class="btn btn-sm" onClick=${() => { setFrom(todayStr()); setTo(todayStr()); }}>Today</button>
+          <button class="btn btn-sm" onClick=${() => { setFrom(addDays(todayStr(), -1)); setTo(addDays(todayStr(), -1)); }}>Yesterday</button>
+          <button class="btn btn-sm" onClick=${() => {
+            const t = todayStr();
+            const dow = (new Date().getDay() + 6) % 7;
+            setFrom(addDays(t, -dow)); setTo(t);
+          }}>This week</button>
+          <button class="btn btn-sm" onClick=${() => {
+            const t = todayStr();
+            setFrom(t.slice(0, 8) + '01'); setTo(t);
+          }}>This month</button>
+          <button class="btn btn-sm" onClick=${() => {
+            const t = todayStr();
+            const firstOfThis = new Date(t.slice(0, 8) + '01T12:00:00');
+            const lastMonthEnd = new Date(firstOfThis.getTime() - 86400000);
+            const y = lastMonthEnd.getFullYear();
+            const m = String(lastMonthEnd.getMonth() + 1).padStart(2, '0');
+            const d = String(lastMonthEnd.getDate()).padStart(2, '0');
+            setFrom(`${y}-${m}-01`); setTo(`${y}-${m}-${d}`);
+          }}>Last month</button>
+        </div>
+        <div class="date-range">
+          <label class="range-field">
+            <span class="field-label">From</span>
+            <input type="date" value=${from} onChange=${(e) => setFrom(e.target.value)} />
+          </label>
+          <label class="range-field">
+            <span class="field-label">To</span>
+            <input type="date" value=${to} onChange=${(e) => setTo(e.target.value)} />
+          </label>
+        </div>
         <label class="checkbox-row" title=${attention === 'all' ? ''
           : 'The status filter already decides this'}>
           <input type="checkbox" checked=${attention === 'all' ? includeDrafts : attention !== 'unexported'}
@@ -121,14 +133,15 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom, openEdit
             onChange=${(e) => setIncludeDrafts(e.target.checked)} />
           Include drafts
         </label>
-        <div class="spacer" style=${{ flex: 1 }}></div>
-        <button class="btn" onClick=${copyText} disabled=${!data || data.count === 0}>
-          <${Icon} name="clipboard" size=${16} /> Copy text</button>
-        <button class="btn" onClick=${() => doExport('csv')} disabled=${!data || data.count === 0}>
-          <${Icon} name="download" size=${16} /> CSV${data ? ` (${data.count})` : ''}</button>
-        <button class="btn btn-primary" onClick=${() => doExport('tim')} disabled=${!data || data.count === 0}>
-          <${Icon} name="export" size=${16} /> .TIM${data ? ` (${data.count})` : ''}
-        </button>
+        <div class="filter-actions">
+          <button class="btn" onClick=${copyText} disabled=${!data || data.count === 0}>
+            <${Icon} name="clipboard" size=${16} /> Copy text</button>
+          <button class="btn" onClick=${() => doExport('csv')} disabled=${!data || data.count === 0}>
+            <${Icon} name="download" size=${16} /> CSV${data ? ` (${data.count})` : ''}</button>
+          <button class="btn btn-primary" onClick=${() => doExport('tim')} disabled=${!data || data.count === 0}>
+            <${Icon} name="export" size=${16} /> .TIM${data ? ` (${data.count})` : ''}
+          </button>
+        </div>
       </div>
       <p class="muted small" style=${{ marginBottom: 0 }}>
         Only finalized entries export by default. The .TIM file imports directly into
@@ -147,7 +160,7 @@ export function ExportView({ refreshKey, bumpRefresh, focus, focusFrom, openEdit
     </div>
 
     ${error ? html`<${ErrorBox} error=${error} />` : loading && !data ? html`<${Spinner} />` : html`
-      <div class="card table-wrap" style=${{ padding: 0 }}>
+      <div class="card table-wrap table-cards export-table" style=${{ padding: 0 }}>
         <table class="tk">
           <thead><tr>
             <th>Date</th><th>CM</th><th>Narrative</th><th>Billable</th>

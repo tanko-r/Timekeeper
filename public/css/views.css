@@ -1,0 +1,286 @@
+/* views.css — dashboard, calendar, stats, cms, export, settings, login page chrome */
+
+/* an export-preview row that can never leave the building (no matter yet) */
+.row-blocked td { opacity: .72; }
+
+/* ---------- export preview: phone (≤767px) ----------
+   WAVE-0 FIX (shell wave), to be absorbed by the export wave.
+
+   The critic at 390px: "the unmodified 7-column desktop table crammed into
+   390px. The Narrative column wraps to roughly one word per line ('Reviewed
+   the / landlord's / termination / notice and / the / underlying') and a
+   trailing column is clipped at the right edge. It is a squeeze, not a real
+   touch layout" — on a screen the brief names as a core action that must be
+   fully usable by touch.
+
+   `table-cards` in base.css does the generic half: header row gone, each row
+   becomes a card. This is the half only the export table can know — what its
+   seven columns mean and therefore how they read on three lines:
+
+     line 1   date · matter name · matter number      (what this entry is)
+     line 2   the narrative, at the full measure       (what it says)
+     line 3   billable · hours · export status · actions   (what it is worth)
+
+   Nothing is hidden and no markup changed, so the desktop table and every
+   selector written against it are untouched. */
+@media (max-width: 767px) {
+  .export-table tbody tr { row-gap: var(--space-2); }
+
+  /* line 1 — the identity line */
+  .export-table tbody td:nth-child(1):not([colspan]) { order: 0; color: var(--text-muted); }
+  .export-table tbody td:nth-child(2) { order: 1; flex: 1 1 auto; }
+  /* the CM cell stacks name over number on desktop; on one line here, with a
+     separator supplied by CSS rather than by an extra markup node */
+  .export-table tbody td:nth-child(2) > div { display: inline; }
+  .export-table tbody td:nth-child(2) > div + div::before {
+    content: '·'; margin: 0 var(--space-1); color: var(--text-muted);
+  }
+
+  /* line 2 — the narrative gets the whole measure, which is the entire point */
+  .export-table tbody td:nth-child(3) { order: 2; flex: 1 1 100%; }
+  .export-table tbody td:nth-child(3) .chip { margin-top: var(--space-1); }
+
+  /* line 3 — the meta row */
+  .export-table tbody td:nth-child(4) { order: 3; }
+  .export-table tbody td:nth-child(5) {
+    order: 4;
+    font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+    font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+  }
+  /* the column header that carried the unit is gone, so the figure carries it */
+  .export-table tbody td:nth-child(5)::after { content: 'h'; }
+  .export-table tbody td:nth-child(6) { order: 5; }
+  .export-table tbody td:nth-child(7) {
+    order: 6; margin-left: auto; align-self: center;
+    display: flex; gap: var(--space-1);
+  }
+}
+
+.star { cursor: pointer; color: var(--text-muted); background: none; border: 0; font-size: 16px; padding: 2px; }
+.star.on { color: var(--nonbillable); }
+
+table.tk tr.client-row td {
+  background: var(--surface-2); font-size: 12.5px; padding: 5px 10px;
+}
+.client-name-cell { display: inline-flex; align-items: center; gap: 6px; }
+.client-name-add {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;
+  border: 1px dashed var(--accent); border-radius: 6px; background: none;
+  color: var(--accent-strong); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.client-name-add:hover { background: var(--accent-soft); }
+
+/* ---------- target meter ---------- */
+.meter { display: flex; flex-direction: column; gap: 6px; }
+.meter-bar {
+  position: relative; height: 14px; background: var(--surface-2);
+  border-radius: 7px; overflow: hidden;
+}
+.meter-fill { position: absolute; inset: 0 auto 0 0; }
+.meter-fill.billable { background: var(--billable); }
+.meter-fill.nonbillable { background: var(--nonbillable); }
+.meter-target {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text-primary);
+  opacity: .55;
+}
+.meter-legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--text-secondary); flex-wrap: wrap; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; }
+.dot-billable { background: var(--billable); }
+.dot-nonbillable { background: var(--nonbillable); }
+
+/* ---------- calendar ---------- */
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr) minmax(58px, 0.72fr); gap: 6px; }
+.cal-dow { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); text-align: center; padding: 2px; }
+.cal-total-head { color: var(--text-secondary); font-weight: 700; }
+/* per-week billed totals column (2026-07-18 feedback): billable and
+   non-billable stacked, color-coded to match the day split bars */
+.cal-week-total {
+  display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
+  gap: 2px; padding: 4px 6px; border-left: 2px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.cal-wt-b { color: var(--billable); font-weight: 700; font-size: 15px; }
+.cal-wt-nb { color: var(--nonbillable); font-size: 12.5px; }
+.cal-period-total { color: var(--text-secondary); }
+.cal-day {
+  border: 1px solid var(--border); border-radius: 7px; min-height: 86px; padding: 7px 8px;
+  background: var(--surface-1); cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+  position: relative; text-align: left;
+}
+.cal-day:hover { border-color: var(--accent); }
+.cal-day.other-month { opacity: .38; }
+.cal-day.weekend { background: var(--surface-2); }
+.cal-day.today { box-shadow: 0 0 0 2px var(--accent) inset; }
+/* single-click selection (entries panel below); today keeps its inset ring */
+.cal-day.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--surface-1)); }
+.cal-num { font-size: 12.5px; font-weight: 650; color: var(--text-secondary); }
+.cal-hours { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cal-split { display: flex; height: 5px; border-radius: 3px; overflow: hidden; gap: 2px; }
+.cal-split .b { background: var(--billable); }
+.cal-split .nb { background: var(--nonbillable); }
+.cal-status { position: absolute; top: 7px; right: 8px; font-size: 10px; font-weight: 700; }
+.cal-status.good { color: var(--status-good); }
+.cal-status.warning { color: var(--status-warning); }
+.cal-status.serious { color: var(--status-serious); }
+.week-strip { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.week-col { border: 1px solid var(--border); border-radius: 7px; padding: 8px; background: var(--surface-1); min-height: 130px; }
+.week-col .col-head { font-size: 12px; font-weight: 650; margin-bottom: 6px; display: flex; justify-content: space-between; }
+.week-entry { font-size: 11.5px; padding: 4px 6px; border-radius: 5px; background: var(--surface-2); margin-bottom: 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.week-entry:hover { outline: 1px solid var(--accent); }
+.week-col.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface-1)); }
+/* week-strip day heading: click selects, dblclick opens — a link dressed as text */
+.week-day-btn {
+  border: 0; background: none; padding: 0; font: inherit; color: var(--accent);
+  cursor: pointer; border-radius: 4px;
+}
+.week-day-btn:hover { text-decoration: underline; }
+.cal-selected-panel { margin-top: 14px; }
+/* Two labels for one instruction; CSS picks the one that matches the pointer
+   (see the phone block below). "Double-click opens it" is meaningless on a
+   touchscreen. */
+.cal-hint-touch, .cal-wt-label { display: none; }
+
+/* ---------- calendar: phone (≤767px) ----------
+   WAVE-0 FIX (shell wave), to be absorbed by the calendar's own wave.
+
+   The week-total column was an eighth grid track with a 58px floor, so the
+   month grid could not fit 390px: the document measured 398px and the WHOLE
+   app scrolled sideways — the bottom navigation bar included. The column
+   leaves the grid here and each week's total becomes a right-aligned caption
+   on its own row, which also gives the seven day cells the width they need
+   to clear the touch floor: 390 − 32 gutter − 24 gaps = 47.7px each.
+
+   Only tokens below; the raw values above are pre-overhaul and are the
+   calendar wave's to convert. */
+@media (max-width: 767px) {
+  .cal-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--space-1);
+  }
+  .cal-total-head { display: none; }
+  .cal-week-total {
+    grid-column: 1 / -1;
+    flex-direction: row; align-items: baseline; justify-content: flex-end;
+    gap: var(--space-2);
+    border-left: 0;
+    padding: 0 var(--space-1) var(--space-2);
+  }
+  .cal-wt-label {
+    display: block; margin-right: auto;
+    font-size: var(--fs-caption); line-height: var(--lh-caption);
+    letter-spacing: var(--ls-caption); color: var(--text-muted);
+  }
+  .cal-day {
+    min-height: calc(var(--tap-min) + var(--space-4));
+    min-width: var(--tap-min);
+    padding: var(--space-1);
+    gap: var(--space-0-5);
+    border-radius: var(--radius-sm);
+  }
+  .cal-num { font-size: var(--fs-caption); line-height: var(--lh-caption); }
+  .cal-hours { font-size: var(--fs-num-md); line-height: var(--lh-num-md); }
+  .cal-status { top: var(--space-1); right: var(--space-1); }
+  .cal-dow { font-size: var(--fs-micro); line-height: var(--lh-micro); padding: 0; }
+  /* Chrome that cost a third of the first screen before any calendar
+     appeared: the target key (the ✓/◐/! marks are already in each cell's
+     tooltip and their colour is the legend) and the mouse-only instruction. */
+  .cal-legend .cal-key, .cal-hint-mouse { display: none; }
+  .cal-hint-touch { display: inline; }
+  /* Week mode is seven columns of entry text — at 390px that is seven
+     unreadable slivers and another sideways scroll. One day per row. */
+  .week-strip { grid-template-columns: 1fr; gap: var(--space-2); }
+  .week-col { min-height: 0; }
+}
+
+/* ---------- stats bars ---------- */
+.bar-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 64px; gap: 10px; align-items: center; font-size: 13.5px; padding: 4px 0; }
+.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-track { height: 16px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-value { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat-tile { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--surface-1); }
+.stat-tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-tile .k { font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.spark { display: flex; align-items: flex-end; gap: 2px; height: 90px; }
+.spark .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; border-radius: 2px 2px 0 0; }
+.spark .col .fill { background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; }
+.spark-labels { display: flex; gap: 2px; font-size: 10px; color: var(--text-muted); }
+.spark-labels span { flex: 1; text-align: center; overflow: hidden; }
+
+/* ---------- login ---------- */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.login-card { width: 100%; max-width: 380px; }
+.login-card .brand { font-size: 22px; font-weight: 750; margin-bottom: 6px; }
+.login-card .brand span { color: var(--accent); }
+
+/* dashboard panels: bounding boxes around the timer area and the day's
+   entries (visual cueing). Same treatment as .card; inner timer/entry cards
+   drop to the page tone so they still read as separate objects inside. */
+.panel {
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px 16px;
+  box-shadow: var(--shadow); margin-top: 16px;
+}
+.panel > .section-title:first-child { margin-top: 0; }
+.panel .timer-card, .panel .entry-card { background: var(--surface-0); }
+
+/* ---------- today footer ---------- */
+/* Desktop: .main's 80px bottom padding already clears the ~41px fixed footer,
+   so no extra wrapper padding (avoids stacking). Narrow (<=760px): the sidebar
+   goes static/full-width and .main padding drops to 14px — the footer spans
+   the full width and the dashboard wrapper supplies the clearance instead. */
+.today-footer {
+  position: fixed; left: var(--sidebar-w, 200px); right: 0; bottom: 0; z-index: 90;
+  display: flex; align-items: center; gap: 10px; padding: 8px 18px;
+  background: var(--surface-1); border-top: 1px solid var(--border);
+}
+@media (max-width: 760px) {
+  /* full width, and drop the ambient extras (meter + "filed"/% labels) that
+     don't fit — total, the live clock, and Close stay; long timer names
+     truncate rather than shoving Close off-screen */
+  .today-footer { left: 0; padding: 8px 12px; gap: 8px; }
+  .today-footer > .muted { display: none; }
+  .today-footer .tf-meter { display: none; }
+  .tf-summary .tf-btn-label { display: none; } /* icon only — Close must stay on screen */
+  .tf-running { min-width: 0; }
+  .tf-running .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; }
+  .dashboard-view { padding-bottom: 54px; }
+}
+/* ONE FILLED PRIMARY PER SCREEN. "Close the day" used to be a filled accent
+   button (later a tonal one) pinned to the bottom-right while "New entry" sat
+   filled in the top-right — two competing primaries at opposite corners of
+   the dashboard, which is what the wave-0 critic's A/B pairs both lost on. It
+   is the plain secondary button now: still a committing action, still a 44px
+   target, still `c` — but it stops shouting over the header's primary. Rule
+   kept explicit here so a later wave does not quietly refill it. */
+.tf-close { font-weight: var(--fw-semibold); }
+.tf-total { font-size: 16px; font-weight: 600; }
+.tf-meter {
+  width: 120px; height: 6px; border-radius: 3px; background: var(--surface-2);
+  overflow: hidden; border: 1px solid var(--border);
+}
+.tf-meter-fill { display: block; height: 100%; background: var(--accent); }
+/* the live clock in the pinned footer — --live, matching the running card,
+   its chip and its stop button (tokens.css §7) */
+.tf-running { display: inline-flex; align-items: center; gap: 6px; color: var(--live); }
+
+/* Settings: compact stacked rows (2026-07-15 feedback) — label left, control
+   right, hint under the label. Replaces the airy two-column Field grid. */
+.setting-rows { display: flex; flex-direction: column; }
+.setting-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 230px;
+  gap: 14px; align-items: center; padding: 8px 0;
+  border-bottom: 1px solid var(--surface-2);
+}
+.setting-row:first-child { padding-top: 0; }
+.setting-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.setting-label {
+  display: flex; flex-direction: column; gap: 2px;
+  font-size: 13px; font-weight: 600; color: var(--text-secondary);
+}
+.setting-label .field-hint { font-weight: 400; }
+.setting-row > select, .setting-row > input:not([type="checkbox"]) { width: 100%; }
+@media (max-width: 700px) {
+  .setting-row { grid-template-columns: 1fr; gap: 4px; }
+}

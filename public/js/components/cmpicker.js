@@ -61,7 +61,7 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
     <div key=${cm.id} class=${'cmpicker-item' + (hover === idx ? ' hover' : '')}
       onMouseEnter=${() => setHover(idx)} onMouseDown=${(e) => { e.preventDefault(); pick(cm); }}>
       ${cm.favorite ? html`<span title="Favorite">★</span>` : null}
-      ${clientLabel(cm) ? html`<span class="client" title=${clientLabel(cm)}>${clientLabel(cm)} ›</span>` : null}
+      ${clientLabel(cm) ? html`<span class="client" title=${clientLabel(cm)}>${clientLabel(cm)}</span>` : null}
       <span class="name">${cm.short_name || '(unnamed)'}</span>
       <span class="num">${cm.cm_number}</span>
     </div>`;

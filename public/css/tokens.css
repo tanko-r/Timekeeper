@@ -1,0 +1,723 @@
+/* ============================================================================
+   tokens.css — the Timekeeper design system.
+
+   THE ONLY FILE IN public/css/ THAT MAY CONTAIN A RAW VALUE.
+   Every other module consumes var(--…). If you are about to type a hex
+   colour, a px font-size, a px gap, a radius, a shadow, a duration or a
+   z-index anywhere else, stop: add or reuse a token here instead.
+
+   Contents
+     1. Fonts (@font-face + family tokens)
+     2. Type scale  — size / line-height / weight / tracking per named step
+     3. Numeric + clock treatment
+     4. Spacing scale + the rule for which step goes where
+     5. Sizing: control heights, touch minimum, layout widths, gutters
+     6. Radii
+     7. Colour — light palette (bare :root)
+     8. Colour — dark palette (designed separately, not inverted)
+     9. Elevation
+    10. Focus ring
+    11. Motion
+    12. Z-index layers
+
+   Both themes are first-class. Every colour is defined on bare :root for
+   light, then redefined under BOTH
+     @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }
+   and
+     :root[data-theme="dark"]
+   so the OS preference and the explicit Settings toggle both work. Never
+   define a colour in only one of those places.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. FONTS
+   Two families, both vendored under /vendor and precached by sw.js. Do not
+   add a third, and never load a font from a CDN.
+--------------------------------------------------------------------------- */
+
+/* Inter (variable weight 100–900) — the de-facto professional-app sans
+   (Linear, Figma, Stripe et al.). Self-hosted, no CDN, SW-precached. */
+@font-face {
+  font-family: 'InterVariable';
+  src: url('/vendor/inter/InterVariable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'InterVariable';
+  src: url('/vendor/inter/InterVariable-Italic.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+/* ClockFace — Noto Sans subset to Basic Latin (SIL OFL), self-hosted. Used for
+   timer/AOT clocks ONLY: Inter's zero carries a centre dot that reads as a slash
+   at clock sizes (2026-07-14 feedback) and Inter ships no un-dotted variant. Noto
+   Sans has a clean plain zero with tabular figures. Digits are equal-advance. */
+@font-face {
+  font-family: 'ClockFace';
+  src: url('/vendor/clockface/NotoSansNum-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'ClockFace';
+  src: url('/vendor/clockface/NotoSansNum-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-sans: 'InterVariable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* Running clocks only (hh:mm:ss). Not for hour decimals — those are Inter
+     with tabular figures, see §3. */
+  --font-clock: 'ClockFace', 'InterVariable', ui-monospace, monospace;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* -------------------------------------------------------------------------
+     2. TYPE SCALE
+
+     Eight named steps. The gap the reference audit found was not the number
+     of steps — it was the *ceiling*: nothing was ever allowed to be
+     dramatically larger than its neighbours, so hierarchy read flat. Hence a
+     real 34px display step at the top and a 10.5px eyebrow at the bottom:
+     a 3.2× range where the old file had 1.8×.
+
+       step        size    line-height     weight  tracking   where it goes
+       ---------------------------------------------------------------------
+       display     34px    36px  (1.06)    660     -0.025em   ONE figure-of-the-moment
+                                                              per screen. Never twice.
+       title       24px    30px  (1.25)    640     -0.020em   page h1 (the date header)
+       heading     17px    23px  (1.35)    630     -0.014em   card / section h2
+       subheading  15px    21px  (1.40)    620     -0.008em   h3, sub-section labels
+       body        14px    21px  (1.50)    400     -0.006em   default: prose, rows,
+                                                              inputs, buttons
+       label       12.5px  17px  (1.36)    560      0         field labels, table
+                                                              headers, meta, .btn-sm
+       caption     11.5px  15px  (1.30)    570     +0.005em   badges, chips, legends
+       micro       10.5px  14px  (1.33)    640     +0.060em   uppercase eyebrow only
+                                                              (menu section dividers)
+
+     Rules
+       - Sentence case everywhere except `micro`. Table headers are NOT
+         uppercase — every reference (Harvest, Mercury, Attio) sets them
+         sentence case; spreadsheet caps read as a form field, not as data.
+       - Tracking tightens as size grows and relaxes as it shrinks. That is
+         the whole reason each step carries its own value.
+       - Two adjacent steps should never both be used for the same job. If a
+         thing needs to stand out, move it a full step, not half of one.
+  ------------------------------------------------------------------------- */
+  --fs-display: 34px;      --lh-display: 36px;      --fw-display: 660;    --ls-display: -0.025em;
+  --fs-title: 24px;        --lh-title: 30px;        --fw-title: 640;      --ls-title: -0.02em;
+  --fs-heading: 17px;      --lh-heading: 23px;      --fw-heading: 630;    --ls-heading: -0.014em;
+  --fs-subheading: 15px;   --lh-subheading: 21px;   --fw-subheading: 620; --ls-subheading: -0.008em;
+  --fs-body: 14px;         --lh-body: 21px;         --fw-body: 400;       --ls-body: -0.006em;
+  --fs-label: 12.5px;      --lh-label: 17px;        --fw-label: 560;      --ls-label: 0em;
+  --fs-caption: 11.5px;    --lh-caption: 15px;      --fw-caption: 570;    --ls-caption: 0.005em;
+  --fs-micro: 10.5px;      --lh-micro: 14px;        --fw-micro: 640;      --ls-micro: 0.06em;
+
+  /* Weight ramp, so a module never invents its own number. */
+  --fw-regular: 400;
+  --fw-medium: 520;
+  --fw-semibold: 600;
+  --fw-bold: 680;
+
+  /* -------------------------------------------------------------------------
+     3. NUMERIC + CLOCK TREATMENT
+
+     Numbers are the content of a timekeeping app, so they get their own
+     ramp rather than borrowing the text one. Two rules govern it:
+
+       (a) Every duration, hour figure, dollar figure and count is TABULAR
+           (font-variant-numeric: tabular-nums). Columns of hours must align
+           on the decimal without a monospace face.
+       (b) A figure always sits at least ONE size step and ONE weight class
+           above the label that names it. "Billable" is caption/570; "5.1h"
+           is num-lg/620. That relationship — not the absolute size — is what
+           makes the number read as the answer and the label as the question.
+
+     Four figure sizes, deliberately fewer than the text scale:
+       num-hero  34px  the single dominant total on a screen (today's hours)
+       num-lg    21px  a row-level or card-level figure (entry hours)
+       num-md    15px  an inline figure in a dense row (timer tenths, totals)
+       num-sm    12.5px a figure inside meta text (counts, "5 entries")
+
+     Clocks (hh:mm:ss, ticking) use --font-clock at --fs-clock/--fs-clock-lg.
+     Hour decimals do NOT — they stay Inter with tabular figures, because they
+     sit inline with words.
+  ------------------------------------------------------------------------- */
+  --fs-num-hero: 34px;   --lh-num-hero: 34px;   --fw-num-hero: 640;  --ls-num-hero: -0.03em;
+  --fs-num-lg: 21px;     --lh-num-lg: 22px;     --fw-num-lg: 620;    --ls-num-lg: -0.02em;
+  --fs-num-md: 15px;     --lh-num-md: 18px;     --fw-num-md: 580;    --ls-num-md: -0.01em;
+  --fs-num-sm: 12.5px;   --lh-num-sm: 16px;     --fw-num-sm: 560;    --ls-num-sm: -0.005em;
+  --fs-clock: 13px;      --fs-clock-lg: 20px;   --ls-clock: 0.01em;
+  /* Mercury's big-money/small-cents trick, generalised: the fractional part of
+     a hero figure renders at this fraction of the whole. */
+  --num-fraction-scale: 0.62;
+
+  /* -------------------------------------------------------------------------
+     4. SPACING SCALE — strict 4px base
+
+     The audit found 13 distinct pixel values (4,5,6,7,8,9,10,13,14,16,18,
+     22,26) across a dozen rules, several off any grid. Everything now lands
+     on one of these steps.
+
+       --space-px   1px   hairline only (border widths, 1px nudges)
+       --space-0-5  2px   optical inset inside a pill/badge
+       --space-1    4px   inside a control: icon↔label, chip padding
+       --space-2    8px   between related items on one line
+       --space-3   12px   between stacked related items (field↔field)
+       --space-4   16px   between sibling blocks; card padding on mobile
+       --space-5   20px   card padding on desktop
+       --space-6   24px   page gutter at tablet width
+       --space-7   32px   between sections on a page; desktop page gutter
+       --space-8   40px
+       --space-9   48px
+       --space-10  64px   between major page regions
+
+     THE RULE, stated once so nobody has to guess:
+       inside a control          → --space-1  (4px) … --space-3 (12px)
+       between related items     → --gap-inline (8px) horizontally,
+                                    --gap-stack (12px) vertically
+       between sibling blocks    → --gap-block (16px)
+       between sections          → --gap-section (32px)
+       page gutter               → --page-gutter (16 / 24 / 32 by breakpoint)
+
+     Reach for the semantic alias, not the raw step, wherever one exists.
+  ------------------------------------------------------------------------- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  --gap-tight: var(--space-1);      /* icon↔label inside a button or chip */
+  --gap-inline: var(--space-2);     /* adjacent controls on one line */
+  --gap-stack: var(--space-3);      /* stacked related items */
+  --gap-block: var(--space-4);      /* sibling cards / blocks */
+  --gap-section: var(--space-7);    /* section to section */
+  --pad-card: var(--space-5);       /* 20px desktop, dropped to 16px below */
+  --pad-control-y: calc((var(--control-h-md) - var(--lh-body) - 2 * var(--border-w)) / 2);
+  --pad-control-x: var(--space-3);
+
+  /* Page gutters by breakpoint. Breakpoints themselves are commented, not
+     tokenised — custom properties cannot be used inside a media query.
+       phone   ≤ 480px   gutter 16px
+       tablet  ≤ 760px   gutter 24px   (the app's one real layout breakpoint)
+       desktop > 760px   gutter 32px                                          */
+  --page-gutter: var(--space-7);
+
+  /* -------------------------------------------------------------------------
+     5. SIZING
+  ------------------------------------------------------------------------- */
+  --control-h-sm: 30px;
+  --control-h-md: 36px;
+  --control-h-lg: 44px;
+  /* The committing action inside a bottom sheet. One step above the touch
+     floor, because on a phone the sheet's primary button is the only thing on
+     screen the thumb is meant to find. */
+  --control-h-xl: 48px;
+  /* The phone-viewport control height. Every control that is a control on a
+     phone — button, field, select, segmented segment, tab, calendar cell —
+     is at least this tall. Same number as --tap-min, different job: this one
+     sizes the painted box, --tap-min sizes the region that accepts a finger.
+     Keep them equal; the floor is only credible if the thing you see is the
+     thing you can hit. */
+  --control-h-touch: 44px;
+  /* Minimum touch target. WCAG 2.5.5 (AAA) and Apple HIG both say 44;
+     Material says 48; WCAG 2.5.8 (AA) says 24. 44 is the floor the BRIEF
+     sets. base.css enforces it twice: unconditionally under the phone
+     breakpoint (≤767px — the layout IS the phone layout there, whatever the
+     pointer claims to be), and again under @media (pointer: coarse) for a
+     touchscreen at any width. */
+  --tap-min: 44px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-nudge: -0.18em;       /* optical baseline shift for an inline icon */
+
+  --border-w: 1px;
+  --border-w-thick: 2px;
+
+  --checkbox-size: 16px;
+  --checkbox-size-touch: 22px;
+  --spinner-size: 24px;
+  --textarea-min-h: 84px;
+  --field-w-narrow: 88px;
+  --menu-max-h: 320px;
+
+  --sidebar-w: 200px;
+  --maxw-prose: 68ch;      /* narrative / long-form text columns */
+  --maxw-form: 560px;
+
+  /* Dialog widths. Three, matching Primer's dialog width tokens in spirit:
+     sm  a confirm or a one-line palette
+     md  a form dialog (the default)
+     lg  a working surface — the entry editor's task lines need the room
+     Below 768px none of them apply: the panel is a full-width bottom sheet. */
+  --ovl-w-sm: 400px;
+  --ovl-w-md: 560px;
+  --ovl-w-lg: 860px;
+  --ovl-sheet-max-h: 92dvh;
+
+  /* -------------------------------------------------------------------------
+     6. RADII
+     The audit found 12 distinct radii, with 6/7/8px all in heavy use for
+     what reads as one intent. Five steps plus pill and circle.
+       xs  4px  inline nudges: kbd caps, tiny swatches
+       sm  6px  controls: buttons, inputs, chips, table cells
+       md  8px  containers: cards, menus, wells
+       lg 12px  large surfaces: modals, sheets, panels
+       xl 16px  full-bleed mobile sheets (top corners)
+  ------------------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
+  --radius: var(--radius-md);   /* legacy alias — existing modules consume this */
+
+  /* -------------------------------------------------------------------------
+     7. COLOUR — LIGHT
+     A warm near-neutral canvas with pure-white cards (Mercury/Attio both put
+     white content on a slightly tinted page). One accent hue carries
+     everything interactive AND everything billable; non-billable is
+     deliberately NEUTRAL rather than a second accent, so a normal screen runs
+     at accent + at most two semantic colours instead of the six the audit
+     counted.
+
+     THE HUE BUDGET (wave-0 critic, round 2 — the dashboard was running five
+     accent hues at once and lost both A/B pairs on colour restraint):
+
+       BLUE   --accent      the ONE action accent. Every interactive thing,
+                            the running/live state, and billable.
+       AMBER  --attention   the ONE attention hue. The needs-attention banner,
+                            warning-level validation, "finalized then unlocked".
+       RED    --danger      error and destruction ONLY: a blocking validation,
+                            a delete confirm, a failed request. A healthy
+                            screen never shows it.
+       everything else is NEUTRAL — text, borders, surfaces, non-billable, a
+       settled/finalized record, an idle transport control.
+
+     GREEN IS NOT IN THE BUDGET. It used to carry the whole transport
+     vocabulary (idle play arrows, the running card, the running clock, the
+     footer clock, worked-today) which put a second saturated hue on every
+     row of an idle screen, next to a red stop square and a blue primary. The
+     live state is the app's ONE active thing, so it takes the action accent;
+     an idle control takes no hue at all. --status-good survives for screens
+     that genuinely need a good/short/critical SCALE (the calendar's
+     target-attainment marks), never as decoration.
+
+     Reach for --live / --attention below rather than picking a --status-*
+     colour for a non-status job.
+
+     Verified contrast (see the ratios in the header comment of base.css):
+       text-primary   / surface-1  18.44:1     / surface-0  16.32:1
+       text-secondary / surface-1   7.59:1     / surface-0   6.72:1
+       text-muted     / surface-1   5.68:1     / surface-2   4.59:1
+       accent as text / surface-1   5.73:1
+       text-on-accent / accent      5.73:1
+  ------------------------------------------------------------------------- */
+  /* Tells the browser which palette to render NATIVE widgets in — unchecked
+     checkboxes, radios, the date picker, scrollbars, form autofill. Without
+     it those stay light-mode grey on a dark page no matter what we paint. */
+  --color-scheme: light;
+
+  /* surfaces, back to front */
+  --surface-0: #f2f1ed;          /* page canvas */
+  --surface-1: #ffffff;          /* cards, menus, inputs */
+  --surface-2: #e9e7e1;          /* wells, hovers, chips, disabled fills */
+  --surface-3: #ddd9d0;          /* tracks, deep wells, table zebra */
+  --surface-raised: #ffffff;     /* anything floating above the page */
+
+  /* borders — three weights, each with a job */
+  --border: #ddd8cc;             /* default hairline: cards, dividers */
+  --border-subtle: #eae7e0;      /* list-row dividers inside a card */
+  --border-strong: #8f8b7e;      /* emphasis / hovered control edge (3.4:1) */
+  --border-input: #8d8a7e;       /* form-control boundary — 3.46:1, meets
+                                    WCAG 1.4.11 non-text contrast */
+
+  /* text */
+  --text-primary: #15140f;
+  --text-secondary: #56544b;
+  --text-muted: #6a6459;
+  --text-on-accent: #ffffff;
+  --text-on-danger: #ffffff;
+  --text-inverse: #f7f6f1;
+
+  /* accent — one hue, four states */
+  --accent: #2560d0;
+  --accent-hover: #1e51b3;
+  --accent-active: #194494;
+  --accent-strong: #164ba8;      /* accent AS TEXT on --accent-soft */
+  --accent-soft: #dbe7fb;        /* filled badge background */
+  --accent-subtle: #eef3fd;      /* hover tint on a white surface */
+
+  /* THE SATURATED ACCENT IS FOR ACTIONS. DATA TAKES THIS ONE.
+     (wave-0 critic, round 3: "colour carries no rank because one blue does six
+     unrelated jobs — the primary button fill, every hours figure, the billable
+     chip, the target-meter fill, the running-timer card border, and the
+     selected nav item. Nothing tells the eye which blue thing to act on.")
+     --accent-muted is the same hue drained of saturation: it still reads as
+     "this is the billable/target family" but it never competes with the one
+     filled button on the screen. Bars, meter fills, calendar marks and hour
+     figures take it; buttons and links never do.
+     Contrast as text: light 5.98:1 on surface-1, 4.84 on surface-2;
+     dark 6.99:1 on surface-1, 6.22 on surface-2. */
+  --accent-muted: #4f6488;
+  --accent-muted-soft: #dde3ee;
+
+  /* The active row in a combobox/listbox — the client/matter picker. Its own
+     token because the generic hover surface could not carry it: in dark,
+     --surface-2 (#262622) against the menu's --surface-raised (#232320) is a
+     3/255 step, so arrow-keying through matters showed the dark-theme user
+     nothing about what Enter would select. This is a real band in both themes
+     (light 1.23:1 against white, dark 1.52:1 against the panel — a 3× jump in
+     luminance) and base.css pairs it with a 2px accent bar at the leading
+     edge so the state survives with no colour vision at all. */
+  --option-active: #dfe8fa;
+  --option-active-mark: var(--accent);
+
+  /* semantic: billable is the muted accent (a figure, not an action);
+     non-billable is neutral on purpose */
+  --billable: #4f6488;
+  --billable-soft: #dbe7fb;
+  --nonbillable: #6a6458;
+  --nonbillable-soft: #edeae3;
+
+  /* the four target-attainment states, in escalating order */
+  --status-good: #116b35;        /* on target */
+  --status-warning: #7f5800;     /* slightly short */
+  --status-serious: #a44a1a;     /* materially short */
+  --status-critical: #b62c2c;    /* blocking / far short */
+  --status-good-soft: #dcefe1;
+  --status-warning-soft: #f7ecd0;
+  --status-serious-soft: #fae3d6;
+  --status-critical-soft: #fadedd;
+  --danger: #b62c2c;             /* destructive action — same red as critical */
+  --danger-hover: #9a2020;
+
+  /* Semantic ROLES, so a feature module never has to pick a status hue for a
+     job that is not a status. These are aliases of tokens that are already
+     defined for BOTH themes a few lines above / in the dark blocks below, so
+     they resolve correctly in either theme from this one declaration — a
+     custom property is substituted at use time, against whichever :root
+     declaration won the cascade. Do not copy them into the dark blocks.
+
+       --live       something is happening RIGHT NOW: a running timer, its
+                    card, its clock, its chip, the footer's running clock.
+       --attention  something needs a look but nothing is broken: the
+                    needs-attention banner, a warning-level validation row,
+                    an entry that was finalized and then unlocked.
+       --transport  an idle start/stop control. It is a button, not a status,
+                    so it is the same neutral as any other row action until
+                    the timer it owns is actually running. */
+  --live: var(--accent);
+  --live-soft: var(--accent-soft);
+  --live-strong: var(--accent-strong);
+  --attention: var(--status-warning);
+  --attention-soft: var(--status-warning-soft);
+  --transport: var(--text-secondary);
+  --transport-hover: var(--text-primary);
+
+  /* scrims for anything that dims the page behind an overlay. ONE value; the
+     old file had three different opacities for the same idea. */
+  --scrim: rgba(12, 11, 8, 0.45);
+
+  /* Edge-fade mask stops. Not colours — a mask reads only the alpha channel —
+     but they live here because no other file may type a raw value. Used by the
+     scrollable chip strips to signal "there is more this way". */
+  --mask-in: #000;
+  --mask-out: transparent;
+  --mask-fade-w: var(--space-8);
+
+  /* Native <select> chevron. Encoded per theme because a data: URI cannot
+     read currentColor. Stroke = --text-secondary. */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%2356544b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.75 6 7.75 9 4.75'/%3E%3C/svg%3E");
+
+  /* Tick drawn inside a checked box. Only needed on the phone, where the
+     checkbox is a 44px target painting a 22px box and therefore cannot be the
+     native widget. Encoded per theme because a data: URI cannot read
+     currentColor; stroke = --text-on-accent. */
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.4 6.4 11.3 12.5 4.9'/%3E%3C/svg%3E");
+
+  /* -------------------------------------------------------------------------
+     9. ELEVATION
+     Three steps. In LIGHT, depth is a soft warm-black blur. In DARK, black
+     blur is invisible against a black page, so the dark ramp separates with a
+     hairline light ring plus a lifted surface — the blur is only there to
+     ground the shape, not to create the separation.
+       shadow-1  a card resting on the page
+       shadow-2  something floating and dismissible (menu, popover, panel)
+       shadow-3  a modal / sheet that owns the screen
+  ------------------------------------------------------------------------- */
+  --shadow-1: 0 1px 2px rgba(24, 20, 12, 0.05), 0 1px 1px rgba(24, 20, 12, 0.04);
+  --shadow-2: 0 2px 4px rgba(24, 20, 12, 0.05), 0 8px 20px rgba(24, 20, 12, 0.08);
+  --shadow-3: 0 4px 8px rgba(24, 20, 12, 0.06), 0 24px 48px rgba(24, 20, 12, 0.16);
+  --shadow: var(--shadow-2);     /* legacy alias — most consumers are overlays */
+
+  /* -------------------------------------------------------------------------
+     10. FOCUS RING
+     One ring, everywhere, via :focus-visible. It is a DOUBLE ring on purpose:
+     an inner band in a colour that contrasts with saturated fills, and an
+     outer band in a colour that contrasts with page surfaces. Whatever the
+     control sits on — white card, grey well, blue primary fill, red danger
+     fill — at least one band clears 3:1.
+
+       light  outer #0a1020 vs surface-1 18.96:1, surface-0 16.77:1, surface-2 15.33:1
+              inner #ffffff vs accent 5.73:1, danger 6.20:1, status-good 6.61:1
+       dark   outer #eef2fb vs surface-1 15.22:1, surface-0 16.59:1, surface-2 13.54:1
+              inner #0b0b0a vs accent 7.39:1, danger 6.85:1
+
+     A single-colour ring cannot satisfy both ends in dark mode (a colour
+     light enough to clear the near-black page is too light to clear the
+     light-blue accent fill) — hence two bands rather than one.
+  ------------------------------------------------------------------------- */
+  --focus-w: 2px;
+  --focus-offset: 2px;
+  --focus-outer: #0a1020;
+  --focus-inner: #ffffff;
+  --focus-halo: 0 0 0 var(--focus-offset) var(--focus-inner);
+
+  /* -------------------------------------------------------------------------
+     11. MOTION
+     Three durations, two easings. Motion confirms; it never decorates.
+
+       --dur-fast  120ms  a control that is already on screen changing state:
+                          hover, press, focus, checked, colour/background/
+                          border/opacity. Paired with --ease-standard.
+       --dur-base  180ms  something appearing or disappearing in place —
+                          menu, chip, toast, validation row — or a value
+                          animating, like a meter fill. Paired with --ease-out.
+       --dur-slow  280ms  a whole surface moving: modal, bottom sheet, nav
+                          drawer. Paired with --ease-out.
+
+     Prefer background / colour / shadow / opacity changes over transform, so
+     the reduced-motion fallback is "skip the transition", not "skip the
+     effect". The reduced-motion block at the bottom of this file zeroes all
+     three durations; base.css additionally neutralises any animation or
+     transition that was written without a token.
+  ------------------------------------------------------------------------- */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 280ms;
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);   /* starts and ends on screen */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);          /* enters / expands */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);           /* exits / collapses */
+  --transition-control: color var(--dur-fast) var(--ease-standard),
+                        background-color var(--dur-fast) var(--ease-standard),
+                        border-color var(--dur-fast) var(--ease-standard),
+                        box-shadow var(--dur-fast) var(--ease-standard),
+                        opacity var(--dur-fast) var(--ease-standard);
+
+  /* -------------------------------------------------------------------------
+     12. Z-INDEX LAYERS
+     Named, ordered, and matched to the numbers the app already ships so
+     nothing re-stacks. Never write a bare z-index outside this list.
+  ------------------------------------------------------------------------- */
+  --z-base: 0;
+  --z-raised: 1;
+  --z-inline: 2;        /* ghost-text overlay sitting on an input */
+  --z-dropdown: 60;     /* client/matter picker menu */
+  --z-sticky: 90;       /* the pinned today-footer bar */
+  --z-nav: 95;          /* mobile header / bottom bar */
+  --z-modal: 100;       /* legacy alias — kept for anything not yet on --z-overlay */
+  /* Above the overlay layer, deliberately: a toast is the app answering, and
+     it must stay legible while a dialog is up (Radix keeps its toast viewport
+     outside the dialog for the same reason). */
+  --z-toast: 350;
+  --z-sheet: 250;       /* stop-chips: a NON-modal popover, below the overlay layer */
+  --z-menu: 300;        /* context menus — same layer as the overlay, so a menu
+                           opened from inside a dialog sits above it on DOM order */
+  /* THE modal layer: every dialog (entry editor, close-out, quick capture,
+     confirms, shortcut sheet) is drawn here by the .ovl primitive in
+     shell.css. It is deliberately ABOVE --z-nav (95) and --z-sticky (90): the
+     wave-0 critic found the phone's bottom navigation bar and the day footer
+     painting over the scrim at full brightness, so a user halfway through a
+     new entry could tap Search and silently lose the dialog. */
+  --z-overlay: 300;
+  --z-capture: 400;     /* Alt+drag feedback capture */
+}
+
+/* ---------------------------------------------------------------------------
+   Page gutter shrinks with the viewport. The 760px breakpoint matches the
+   app's single real layout breakpoint; keep them in sync.
+--------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  :root {
+    --page-gutter: var(--space-6);
+    --pad-card: var(--space-4);
+  }
+}
+@media (max-width: 480px) {
+  :root { --page-gutter: var(--space-4); }
+}
+
+/* ===========================================================================
+   8. COLOUR — DARK
+   Designed, not inverted. Four things differ from a flipped light palette:
+     - text-primary is off-white (#f2f1ea), not #ffffff — pure white on a
+       near-black page halates and makes 14px text look bolder than it is.
+     - the accent is LIGHTER than its light-theme twin and carries DARK text.
+       There is no blue that is simultaneously dark enough for white button
+       text and light enough to read as a link on a near-black page; the
+       resolution is to flip the label colour, not to compromise the accent.
+     - the status hues are lifted and desaturated; the light-theme greens and
+       reds are chosen for contrast against white and go muddy on black.
+     - elevation switches from black blur to a hairline light ring.
+   Both selectors below carry the SAME declarations. Edit them together.
+   ========================================================================= */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-scheme: dark;
+    --surface-0: #131311;
+    --surface-1: #1c1c1a;
+    --surface-2: #262622;
+    --surface-3: #31312c;
+    --surface-raised: #232320;
+
+    --border: #3a3a32;
+    --border-subtle: #282824;
+    --border-strong: #75746a;
+    --border-input: #726f66;
+
+    --text-primary: #f2f1ea;
+    --text-secondary: #b7b5a9;
+    --text-muted: #918f83;
+    --text-on-accent: #0b1728;
+    --text-on-danger: #28090a;
+    --text-inverse: #15140f;
+
+    --accent: #6c9ff2;
+    --accent-hover: #8ab4f6;
+    --accent-active: #a6c7f9;
+    --accent-strong: #a9c9f8;
+    --accent-soft: #18325e;
+    --accent-subtle: #1a2436;
+
+    --accent-muted: #93a7c8;
+    --accent-muted-soft: #2c3340;
+    --option-active: #33405c;
+
+    --billable: #93a7c8;
+    --billable-soft: #18325e;
+    --nonbillable: #a49b8a;
+    --nonbillable-soft: #2b2823;
+
+    --status-good: #54c47f;
+    --status-warning: #e0a93f;
+    --status-serious: #f0925c;
+    --status-critical: #f2706a;
+    --status-good-soft: #17301f;
+    --status-warning-soft: #33270e;
+    --status-serious-soft: #351f14;
+    --status-critical-soft: #37191a;
+    --danger: #f2706a;
+    --danger-hover: #f79089;
+
+    --scrim: rgba(0, 0, 0, 0.66);
+
+    --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23b7b5a9' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.75 6 7.75 9 4.75'/%3E%3C/svg%3E");
+    --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%230b1728' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.4 6.4 11.3 12.5 4.9'/%3E%3C/svg%3E");
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    --shadow-2: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.55);
+    --shadow-3: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 56px rgba(0, 0, 0, 0.7);
+    --shadow: var(--shadow-2);
+
+    --focus-outer: #eef2fb;
+    --focus-inner: #0b0b0a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-scheme: dark;
+  --surface-0: #131311;
+  --surface-1: #1c1c1a;
+  --surface-2: #262622;
+  --surface-3: #31312c;
+  --surface-raised: #232320;
+
+  --border: #3a3a32;
+  --border-subtle: #282824;
+  --border-strong: #75746a;
+  --border-input: #726f66;
+
+  --text-primary: #f2f1ea;
+  --text-secondary: #b7b5a9;
+  --text-muted: #918f83;
+  --text-on-accent: #0b1728;
+  --text-on-danger: #28090a;
+  --text-inverse: #15140f;
+
+  --accent: #6c9ff2;
+  --accent-hover: #8ab4f6;
+  --accent-active: #a6c7f9;
+  --accent-strong: #a9c9f8;
+  --accent-soft: #18325e;
+  --accent-subtle: #1a2436;
+
+  --accent-muted: #93a7c8;
+  --accent-muted-soft: #2c3340;
+  --option-active: #33405c;
+
+  --billable: #93a7c8;
+  --billable-soft: #18325e;
+  --nonbillable: #a49b8a;
+  --nonbillable-soft: #2b2823;
+
+  --status-good: #54c47f;
+  --status-warning: #e0a93f;
+  --status-serious: #f0925c;
+  --status-critical: #f2706a;
+  --status-good-soft: #17301f;
+  --status-warning-soft: #33270e;
+  --status-serious-soft: #351f14;
+  --status-critical-soft: #37191a;
+  --danger: #f2706a;
+  --danger-hover: #f79089;
+
+  --scrim: rgba(0, 0, 0, 0.66);
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23b7b5a9' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.75 6 7.75 9 4.75'/%3E%3C/svg%3E");
+  --check-mark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%230b1728' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.4 6.4 11.3 12.5 4.9'/%3E%3C/svg%3E");
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --shadow-2: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.55);
+  --shadow-3: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 56px rgba(0, 0, 0, 0.7);
+  --shadow: var(--shadow-2);
+
+  --focus-outer: #eef2fb;
+  --focus-inner: #0b0b0a;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion — neutralise the motion tokens themselves, so every module
+   that consumes them goes still without needing its own override. base.css
+   carries the belt-and-braces rule for animations written without a token.
+   1ms rather than 0 keeps transitionend/animationend listeners firing.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 1ms;
+    --dur-base: 1ms;
+    --dur-slow: 1ms;
+    --ease-standard: linear;
+    --ease-out: linear;
+    --ease-in: linear;
+  }
+}

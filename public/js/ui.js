@@ -1,12 +1,16 @@
 // Shared UI toolkit: htm binding, hooks, formatting, and small widgets.
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
+import { Overlay } from '/js/components/overlay.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
 export const { useState, useEffect, useRef, useMemo, useCallback } = React;
 export const { createPortal } = window.ReactDOM;
 export { Icon };
+// Re-exported so a dialog can reach the primitive through the same toolkit it
+// already imports (and so nothing is tempted to hand-roll a fifth backdrop).
+export { Overlay };
 
 // ---------- events (toasts, undo) ----------
 
@@ -151,25 +155,18 @@ export function fmtTenths(seconds, mode = 'up') {
   return Math.max(0, t).toFixed(1);
 }
 
-// Rendered through a portal: modals never nest inside another component's DOM
-// (a nested <form> inside a parent form gets dropped by the browser — the bug
-// that broke CM creation inside the New Timer dialog).
+// The app's titled dialog. It is a thin wrapper over the shared Overlay
+// primitive (public/js/components/overlay.js) — the portal, the scrim above
+// the shell's fixed bars, the focus trap, aria-modal, Escape, the scroll lock
+// and the phone bottom-sheet shape all live there, so every dialog in the app
+// gets them from one place. `.modal` / `.modal-wide` stay on the panel: they
+// are the hooks the e2e suite and a few feature modules select by.
 export function Modal({ title, onClose, children, wide }) {
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
-  return createPortal(html`
-    <div class="modal-backdrop" onMouseDown=${(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div class=${'modal' + (wide ? ' modal-wide' : '')} role="dialog" aria-label=${title}>
-        <div class="modal-head">
-          <h3>${title}</h3>
-          <button class="btn btn-ghost" onClick=${onClose} aria-label="Close"><${Icon} name="x" /></button>
-        </div>
-        <div class="modal-body">${children}</div>
-      </div>
-    </div>`, document.body);
+  return html`
+    <${Overlay} title=${title} onClose=${() => onClose()}
+      size=${wide ? 'lg' : 'md'} className=${'modal' + (wide ? ' modal-wide' : '')}>
+      ${children}
+    <//>`;
 }
 
 // Right-click menu at a fixed position. items: {label, icon?, onClick,

@@ -54,7 +54,7 @@ export function TodayFooter({ today, timers, fetchedAt, onCloseDay, onSummary })
         title="Read today back as plain text — client, matter, hours, narrative (s)">
         <${Icon} name="clipboard" size=${14} /><span class="tf-btn-label"> Summary</span>
       </button>
-      <button class="btn btn-sm btn-primary" onClick=${onCloseDay} title="Review, finalize, and export today (c)">
+      <button class="btn btn-sm tf-close" onClick=${onCloseDay} title="Review, finalize, and export today (c)">
         <${Icon} name="lock" size=${14} /> Close the day <kbd>c</kbd>
       </button>
     </div>`;

@@ -184,16 +184,20 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
       <button class="btn" onClick=${() => shift(1)}><${Icon} name="chevronRight" size=${16} /></button>
       <button class="btn btn-sm" onClick=${() => { setAnchor(todayStr()); setSelected(todayStr()); }}>Today</button>
       <div class="spacer"></div>
-      <div class="row" style=${{ gap: '4px' }}>
-        <button class=${'btn btn-sm' + (mode === 'month' ? ' btn-primary' : '')} onClick=${() => setMode('month')}>Month</button>
-        <button class=${'btn btn-sm' + (mode === 'week' ? ' btn-primary' : '')} onClick=${() => setMode('week')}>Week</button>
+      <div class="seg" role="group" aria-label="Calendar range">
+        ${[['month', 'Month'], ['week', 'Week']].map(([v, label]) => html`
+          <button key=${v} class=${mode === v ? 'on' : ''}
+            title=${`Show the whole ${label.toLowerCase()}`} onClick=${() => setMode(v)}>${label}</button>`)}
       </div>
     </div>
-    <div class="meter-legend" style=${{ marginBottom: '10px' }}>
+    <div class="meter-legend cal-legend" style=${{ marginBottom: '10px' }}>
       <span><span class="dot dot-billable"></span>Billable</span>
       <span><span class="dot dot-nonbillable"></span>Non-billable</span>
-      ${target ? html`<span class="muted">✓ ≥${fmtHours(target)}h · ◐ ≥50% · ! under 50%</span>` : null}
-      <span class="muted">Click a day to see its entries below · double-click opens it</span>
+      ${target ? html`<span class="muted cal-key">✓ ≥${fmtHours(target)}h · ◐ ≥50% · ! under 50%</span>` : null}
+      <span class="muted cal-hint">
+        <span class="cal-hint-mouse">Click a day to see its entries below · double-click opens it</span>
+        <span class="cal-hint-touch">Tap a day to see its entries below</span>
+      </span>
       <span class="cal-period-total" style=${{ marginLeft: 'auto' }}>
         <strong class="mono">${fmtHours(periodTotals.billable)}h</strong> billed ·
         <strong class="mono">${fmtHours(periodTotals.total)}h</strong> total this ${mode}
@@ -235,6 +239,7 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
               <div key=${'wt' + wi} class="cal-week-total"
                 title=${`${fmtHours(wk.billable)} billable / ${fmtHours(wk.nonbillable)} non-billable this week`}>
                 ${wtotal > 0 ? html`
+                  <span class="cal-wt-label">Week</span>
                   <span class="cal-wt-b mono">${fmtHours(wk.billable)}</span>
                   ${wk.nonbillable > 0 ? html`<span class="cal-wt-nb mono">${fmtHours(wk.nonbillable)}</span>` : null}` : null}
               </div>`;

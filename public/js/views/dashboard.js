@@ -132,10 +132,14 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <button class="btn" title="Next day (])"
         onClick=${() => nav(`#/day/${addDays(d.date, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
       <div class="spacer"></div>
-      <button class="btn" onClick=${() => finalizeToday()}><${Icon} name="lock" size=${16} /> Finalize today</button>
-      <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export today</button>
-      <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
-        <${Icon} name="plus" size=${16} /> New entry (n)</button>
+      ${/* One page-header shape across the app (shell.css): secondary actions
+            then exactly one primary, same three words as the day view. */''}
+      <div class="page-head-actions">
+        <button class="btn" onClick=${() => finalizeToday()}><${Icon} name="lock" size=${16} /> Finalize day</button>
+        <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export</button>
+        <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
+          <${Icon} name="plus" size=${16} /> New entry<kbd class="btn-kbd">n</kbd></button>
+      </div>
     </div>
 
     ${hasAlerts ? html`
@@ -162,8 +166,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
           ${alerts.unexported.count > 0 ? html`
             <button class="alert-pill" title=${`Oldest ${alerts.unexported.oldest} — finalized but never sent`}
               onClick=${() => nav(attentionLink('unexported', alerts.unexported))}>
-              ${alerts.unexported.count} finalized ${alerts.unexported.count === 1 ? 'entry' : 'entries'}
-              not yet exported · ${fmtHours(alerts.unexported.hours)}h
+              ${alerts.unexported.count} finalized ${alerts.unexported.count === 1 ? 'entry' : 'entries'} not
+              yet exported · ${fmtHours(alerts.unexported.hours)}h
             </button>` : null}
         </div>
       </div>` : null}

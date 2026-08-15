@@ -29,7 +29,9 @@ test('server boots, health endpoint responds, SPA shell served', async () => {
 test('shell assets are served no-cache so updates are never pinned', async () => {
   const t = await startTestServer();
   try {
-    for (const path of ['/', '/index.html', '/js/app.js', '/css/app.css', '/sw.js', '/#/anything']) {
+    const cssPaths = ['tokens', 'base', 'shell', 'timers', 'entries', 'editor', 'views', 'overlays']
+      .map((name) => `/css/${name}.css`);
+    for (const path of ['/', '/index.html', '/js/app.js', ...cssPaths, '/sw.js', '/#/anything']) {
       const res = await fetch(t.base + path);
       assert.equal(res.status, 200, path);
       assert.equal(res.headers.get('cache-control'), 'no-cache', path);

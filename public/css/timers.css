@@ -1,0 +1,263 @@
+/* timers.css — timer grid/tabs/cards, CSV timer import */
+
+/* ---------- timers (compact, grouped) ---------- */
+
+/* Column-major flow (2026-07-13 feedback): cards read top-to-bottom down a
+   column, then continue in the next — so an A–Z sort scans like a list, not
+   a ragged row-major grid. CSS multicol gives the same responsive column
+   count as the old auto-fill grid; the wider column-gap is the "subtle
+   padding between columns". */
+.timer-grid { columns: 300px; column-gap: 18px; }
+.timer-grid > * { break-inside: avoid; margin-bottom: 6px; }
+.timer-section { margin-bottom: 4px; }
+.group-head {
+  display: flex; align-items: center; gap: 4px; margin: 10px 0 6px; min-height: 28px;
+}
+.group-name { font-size: 13px; font-weight: 700; }
+/* ---------- timer tabs (Intapp-style client tabs; by-group / by-client modes) ----------
+   Physical chip-tabs: the whole wrap (label + kebab) is the tab body, so the
+   active highlight encloses the group-menu kebab too. Every tab carries its
+   own bounding box, which is what makes MULTIPLE ROWS work (2026-07-11
+   feedback) — a wrapped row reads as a row of tabs, not text floating above
+   the strip's baseline. Active = raised card with an accent bar on top. */
+/* WAVE-0 FIX (shell wave), to be absorbed by the timers wave: the critic found
+   the Timers header stacking "14 controls in two tightly-spaced rows … all at
+   the same visual weight with roughly 8px between the two rows. There is no
+   rank." This is the spacing half — the filter pills get their own step away
+   from the toolbar above them, so the two rows read as two things. The other
+   half (New group / Import / Quick into an overflow menu) is a timergrid
+   markup change and is left for that wave; "New timer" is meanwhile the only
+   emphasised control in the row. */
+.timer-tabs {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+  margin: var(--space-4) 0 var(--gap-stack); padding: 2px 2px 8px;
+}
+.timer-tab-wrap {
+  display: flex; align-items: center;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2);
+}
+.timer-tab-wrap:hover { background: var(--surface-1); }
+.timer-tab-wrap.on {
+  background: var(--surface-1); border-color: var(--accent);
+  box-shadow: inset 0 2px 0 var(--accent), 0 1px 3px rgba(0, 0, 0, 0.07);
+}
+.timer-tab {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; background: none;
+  padding: 6px 11px; font: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--text-muted); cursor: pointer; border-radius: 8px;
+}
+.timer-tab:hover { color: var(--text-primary); }
+.timer-tab.on { color: var(--text-primary); }
+.timer-tab-count { font-weight: 600; }
+/* the Today/Week/Recent activity cluster sits between "All" and the group
+   tabs — extra breathing room marks it off as a different KIND of tab */
+.timer-tab-wrap.activity-start { margin-left: 8px; }
+.timer-tab-wrap.activity-end { margin-right: 8px; }
+.tab-tools { display: flex; gap: 0; margin: 0 6px 0 -8px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-left: 10px; }
+.seg button {
+  border: 0; background: none; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  color: var(--text-muted);
+}
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
+.timer-card {
+  border: 1px solid var(--border); border-radius: 7px; padding: 4px 6px;
+  background: var(--surface-1); display: flex; align-items: center; gap: 6px;
+  position: relative; cursor: grab; min-width: 0; min-height: 32px;
+}
+.timer-card:active { cursor: grabbing; }
+/* An inline edit is open: the card is not draggable (see timergrid.js), so
+   stop advertising a grab and let the caret be a caret. */
+.timer-card.editing, .timer-card.editing:active { cursor: default; }
+/* Relocation feedback (2026-08-05 feedback, Trello-style): the card being
+   dragged fades out of the way, and an empty slot opens in front of the card
+   the drop will land before, so the board visibly makes room. */
+.timer-card.dragging { opacity: 0.35; }
+/* Multi-select (2026-08-06 feedback): a selected card is ringed, not merely
+   tinted — the ring survives the running/worked/unassigned backgrounds the
+   card already uses. */
+.timer-card.selected {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+  background-color: color-mix(in srgb, var(--accent) 10%, var(--surface-1));
+}
+.timer-selbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0 0; padding: 6px 10px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+}
+.timer-selbar > .btn { margin-left: auto; }
+.timer-drop-slot {
+  min-height: 32px; border: 2px dashed var(--accent); border-radius: 7px;
+  background: var(--surface-2); animation: drop-slot-open 110ms ease-out;
+}
+@keyframes drop-slot-open {
+  from { min-height: 0; opacity: 0; }
+  to { min-height: 32px; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .timer-drop-slot { animation: none; } }
+.timer-card.running { border-color: var(--live); box-shadow: 0 0 0 1px var(--live) inset; }
+.timer-name {
+  font-weight: 650; font-size: 13px; flex: 2 1 70px; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  /* click-to-rename button dressed as text (mirrors .timer-clock) */
+  border: 0; background: none; color: inherit; padding: 0; text-align: left;
+  font-family: inherit; cursor: text; border-radius: 4px;
+}
+.timer-name:hover { background: var(--surface-2); }
+.name-input {
+  flex: 2 1 70px; min-width: 0; font-size: 13px; font-weight: 650; padding: 1px 4px;
+}
+/* unassigned timer (2026-07-10 10:18 feedback): no text label — a subtle
+   diagonal hatch marks "no matter yet"; the details live in the tooltip */
+.timer-card.unassigned {
+  background: repeating-linear-gradient(-45deg,
+    var(--surface-1) 0 7px, var(--surface-2) 7px 14px);
+}
+.timer-card.unassigned .timer-name { opacity: 0.85; }
+
+.timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
+/* "running a long time — still working?" is an attention signal, so it takes
+   the ONE attention hue rather than a third orange of its own (tokens.css §7) */
+.idle-nudge { color: var(--attention); }
+/* unassigned quick timer holding time carried over from an earlier day */
+/* pinned to the always-on-top float window */
+.timer-flag.pinned { color: var(--accent); }
+
+/* ---------- TRANSPORT CONTROLS (start / stop) ----------
+   Superseded 2026-08-14 by the wave-0 critic, round 2. The old vocabulary was
+   "green go-arrow, red stop-square, everywhere a transport control appears".
+   On a real dashboard that put a saturated green on every timer row AND every
+   draft entry row — ten of them on the demo day — with a red square wherever a
+   timer was running, next to a blue primary button and an amber banner. Five
+   accent hues at once, and the two loudest of them were spent on the IDLE
+   state of a button that does nothing until you press it.
+
+   The rule now (tokens.css §7): an idle transport control carries NO hue. It
+   is a row action like edit or delete, and it looks like one. Colour arrives
+   only when the timer is actually running, and it is --live — the app's one
+   action accent — because a running timer is the single live thing on the
+   screen, not a warning and not a hazard. The shape still carries the state
+   for anyone who cannot see hue at all: ▶ to start, ■ to stop. */
+.entry-timer-btn { color: var(--transport); }
+.entry-timer-btn:hover { color: var(--transport-hover); }
+.entry-timer-btn.running { color: var(--live); }
+/* clock pair: raw HH:MM:SS (display-only) beside the decimal tenths — same
+   size, tenths bolder because it's the clickable/filed value */
+.timer-clock-pair { display: flex; align-items: baseline; gap: 5px; flex: none; }
+.timer-clock-raw {
+  font-family: 'ClockFace', 'InterVariable', system-ui, sans-serif;
+  font-size: 12.5px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.timer-clock {
+  font-family: 'ClockFace', 'InterVariable', system-ui, sans-serif;
+  font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+  border: 0; background: none; color: inherit; cursor: text; padding: 0 4px;
+  border-radius: 5px; flex: none;
+}
+.timer-clock:hover { background: var(--surface-2); }
+/* the counter takes the live accent only while it is actually counting */
+.timer-card.running .timer-clock { color: var(--live); }
+.timer-card.running .timer-clock-raw { color: var(--live); opacity: 0.75; }
+.timer-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.timer-board:focus { outline: none; }
+/* worked-today (spec §4): a memory aid, not a status — so it is a neutral
+   edge now rather than a third saturated hue on a card that may also be
+   running. The 3px edge + reduced padding keeps content aligned with
+   untouched cards. */
+.timer-card.worked { border-left: 3px solid var(--border-strong); padding-left: 4px; }
+
+/* Idle: a plain row action. Running: the live accent, on a soft fill so the
+   one card that is counting is findable at a glance across the whole grid. */
+.timer-start-btn { color: var(--transport); }
+.timer-start-btn:hover { color: var(--transport-hover); }
+.timer-stop-btn {
+  color: var(--live-strong);
+  border-color: color-mix(in srgb, var(--live) 45%, var(--border));
+  background: var(--live-soft);
+}
+.timer-stop-btn:hover { background: color-mix(in srgb, var(--live) 26%, var(--surface-1)); }
+
+.timer-search-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.timer-search { width: 180px; padding: 3px 8px; font-size: 12.5px; }
+.clock-input {
+  font-family: 'ClockFace', 'InterVariable', system-ui, sans-serif; font-variant-numeric: tabular-nums;
+  width: 48px; font-size: 14px; font-weight: 700; padding: 1px 4px; text-align: center; flex: none;
+}
+.timer-more { visibility: hidden; padding: 1px 4px; flex: none; }
+/* A HOVER-REVEALED CONTROL MUST ALSO REVEAL ITSELF ON FOCUS.
+   The wave-0 critic swept every focusable control on the dashboard and found
+   these five "…" buttons to be the only ones in the app that painted no focus
+   indicator at all. The ring was never missing — base.css draws the same two
+   bands on every button — it was being painted on an element that was still
+   `visibility: hidden`, because only :hover put it back. Focus is not hover,
+   and on a keyboard there is no hover at all. Card-level :focus-within covers
+   the roving-tabindex case (the CARD takes the focus, the buttons inside it
+   carry tabindex="-1"), and the button's own :focus covers a direct or
+   programmatic focus. */
+.timer-card:hover .timer-more,
+.timer-card:focus-within .timer-more,
+.timer-more:focus,
+.timer-more:focus-visible { visibility: visible; }
+/* A hover-revealed control does not exist on a touchscreen: the timer menu
+   (edit / assign a matter, ±0.1h, duplicate, delete) was reachable on a phone
+   only by long-press, which nothing advertises. WAVE-0 FIX (shell wave) —
+   the timers wave should fold this into the redesigned card. */
+@media (pointer: coarse), (max-width: 767px) {
+  .timer-more { visibility: visible; }
+}
+.timer-new {
+  border: 1.5px dashed var(--border); border-radius: var(--radius); display: flex;
+  align-items: center; justify-content: center; gap: 6px; color: var(--text-muted); cursor: pointer;
+  min-height: 90px; background: none; font-size: 14px; width: 100%;
+}
+.timer-new:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---------- timer row: phone (≤767px) — NAME OVER ZEROES ----------
+   WAVE-0 FIX, to be absorbed by the timers wave.
+
+   The critic at 390px: "Matter names truncate hard — 'Acme — lease ...',
+   'Northgate — d...', 'Verity — appe...' — while the idle 00:00:00 zeros are
+   given full, untruncated width. The name is what a lawyer reads to identify
+   a matter."
+
+   Exactly right, and the eight characters are not even carrying information:
+   a timer with nothing recorded on it shows "00:00:00" next to a "0.0" that
+   says the same thing. So the raw clock stands down while it reads zero (the
+   `zero` class in timergrid.js) and the name takes the width back. The moment
+   a second is recorded the clock returns, at which point it IS information.
+   Desktop keeps both — there is room for them there. */
+@media (max-width: 767px) {
+  .timer-clock-raw.zero { display: none; }
+  .timer-name { flex: 1 1 auto; }
+}
+
+/* Mobile reflow for the timer filter (moved from the shell module's
+   original @media block — see css-audit.md's note on shell.css's
+   783–794 block). The filter takes its own full-width row so what you
+   type is visible. */
+@media (max-width: 760px) {
+  .timer-search-wrap { flex: 1 1 100%; }
+  .timer-search { width: 100%; box-sizing: border-box; }
+}
+
+/* ---------- CSV timer import ---------- */
+.import-map {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.import-summary { margin: 10px 0; color: var(--text-muted); }
+.import-summary strong { color: var(--text); }
+tr.import-skip td { opacity: 0.55; }
+.import-new {
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+@media (max-width: 640px) {
+  .import-map { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,199 @@
+/* overlays.css — modal, toast, context menu, close-out, quick capture, stop chips, narrative history, shortcuts help, ghost-text, Alt+drag feedback capture, confirms-motion */
+
+/* Alt+drag UI-feedback capture */
+.feedback-select {
+  position: fixed; z-index: 400; pointer-events: none;
+  border: 2px solid #e11d48; background: rgba(225, 29, 72, 0.08);
+  border-radius: 3px;
+}
+.feedback-shot {
+  max-width: 100%; max-height: 300px; object-fit: contain; display: block;
+  margin: 0 auto 10px; border: 1px solid var(--border); border-radius: 6px;
+}
+
+/* ---------- context menu ---------- */
+.ctx-menu {
+  position: fixed; z-index: 300; min-width: 240px; max-height: 480px; overflow-y: auto;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
+  box-shadow: var(--shadow); padding: 4px;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px;
+  border: 0; background: none; border-radius: 6px; font-size: 13.5px; text-align: left;
+  cursor: pointer; color: var(--text-primary);
+}
+.ctx-item:hover:not(:disabled) { background: var(--surface-2); }
+.ctx-item:disabled { opacity: .4; cursor: default; }
+.ctx-item.danger { color: var(--status-critical); }
+.ctx-hr { border-top: 1px solid var(--border); margin: 4px 6px; }
+.ctx-inline { display: flex; align-items: center; gap: 4px; padding: 4px 10px; flex-wrap: wrap; }
+.ctx-inline select { padding: 3px 6px; font-size: 13px; width: auto; flex: 1; }
+.ctx-spacer { width: 16px; }
+
+/* ---------- modal, toast ----------
+   The dialog SHELL — backdrop, panel, header, body, sizes, the phone bottom
+   sheet — is the shared .ovl primitive in shell.css now (see the OVERLAY LAYER
+   section there and public/js/components/overlay.js). `.modal` / `.modal-wide`
+   survive only as hooks: the size is chosen with .ovl-lg, not here. Nothing in
+   this file may re-declare a dialog's box again, or the four divergent
+   backdrops the wave-0 critic found come straight back. */
+.confirm-message { color: var(--text-secondary); }
+
+/* Day/range summary — monospace so the wrapped narrative indents line up the
+   way they will wherever the text is pasted. pre-wrap (not pre) so a phone
+   never has to scroll sideways to read it: Copy takes the string straight
+   from JS, so soft-wrapping here cannot change what gets pasted. */
+.summary-text {
+  margin: 0; padding: 12px 14px; max-height: 58vh; overflow: auto;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.5; color: var(--text-primary);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.summary-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Reuse-a-narrative picker (entry editor → Reuse). Each past narrative is a
+   raised, clickable slab with its own bounding box, so picking several reads
+   as picking objects rather than ticking a form. The picked ones sink into
+   the accent tint and carry their order number — the order they were picked
+   is the order they join in. */
+.narrative-history { display: flex; flex-direction: column; gap: 8px; max-height: 52vh; overflow: auto; padding: 2px; }
+.narrative-history-row {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-1); box-shadow: 0 1px 0 var(--border);
+}
+.narrative-history-row:hover { border-color: var(--accent); }
+.narrative-history-row.picked {
+  border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+}
+.narrative-history-row input[type="checkbox"] { margin-top: 3px; flex: none; }
+.narrative-history-body { min-width: 0; flex: 1; }
+.narrative-history-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12.5px; color: var(--text-secondary); }
+.narrative-history-body .narrative { margin: 4px 0 0; color: var(--text-primary); overflow-wrap: break-word; }
+.narrative-history-preview {
+  margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+  border: 1px dashed var(--accent); background: var(--surface-2);
+}
+.narrative-history-preview .narrative { margin: 3px 0 0; overflow-wrap: break-word; }
+
+.toast-host { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+.toast {
+  background: var(--text-primary); color: var(--surface-1); padding: 10px 16px;
+  border-radius: 8px; font-size: 14px; display: flex; gap: 14px; align-items: center;
+  box-shadow: var(--shadow); max-width: 90vw;
+}
+.toast button { background: none; border: 0; color: var(--accent-soft); font-weight: 700; cursor: pointer; font-size: 14px; }
+/* --text-on-danger, not #fff: the dark theme's red is a LIGHT red and white
+   text on it reads at 1.9:1. The token flips to near-black there (6.44:1) and
+   stays white in light (6.20:1). It was also the only hardcoded colour left
+   outside tokens.css. */
+.toast.error { background: var(--danger); color: var(--text-on-danger); }
+
+.kbd-help table { border-collapse: collapse; }
+.kbd-help td { padding: 4px 12px 4px 0; }
+
+/* ---------- ghost-text autocomplete ---------- */
+.ghost-wrap { position: relative; min-width: 0; }
+.ghost-mirror {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden;
+  /* mirrors the shared field metrics (buttons/inputs block): 7px 10px padding + 1px border */
+  padding: 8px 11px; font: inherit; white-space: pre; border-radius: 6px;
+}
+.ghost-wrap.multiline .ghost-mirror { white-space: pre-wrap; overflow-wrap: break-word; }
+.ghost-typed { color: transparent; }
+.ghost-hint { color: var(--text-muted); opacity: .75; }
+.shortcut-save { display: inline-flex; align-items: center; gap: 6px; }
+/* the abbreviation box sits in a row of .btn-sm buttons — match their metrics
+   so it doesn't stand a head taller than Save/Cancel */
+.shortcut-save input { padding: 3px 9px; font-size: 12.5px; }
+
+/* ---------- stop chips (non-blocking stop affordance) ---------- */
+.stop-chips {
+  position: fixed; left: 50%; top: 22%; transform: translateX(-50%); right: auto; bottom: auto; z-index: 250;
+  width: 480px; max-width: calc(100vw - 36px);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: var(--shadow); padding: 10px 12px;
+}
+.stop-chips-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.stop-chips-list { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.chip-btn {
+  display: flex; align-items: flex-start; gap: 8px; text-align: left; width: 100%;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+  border-radius: 7px; padding: 7px 9px; font-size: 13px; cursor: pointer;
+}
+.chip-btn:hover { border-color: var(--accent); background: var(--surface-1); }
+.chip-btn kbd { flex: none; }
+.stop-chips-warn {
+  border: 1px solid var(--status-warning); border-radius: 7px; padding: 6px 8px;
+  font-size: 12.5px; margin-bottom: 8px;
+}
+.stop-chips-foot { display: flex; justify-content: flex-end; }
+
+/* ---------- quick capture (bill from a sentence) ----------
+   The card, the scrim and the phone sheet come from .ovl (shell.css). */
+.qc-row { display: flex; align-items: center; gap: 8px; }
+.qc-row input { flex: 1; font-size: 15px; }
+.qc-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
+.qc-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.qc-chip {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+  border-radius: 999px; padding: 2px 10px; font-size: 12.5px; cursor: default;
+}
+button.qc-chip { cursor: pointer; }
+button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft); }
+.qc-chip.miss { border-style: dashed; color: var(--status-warning); border-color: var(--status-warning); }
+.qc-narrative { margin-top: 8px; font-size: 13.5px; }
+/* What the parse still needs, in words. It is a hint BESIDE the File button,
+   never instead of it (the wave-0 critic: quick capture "exposes no commit or
+   dismiss control: the only affordance is the hint text 'Enter files it'"). */
+.qc-hint { margin-top: var(--space-2); }
+
+/* ---------- close-out (one-sweep card stack) ----------
+   The card, the scrim and the phone sheet come from .ovl (shell.css). */
+.closeout-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
+.closeout-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+.closeout-dot.on { background: var(--accent); }
+.closeout-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.closeout-head strong { font-size: 16px; }
+.closeout-hours { font-size: 20px; font-weight: 650; }
+.closeout-card textarea { width: 100%; }
+/* The key legend is a DESKTOP hint now, and only a hint: Accept, Edit and Skip
+   are real buttons in .ovl-actions above it (each carrying its own key cap),
+   and Quit is the ✕ in the sheet header. Before this, the four <kbd> chips
+   were the whole interaction model — "a phone user can open the dialog and
+   type, then cannot accept, skip, or even dismiss it". */
+.closeout-keys { display: flex; justify-content: flex-end; gap: 4px; margin: var(--space-2) 0 0; }
+@media (max-width: 767px) { .closeout-keys { display: none; } }
+.closeout-warn-title { margin: 0 0 8px; font-size: 15px; }
+.closeout-warnlist { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.closeout-warnitem {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-2);
+}
+.closeout-warnitem .validation-list { margin: 6px 0; }
+.closeout-warnitem .btn { margin-top: 4px; }
+
+/* ---------- motion (spec §7: VERY subtle; confirms, never decorates) ---------- */
+@media (prefers-reduced-motion: no-preference) {
+  /* timer start: one soft pulse on the card */
+  .timer-card.just-started { animation: tk-start 300ms ease-out 1; }
+  @keyframes tk-start { 30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 35%, transparent); } }
+
+  /* stop chips settle in; dialogs get their entrance from .ovl-panel */
+  .stop-chips { animation: tk-settle 180ms ease-out 1; }
+  @keyframes tk-settle { from { opacity: 0; transform: translateY(4px); } }
+
+  /* finalize: soft lock on the status chip — only on a FRESH finalize
+     (call sites mark the id via ui.js markJustFinalized); a chip that merely
+     mounts already-finalized stays still (confirms, never decorates) */
+  .chip-finalized.just-finalized { animation: tk-lock 250ms ease-out 1; }
+  @keyframes tk-lock { 40% { transform: scale(1.08); } }
+
+  /* export/close-out closed moment: gentle rise */
+  .closeout-card.closeout-closed { animation: tk-settle 300ms ease-out 1; }
+
+  /* today footer: running total confirms a just-filed entry */
+  .tf-total.bump { animation: tk-bump 250ms ease-out 1; }
+  @keyframes tk-bump { 30% { transform: scale(1.05); } }
+}

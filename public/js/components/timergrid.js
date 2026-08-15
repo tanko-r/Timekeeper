@@ -761,7 +761,11 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         })())}>
         <${Icon} name="timer" size=${16} /> Quick
       </button>
-      <button class="btn btn-sm btn-primary" onClick=${() => setEditing('new')}>
+      ${/* The one emphasised control in a fourteen-control header (wave-0
+            critic: "the eye has to read all fourteen before finding the one
+            that starts a timer"). Tonal rather than filled: the page's one
+            filled accent button belongs to the page header. */''}
+      <button class="btn btn-sm btn-tonal" onClick=${() => setEditing('new')}>
         <${Icon} name="plus" size=${16} /> New timer
       </button>
     </div>
@@ -1012,7 +1016,7 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging
           onBlur=${commitClock}
           onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
         <span class="timer-clock-pair">
-          <span class="timer-clock-raw mono">${fmtClock(secs)}</span>
+          <span class=${'timer-clock-raw mono' + (secs ? '' : ' zero')}>${fmtClock(secs)}</span>
           <button class="timer-clock mono" tabIndex=${-1} title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
             onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
             ${fmtTenths(secs, roundMode)}

@@ -1,0 +1,70 @@
+/* entries.css — entry list/day cards, alerts banner */
+
+/* ---------- entries ---------- */
+/* day-group headers in multi-day lists (Week/Month/Range): the date is a
+   heading over its cards, with a heavier rule where a new week starts */
+.entry-day-head {
+  display: flex; align-items: baseline; gap: 10px;
+  margin: 16px 2px 6px; font-size: 13px; font-weight: 700;
+}
+div:first-child > .entry-day-head { margin-top: 4px; }
+.entry-week-divider { border-top: 2px solid var(--border); margin-top: 18px; }
+.entry-card {
+  display: flex; gap: 12px; padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface-1); align-items: flex-start;
+}
+.entry-card + .entry-card { margin-top: 8px; }
+.entry-card .body { flex: 1; min-width: 0; }
+.entry-card .narrative { margin: 3px 0 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+/* inline narrative editing: a visible hover affordance (tint + accent bar),
+   and a textarea that keeps the card's footprint instead of the 84px min */
+.entry-card .narrative-editable { cursor: text; border-radius: 4px; margin-left: -4px; padding: 0 4px; }
+.entry-card .narrative-editable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.entry-card .narrative-inline-input { width: 100%; margin-top: 3px; min-height: 0; font: inherit; color: var(--text-secondary); }
+.entry-card .hours { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* a timer is running on this entry — the live accent, same as its chip and
+   its stop button (tokens.css §7: green is not in the hue budget) */
+.entry-card .hours.active { color: var(--live); }
+.entry-card.nonbillable .hours { color: var(--nonbillable); }
+.entry-card.billable .hours { color: var(--billable); }
+.entry-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
+.entry-actions { display: flex; gap: 2px; flex-wrap: wrap; }
+
+/* ---------- entry row: phone (≤767px) ----------
+   WAVE-0 FIX (shell wave), to be absorbed by the entries wave.
+
+   The row is one flex line: text on the left, hours + five action icons on
+   the right. At 390px that left the narrative a 174px column inside a 358px
+   card — matter names wrapped, matter numbers broke mid-token, status chips
+   stacked one per line, and the narrative broke every two or three words
+   while the right third of the card sat empty. Raising the action icons to
+   the 44px touch floor would have taken another 50px off that column.
+
+   So the row stacks: the text block takes the full measure, then hours and
+   actions share one line beneath it — hours left (where the eye lands after
+   the narrative), actions right, each a real 44px target. */
+@media (max-width: 767px) {
+  .entry-card { flex-wrap: wrap; gap: var(--gap-inline); }
+  .entry-card > .body { flex: 1 1 100%; }
+  /* The hours/actions column carries an inline text-align, no class — it is
+     the only sibling after .body. Flex makes the inline style inert. */
+  .entry-card > .body ~ div {
+    flex: 1 1 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--gap-inline);
+  }
+  .entry-actions { justify-content: flex-end; row-gap: var(--space-1); }
+}
+
+/* ---------- alerts banner ---------- */
+.alert-banner {
+  border-left: 4px solid var(--attention); background: var(--surface-1);
+  border-radius: var(--radius); padding: 12px 14px; border-top: 1px solid var(--border);
+  border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.alert-banner .row { gap: 6px; }
+.alert-pill {
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 12.5px;
+  cursor: pointer; background: var(--surface-2);
+}
+.alert-pill:hover { border-color: var(--accent); }

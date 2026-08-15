@@ -72,7 +72,10 @@ const SCREENS = [
   { key: 'export', hash: '#/export' },
   { key: 'settings', hash: '#/settings' },
   { key: 'settings-ai', hash: '#/settings/ai' },
-  { key: 'settings-remote', hash: '#/settings/remote' },
+  // the category key is `server` — `#/settings/remote` is not a route, and the
+  // app (correctly) falls back to General, so this shot photographed the
+  // General page three times over instead of Remote & backups
+  { key: 'settings-remote', hash: '#/settings/server' },
   {
     key: 'entry-editor',
     hash: `#/day/${TODAY}`,
@@ -124,6 +127,52 @@ const SCREENS = [
   },
 ].filter((s) => ONLY.length === 0 || ONLY.includes(s.key));
 
+// --- mobile fences -----------------------------------------------------------
+// Two things the wave-0 critic had to measure by hand, now measured on every
+// run and recorded in the manifest for the mobile viewport:
+//
+//   overflow   document.documentElement.scrollWidth must equal the viewport
+//              width. The calendar's week-total column made it 398px against
+//              390, which scrolled the whole app sideways — the bottom
+//              navigation bar included.
+//   tap floor  every VISIBLE interactive element must be at least 44×44 CSS
+//              px (BRIEF: "Minimum touch target 44×44 CSS px for any primary
+//              control").
+//
+// Advisory by default so a wave can still photograph work in progress; pass
+// --strict to make either one a non-zero exit.
+const STRICT = process.argv.includes('--strict');
+const TAP_MIN = 44;
+
+const measureMobile = (page) => page.evaluate((tapMin) => {
+  const sel = 'button, a[href], select, textarea, input:not([type="hidden"]), '
+    + '[role="button"], [role="tab"], [tabindex]:not([tabindex="-1"])';
+  const label = (el) => {
+    const cls = (el.getAttribute('class') || '').trim().split(/\s+/).filter(Boolean).slice(0, 3).join('.');
+    const text = (el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent || '')
+      .replace(/\s+/g, ' ').trim().slice(0, 28);
+    return `${el.tagName.toLowerCase()}${cls ? '.' + cls : ''}${text ? ` "${text}"` : ''}`;
+  };
+  const small = new Map();
+  for (const el of document.querySelectorAll(sel)) {
+    if (el.closest('[aria-hidden="true"]')) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || cs.pointerEvents === 'none') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;
+    if (r.width >= tapMin - 0.5 && r.height >= tapMin - 0.5) continue;
+    const key = label(el);
+    const prev = small.get(key);
+    const size = `${Math.round(r.width * 10) / 10}×${Math.round(r.height * 10) / 10}`;
+    if (prev) prev.count += 1;
+    else small.set(key, { el: key, size, count: 1 });
+  }
+  return {
+    scrollWidth: document.documentElement.scrollWidth,
+    tapUnder: [...small.values()],
+  };
+}, TAP_MIN);
+
 const browser = await puppeteer.launch({
   executablePath: '/usr/bin/chromium',
   headless: 'new',
@@ -164,11 +213,22 @@ for (const vp of VIEWPORTS) {
         if (screen.act) await screen.act(page);
         await sleep(250);
         await page.screenshot({ path: join(OUT, name), fullPage: !screen.act });
-        manifest.push({
+        const entry = {
           screen: screen.key, viewport: vp.key, theme, file: name,
           errors: errors.slice(before),
-        });
-        process.stdout.write(`  ✔ ${name}\n`);
+        };
+        if (vp.key === 'mobile') {
+          const m = await measureMobile(page);
+          entry.scrollWidth = m.scrollWidth;
+          entry.overflowsX = m.scrollWidth > vp.width;
+          entry.tapUnder44 = m.tapUnder;
+        }
+        manifest.push(entry);
+        const flags = [
+          entry.overflowsX ? `↔ ${entry.scrollWidth}px` : '',
+          entry.tapUnder44 && entry.tapUnder44.length ? `⌖ ${entry.tapUnder44.length} under ${TAP_MIN}` : '',
+        ].filter(Boolean).join(' ');
+        process.stdout.write(`  ✔ ${name}${flags ? `   ${flags}` : ''}\n`);
       } catch (e) {
         manifest.push({ screen: screen.key, viewport: vp.key, theme, file: null, failed: String(e.message) });
         process.stdout.write(`  ✖ ${name}: ${e.message}\n`);
@@ -189,3 +249,28 @@ const withErrors = manifest.filter((m) => m.errors && m.errors.length);
 console.log(`\n${manifest.length - failed.length} shots written to ${OUT}`);
 if (failed.length) console.log(`${failed.length} failed: ${failed.map((f) => `${f.screen}/${f.viewport}/${f.theme}`).join(', ')}`);
 if (withErrors.length) console.log(`${withErrors.length} shots had console errors — see manifest.json`);
+
+// Mobile fences (see measureMobile above).
+const overflowing = manifest.filter((m) => m.overflowsX);
+const tapOffenders = new Map();
+for (const m of manifest) {
+  for (const t of m.tapUnder44 || []) {
+    const cur = tapOffenders.get(t.el) || { size: t.size, screens: new Set() };
+    cur.screens.add(m.screen);
+    tapOffenders.set(t.el, cur);
+  }
+}
+if (overflowing.length) {
+  console.log(`\nHORIZONTAL OVERFLOW on ${overflowing.length} mobile shot(s) — the page is wider than the phone:`);
+  for (const m of overflowing) console.log(`  ${m.screen}/${m.theme}: scrollWidth ${m.scrollWidth} > 390`);
+}
+if (tapOffenders.size) {
+  console.log(`\nUNDER THE ${TAP_MIN}px TOUCH FLOOR — ${tapOffenders.size} distinct control(s) on mobile:`);
+  for (const [el, v] of tapOffenders) {
+    console.log(`  ${v.size}  ${el}   [${[...v.screens].join(', ')}]`);
+  }
+}
+if (!overflowing.length && !tapOffenders.size && VIEWPORTS.some((v) => v.key === 'mobile')) {
+  console.log('\nmobile fences pass: no horizontal overflow, every interactive element ≥ 44×44');
+}
+if (STRICT && (overflowing.length || tapOffenders.size)) process.exitCode = 1;

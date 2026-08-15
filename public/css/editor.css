@@ -1,0 +1,110 @@
+/* editor.css — entry editor: header grid, task lines/codes, AI narrative chrome, custom fields */
+
+/* ---------- allocation + AI ---------- */
+.alloc-chip {
+  font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--status-warning); color: var(--nonbillable);
+  background: var(--nonbillable-soft);
+}
+.alloc-chip.over { border-color: var(--status-critical); color: var(--status-critical); background: transparent; }
+input.total-input { font-weight: 700; }
+
+/* ---------- task-line task-code affordance (chip when set, "+ code" when not) ---------- */
+.task-code-cell { display: flex; align-items: center; min-width: 0; }
+.task-code-chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px;
+  padding: 2px 6px 2px 10px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.task-code-chip button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--text-muted); display: inline-flex; }
+.task-code-chip button:hover { color: var(--status-critical); }
+.task-code-add {
+  border: 1px dashed var(--border); background: none; color: var(--text-muted);
+  border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.task-code-add:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.task-code-cell select { font-size: 12px; padding: 2px 4px; }
+
+/* ---------- narrative AUTO toggle + AI dropdown + suggestion chips ---------- */
+.auto-toggle-chip {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
+  border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  cursor: pointer;
+}
+.auto-toggle-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
+.auto-toggle-chip:disabled { cursor: default; opacity: .6; }
+.editor-suggest-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.editor-suggest-chips button {
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
+  border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.editor-suggest-chips button:hover { border-color: var(--accent); background: var(--surface-1); }
+.cm-client-label { display: block; }
+
+/* ---------- entry editor: header row ---------- */
+/* Date · Client/Matter · Total hours · Billable. align-items:start (never
+   :end) so the client name that appears UNDER the CM picker can't shove that
+   column's label and control up out of line with its neighbours. The Billable
+   cell carries a blank label so its checkbox starts on the control row too. */
+.entry-head-grid {
+  display: grid; grid-template-columns: 140px minmax(0, 1fr) 110px auto;
+  align-items: start; gap: 10px;
+}
+/* matches the fields' control height (15px/1.45 text + 7px padding + 1px
+   border) so the checkbox sits centred against the inputs beside it */
+.entry-head-grid .checkbox-row { min-height: 38px; }
+@media (max-width: 760px) {
+  /* phone: four columns won't fit ~380px. Re-lay them out as
+     [Date | Total hours] / [Client/Matter] / [Billable]. */
+  .entry-head-grid { grid-template-columns: 1fr 110px; }
+  .entry-head-grid > *:nth-child(1) { grid-area: 1 / 1; }
+  .entry-head-grid > *:nth-child(3) { grid-area: 1 / 2; }
+  .entry-head-grid > *:nth-child(2) { grid-area: 2 / 1 / auto / -1; }
+  .entry-head-grid > *:nth-child(4) { grid-area: 3 / 1 / auto / -1; }
+  .entry-head-grid .field-label[aria-hidden] { display: none; }
+  .entry-head-grid .checkbox-row { min-height: 0; }
+}
+
+/* ---------- task lines ---------- */
+.task-lines { display: flex; flex-direction: column; gap: 8px; }
+.task-line { display: grid; grid-template-columns: minmax(90px, 130px) 86px 1fr auto; gap: 8px; align-items: center; }
+.task-line .reorder { display: flex; flex-direction: column; }
+.task-line .reorder button { border: 0; background: none; color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 0 4px; line-height: 1.1; }
+.task-line .reorder button:hover { color: var(--accent); }
+
+.saving-dot { font-size: 12px; color: var(--text-muted); }
+.narrative-preview { position: relative; }
+.auto-badge {
+  position: absolute; top: 6px; right: 8px; font-size: 10.5px; font-weight: 700;
+  color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px;
+}
+
+/* Mobile reflow for .task-line (moved from the shell module's original
+   @media block so it still applies after the base rule above — see
+   css-audit.md's note on shell.css's 783–794 block). */
+@media (max-width: 760px) {
+  .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
+}
+
+/* Phone touch floor (≤767px, the shell's phone breakpoint). WAVE-0 FIX
+   (shell wave), to be absorbed by the editor's own wave: the reorder pair
+   measured 19×12.2 CSS px each and "+ code" was 20px tall — the last three
+   controls in the app under the 44px floor the BRIEF sets. The pair goes
+   side by side rather than stacked because two 44px rows of chevrons would
+   be taller than the task line they reorder. */
+@media (max-width: 767px) {
+  .task-line .reorder { flex-direction: row; gap: var(--space-1); }
+  .task-line .reorder button {
+    min-width: var(--tap-min); min-height: var(--tap-min);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .task-code-add { min-height: var(--control-h-touch); }
+}
+
+/* Entry editor: custom client/matter fields (Phase, Task, …) — a compact
+   row between the header grid and the task lines. */
+.custom-fields-row {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px; margin: 10px 0 4px;
+}

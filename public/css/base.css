@@ -1,0 +1,1015 @@
+/* ============================================================================
+   base.css — reset, document typography, and every shared primitive:
+   buttons, form controls, cards, chips/badges, tables, kbd, links, focus,
+   touch sizing, reduced motion.
+
+   Consumes tokens.css only. There is no raw colour, size, spacing, radius,
+   shadow, duration or z-index in this file — if you need a new one, add it to
+   tokens.css and reference it here.
+
+   Contrast achieved by the palette this file paints with (WCAG 2.1, sRGB):
+
+                        LIGHT                       DARK
+                        s-0     s-1     s-2         s-0     s-1     s-2
+     text-primary      16.32   18.44   14.91       16.43   15.07   13.41
+     text-secondary     6.72    7.59    6.14        9.03    8.29    7.37
+     text-muted         5.03    5.68    4.59        5.72    5.25    4.67
+     accent as text     5.07    5.73    4.64        6.98    6.40    5.70
+     status-good        5.85    6.61    5.34        8.49    7.79    6.93
+     status-warning     5.63    6.37    5.15        8.78    8.06    7.17
+     status-serious     5.20    5.88    4.75        7.95    7.29    6.49
+     status-critical    5.49    6.20    5.02        6.47    5.93    5.28
+     nonbillable        5.19    5.87    4.75        6.76    6.20    5.52
+
+     text-on-accent on accent            5.73        6.75
+     text-on-danger on danger            6.20        6.44
+     accent-strong on accent-soft        6.46        7.48
+     border-input vs surface-1  (3:1)    3.46        3.34
+     focus outer vs surface-1   (3:1)   18.96       15.22
+     focus inner vs accent fill (3:1)    5.73        7.39
+
+   Body text and secondary text clear 4.5:1 on every surface in both themes.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   Reset
+--------------------------------------------------------------------------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: var(--color-scheme);
+  /* Reserve the scrollbar's track at all times. Opening a dialog locks the
+     page scroll (shell.css, .tk-overlay-open); without a stable gutter the
+     whole layout would jump sideways by the width of the bar as it goes. */
+  scrollbar-gutter: stable;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-body);
+  letter-spacing: var(--ls-body);
+  background: var(--surface-0);
+  color: var(--text-primary);
+  /* Inter's disambiguated glyphs (open digits, lowercase l with tail) — the
+     legible variants matter in a numbers-heavy timekeeping UI */
+  font-feature-settings: 'cv05' 1, 'cv08' 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---------------------------------------------------------------------------
+   Document typography — one rule per named step of the scale.
+   Headings are sentence case and never uppercase; only `micro` is capitalised.
+--------------------------------------------------------------------------- */
+h1, h2, h3, h4 { margin: 0 0 var(--space-2); text-wrap: balance; }
+
+h1 {
+  font-size: var(--fs-title); line-height: var(--lh-title);
+  font-weight: var(--fw-title); letter-spacing: var(--ls-title);
+}
+h2 {
+  font-size: var(--fs-heading); line-height: var(--lh-heading);
+  font-weight: var(--fw-heading); letter-spacing: var(--ls-heading);
+}
+h3, h4 {
+  font-size: var(--fs-subheading); line-height: var(--lh-subheading);
+  font-weight: var(--fw-subheading); letter-spacing: var(--ls-subheading);
+}
+
+p { margin: 0 0 var(--space-3); }
+p:last-child { margin-bottom: 0; }
+strong, b { font-weight: var(--fw-semibold); }
+small { font-size: var(--fs-label); }
+hr {
+  border: 0; border-top: var(--border-w) solid var(--border);
+  margin: var(--gap-block) 0;
+}
+
+/* Type-step utilities. Use these instead of re-declaring a size in a feature
+   module — that is how the old file drifted into sixteen font sizes. */
+.t-display {
+  font-size: var(--fs-display); line-height: var(--lh-display);
+  font-weight: var(--fw-display); letter-spacing: var(--ls-display);
+}
+.t-title {
+  font-size: var(--fs-title); line-height: var(--lh-title);
+  font-weight: var(--fw-title); letter-spacing: var(--ls-title);
+}
+.t-heading {
+  font-size: var(--fs-heading); line-height: var(--lh-heading);
+  font-weight: var(--fw-heading); letter-spacing: var(--ls-heading);
+}
+.t-subheading {
+  font-size: var(--fs-subheading); line-height: var(--lh-subheading);
+  font-weight: var(--fw-subheading); letter-spacing: var(--ls-subheading);
+}
+.t-body {
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: var(--fw-body); letter-spacing: var(--ls-body);
+}
+.t-label {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-label); letter-spacing: var(--ls-label);
+}
+.t-caption {
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-caption); letter-spacing: var(--ls-caption);
+}
+.t-micro {
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase;
+}
+
+/* Numeric treatment. Every figure is tabular; the four sizes sit one step and
+   one weight class above whatever labels them (see tokens.css §3). */
+.tnum, .mono { font-variant-numeric: tabular-nums; }
+.figure-hero, .figure-lg, .figure-md, .figure-sm {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1, 'cv05' 1, 'cv08' 1;
+  white-space: nowrap;
+}
+.figure-hero {
+  font-size: var(--fs-num-hero); line-height: var(--lh-num-hero);
+  font-weight: var(--fw-num-hero); letter-spacing: var(--ls-num-hero);
+}
+.figure-lg {
+  font-size: var(--fs-num-lg); line-height: var(--lh-num-lg);
+  font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg);
+}
+.figure-md {
+  font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+  font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+}
+.figure-sm {
+  font-size: var(--fs-num-sm); line-height: var(--lh-num-sm);
+  font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
+}
+/* Mercury's big-figure/small-fraction pattern: wrap the tenths in .figure-frac
+   inside a .figure-hero so magnitude reads before precision. */
+.figure-frac { font-size: calc(1em * var(--num-fraction-scale)); font-weight: var(--fw-medium); }
+/* Ticking clocks only (hh:mm:ss). Hour decimals stay in Inter — they sit
+   inline with words, and ClockFace has no italics or text companions. */
+.t-clock {
+  font-family: var(--font-clock);
+  font-size: var(--fs-clock);
+  letter-spacing: var(--ls-clock);
+  font-variant-numeric: tabular-nums;
+}
+.t-clock-lg { font-size: var(--fs-clock-lg); }
+
+.muted { color: var(--text-muted); }
+.small {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label);
+}
+
+/* ---------------------------------------------------------------------------
+   Links
+--------------------------------------------------------------------------- */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+a:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 0.18em; }
+a:active { color: var(--accent-active); }
+
+/* ---------------------------------------------------------------------------
+   Card primitive
+   Light: white on a tinted page + a hairline + the lightest shadow step.
+   Dark: a lifted surface + a hairline; the shadow ramp adds a light ring
+   rather than a black blur, because black blur is invisible on a black page.
+--------------------------------------------------------------------------- */
+.card {
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--pad-card);
+  box-shadow: var(--shadow-1);
+}
+.card + .card { margin-top: var(--gap-block); }
+.card h2 { display: flex; align-items: center; gap: var(--gap-inline); }
+
+.grid { display: grid; gap: var(--gap-block); }
+.row { display: flex; gap: var(--gap-inline); align-items: center; flex-wrap: wrap; }
+.row-end {
+  display: flex; gap: var(--gap-inline); justify-content: flex-end;
+  margin-top: var(--gap-block); flex-wrap: wrap;
+}
+
+/* Section boundary inside a page. Wraps so a crowded toolbar (e.g. the Timers
+   header on a phone) falls onto a second row instead of overflowing. */
+.section-title {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--gap-inline); row-gap: var(--space-2);
+  margin: var(--gap-section) 0 var(--gap-stack);
+}
+.section-title h2 { margin: 0; }
+
+/* ---------------------------------------------------------------------------
+   Buttons
+
+   Variants   primary (the one committing action on a surface)
+              secondary — the bare .btn (everything reversible)
+              ghost (tertiary; toolbars and row actions)
+              danger (destructive, always paired with a confirm)
+   Sizes      .btn-sm (30px) · .btn (36px) · .btn-lg (44px)
+   States     :hover · :active · :disabled/[aria-disabled] · [aria-busy]/.is-loading
+   Icon-only  .btn-icon — MUST carry aria-label or title. Set
+              <html data-a11y-audit> in devtools to flag any that don't.
+
+   Each variant sets --btn-fg so the loading spinner and any icon inherit the
+   right foreground without a second rule per variant.
+--------------------------------------------------------------------------- */
+.btn {
+  --btn-fg: var(--text-primary);
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: var(--gap-tight);
+  min-height: var(--control-h-md);
+  padding: var(--pad-control-y) var(--pad-control-x);
+  border-radius: var(--radius-sm);
+  border: var(--border-w) solid var(--border-input);
+  background: var(--surface-1);
+  color: var(--btn-fg);
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--ls-body);
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+  transition: var(--transition-control);
+}
+.btn:hover { background: var(--surface-2); border-color: var(--border-strong); }
+.btn:active { background: var(--surface-3); }
+.btn:disabled, .btn[aria-disabled="true"] {
+  opacity: 0.45; cursor: default; box-shadow: none;
+}
+.btn:disabled:hover, .btn[aria-disabled="true"]:hover {
+  background: var(--surface-1); border-color: var(--border-input);
+}
+
+.btn-primary {
+  --btn-fg: var(--text-on-accent);
+  background: var(--accent); border-color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-primary:active { background: var(--accent-active); border-color: var(--accent-active); }
+.btn-primary:disabled:hover, .btn-primary[aria-disabled="true"]:hover {
+  background: var(--accent); border-color: var(--accent);
+}
+
+.btn-danger {
+  --btn-fg: var(--text-on-danger);
+  background: var(--danger); border-color: var(--danger);
+  font-weight: var(--fw-semibold);
+}
+.btn-danger:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
+.btn-danger:disabled:hover, .btn-danger[aria-disabled="true"]:hover {
+  background: var(--danger); border-color: var(--danger);
+}
+
+/* Tonal: the emphasis step between primary and secondary. A surface that
+   needs its own committing action while the PAGE's one filled accent button
+   lives somewhere else (the pinned day footer's "Close the day" against the
+   header's "New entry") takes this instead of a second filled accent — same
+   hue, a fraction of the weight, so only one thing on screen is shouting. */
+.btn-tonal {
+  --btn-fg: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  font-weight: var(--fw-semibold);
+  box-shadow: none;
+}
+.btn-tonal:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-1));
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.btn-tonal:active { background: color-mix(in srgb, var(--accent) 30%, var(--surface-1)); }
+.btn-tonal:disabled:hover, .btn-tonal[aria-disabled="true"]:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.btn-ghost {
+  --btn-fg: var(--text-secondary);
+  border-color: transparent; background: none; box-shadow: none;
+}
+.btn-ghost:hover {
+  --btn-fg: var(--text-primary);
+  background: var(--surface-2); border-color: transparent;
+}
+.btn-ghost:active { background: var(--surface-3); }
+.btn-ghost:disabled:hover, .btn-ghost[aria-disabled="true"]:hover {
+  background: none; border-color: transparent;
+}
+
+.btn-sm {
+  min-height: var(--control-h-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label);
+  border-radius: var(--radius-sm);
+}
+.btn-lg {
+  min-height: var(--control-h-lg);
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--fs-subheading); line-height: var(--lh-subheading);
+  letter-spacing: var(--ls-subheading);
+}
+
+/* Icon-only: square, no text padding. Accessible name is mandatory. */
+.btn-icon { padding: 0; width: var(--control-h-md); min-width: var(--control-h-md); }
+.btn-icon.btn-sm { width: var(--control-h-sm); min-width: var(--control-h-sm); }
+.btn-icon.btn-lg { width: var(--control-h-lg); min-width: var(--control-h-lg); }
+:root[data-a11y-audit] .btn-icon:not([aria-label]):not([title]):not([aria-labelledby]) {
+  outline: var(--border-w-thick) dashed var(--status-critical);
+}
+
+/* Loading: the label is hidden but keeps its box, so the button does not
+   resize mid-action; a spinner in the variant's own foreground replaces it. */
+.btn[aria-busy="true"], .btn.is-loading {
+  position: relative; pointer-events: none; color: transparent;
+}
+.btn[aria-busy="true"] > *, .btn.is-loading > * { visibility: hidden; }
+.btn[aria-busy="true"]::after, .btn.is-loading::after {
+  content: ''; position: absolute; inset: 0; margin: auto;
+  width: var(--icon-md); height: var(--icon-md);
+  border-radius: var(--radius-circle);
+  border: var(--border-w-thick) solid color-mix(in srgb, var(--btn-fg) 28%, transparent);
+  border-top-color: var(--btn-fg);
+  animation: spin calc(var(--dur-slow) * 3) linear infinite;
+}
+
+.btn-split { display: inline-flex; }
+.btn-split .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.btn-split .btn:last-child {
+  border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: none;
+  padding-left: var(--space-2); padding-right: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------------
+   Form controls
+   Field borders use --border-input (3.4:1 against the surface behind them) so
+   the boundary of a control is perceivable per WCAG 1.4.11. Cards and list
+   dividers use the much lighter --border; they are decoration, not controls.
+--------------------------------------------------------------------------- */
+input[type="text"], input[type="password"], input[type="number"], input[type="date"],
+input[type="time"], input[type="email"], input[type="search"], select, textarea {
+  font-family: inherit;
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  letter-spacing: var(--ls-body);
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-sm);
+  padding: var(--pad-control-y) var(--pad-control-x);
+  min-height: var(--control-h-md);
+  width: 100%; max-width: 100%;
+  transition: var(--transition-control);
+}
+input:hover:not(:disabled):not([readonly]),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled):not([readonly]) { border-color: var(--border-strong); }
+
+input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+
+input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 1; }
+
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--surface-2); color: var(--text-muted); cursor: not-allowed;
+  border-color: var(--border);
+}
+
+/* Numbers in a field are tabular so a column of hours lines up. */
+input[type="number"], input[type="date"], input[type="time"] { font-variant-numeric: tabular-nums; }
+
+select {
+  appearance: none; -webkit-appearance: none;
+  background-image: var(--select-chevron);
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  padding-right: var(--space-7);
+  cursor: pointer;
+}
+select:disabled { cursor: not-allowed; }
+/* A multi-row select is a list, not a dropdown — no chevron, no fixed height. */
+select[multiple], select[size]:not([size="1"]) {
+  background-image: none; padding-right: var(--pad-control-x); min-height: 0;
+}
+
+textarea {
+  min-height: var(--textarea-min-h);
+  line-height: var(--lh-body);
+  resize: vertical;
+}
+textarea[readonly] { background: var(--surface-2); color: var(--text-secondary); }
+
+/* Checkboxes and radios. accent-color themes the native control in both
+   themes, which keeps the platform's own focus, hover and indeterminate
+   behaviour instead of reimplementing it on a pseudo-element. */
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--accent);
+  width: var(--checkbox-size); height: var(--checkbox-size);
+  margin: 0; flex: none; cursor: pointer;
+}
+input[type="checkbox"]:disabled, input[type="radio"]:disabled { cursor: not-allowed; opacity: 0.5; }
+
+.field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.field-label {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label);
+  font-weight: var(--fw-semibold); color: var(--text-secondary);
+}
+.field-hint {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-muted);
+}
+input.input-narrow { width: var(--field-w-narrow); }
+
+.checkbox-row {
+  display: flex; gap: var(--gap-inline); align-items: center;
+  font-size: var(--fs-body); line-height: var(--lh-body);
+}
+.checkbox-row input { width: auto; }
+.checkbox-row input[type="checkbox"], .checkbox-row input[type="radio"] {
+  width: var(--checkbox-size); height: var(--checkbox-size);
+}
+.checkbox-row label { cursor: pointer; }
+
+/* ---------------------------------------------------------------------------
+   Badges & chips
+
+   badge = an intrinsic property of the record (billable / non-billable).
+           Filled. Billable owns the accent hue; non-billable is deliberately
+           neutral so a normal screen runs at one accent plus at most two
+           semantic colours instead of six.
+   chip  = a transient state (draft / finalized / exported / reverted /
+           running). Outlined, so it never competes with a badge beside it.
+
+   The five chips spend the hue budget in tokens.css §7 and nothing more:
+     draft      no hue      nothing has happened yet
+     finalized  no hue      the settled, healthy resting state — quiet, and
+                            the lock glyph in the markup says it too. It used
+                            to be green, which put a third saturated hue on a
+                            dashboard that already had blue and amber.
+     running    --live      the ONE thing happening right now
+     exported   --accent    sent; the same blue as everything else "done by us"
+     reverted   --attention finalized once and unlocked since — look at me
+--------------------------------------------------------------------------- */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); letter-spacing: var(--ls-caption);
+  white-space: nowrap;
+}
+/* Neither of these is an action, so neither takes the action accent. The
+   wave-0 critic counted the billable badge among six unrelated jobs one blue
+   was doing at once ("nothing on our dashboard tells the eye which blue thing
+   to act on"), so billable is now an OUTLINE chip in the text colour — read as
+   a property of the record, not as something to click — and non-billable stays
+   the quieter filled neutral it already was. The two still differ in fill,
+   weight of colour and the word itself. */
+.badge-billable {
+  background: transparent; color: var(--text-primary);
+  box-shadow: inset 0 0 0 var(--border-w) var(--border-strong);
+}
+.badge-nonbillable { background: var(--nonbillable-soft); color: var(--nonbillable); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); letter-spacing: var(--ls-caption);
+  border: var(--border-w) solid var(--border);
+  color: var(--text-secondary); background: var(--surface-2);
+  white-space: nowrap;
+}
+/* draft — nothing has happened yet, so it reads as an empty outline rather
+   than a colour. Previously this class had no rule at all and draft looked
+   identical to no status. */
+.chip-draft { color: var(--text-muted); background: transparent; border-color: var(--border); }
+/* Settled and healthy — filled so it still reads as a state rather than as
+   nothing, but neutral, because "done" is not news. The lock glyph beside the
+   word is the redundant channel that used to be the green. */
+.chip-finalized {
+  color: var(--text-primary); background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.chip-exported { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-subtle); }
+/* finalized once, then unlocked — it looks done everywhere else, so say so */
+.chip-reverted { color: var(--attention); border-color: color-mix(in srgb, var(--attention) 45%, transparent); background: var(--attention-soft); }
+
+/* running-entry cue (feedback 2026-07-10): the entry exists from start */
+.chip-running {
+  color: var(--live-strong); background: var(--live-soft);
+  border-color: color-mix(in srgb, var(--live) 40%, transparent);
+  animation: tk-running-pulse calc(var(--dur-slow) * 7) var(--ease-standard) infinite;
+}
+@keyframes tk-running-pulse { 50% { opacity: 0.55; } }
+
+.banned-chip {
+  display: inline-flex; gap: var(--space-1); align-items: center;
+  background: var(--surface-2); border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  margin: var(--space-0-5);
+}
+.banned-chip button {
+  background: none; border: 0; cursor: pointer; color: var(--text-muted);
+  padding: 0; font: inherit;
+  transition: color var(--dur-fast) var(--ease-standard);
+}
+.banned-chip button:hover { color: var(--danger); }
+
+/* ---------------------------------------------------------------------------
+   Tables
+   Headers are sentence case, not uppercase-with-tracking. Every reference
+   (Harvest "Mon 13", Mercury "Payments", Attio "ICP Score") sets them in
+   sentence case; spreadsheet caps read as a form field, not as data.
+--------------------------------------------------------------------------- */
+.table-wrap { overflow-x: auto; }
+table.tk {
+  width: 100%; border-collapse: collapse;
+  font-size: var(--fs-body); line-height: var(--lh-body);
+}
+table.tk th {
+  text-align: left;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label);
+  color: var(--text-secondary); font-weight: var(--fw-semibold);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-w) solid var(--border);
+  white-space: nowrap;
+}
+table.tk td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--border-w) solid var(--border-subtle);
+  vertical-align: top;
+}
+/* Row hover is always on, even for non-interactive rows — it is how a reader
+   keeps their place scanning a wide table (Carbon's rule). */
+table.tk tr:hover td { background: var(--surface-2); }
+table.tk tr.clickable { cursor: pointer; }
+/* Numeric columns: any cell whose content is a figure should carry .tnum or
+   .figure-*; this makes the common case free. */
+table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------------
+   A WIDE DATA TABLE IS NOT A TABLE ON A PHONE — .table-cards (opt-in)
+
+   The wave-0 critic on the Export screen: "the unmodified 7-column desktop
+   table crammed into 390px. The Narrative column wraps to roughly one word per
+   line and a trailing column is clipped at the right edge. It is a squeeze,
+   not a real touch layout." Every mature system answers this the same way
+   (Bootstrap's stacked tables, GOV.UK's responsive table, Carbon's mobile
+   list): below the phone breakpoint the header row goes away and each ROW
+   becomes a card, because a 390px column cannot show seven of anything.
+
+   This is the generic half — rows become cards, cells become blocks, the
+   horizontal scroller stands down. The per-table half (which cell takes the
+   whole width, which ones share the meta line, what order they read in) is a
+   handful of `order` rules next to the table that opts in, since only that
+   table knows what its columns mean.
+
+   Add `table-cards` beside `table-wrap` on the wrapper to opt a table in. The
+   markup does not change, so every existing selector — and every e2e
+   assertion written against `table.tk tbody tr` — keeps working at every
+   viewport.
+--------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  .table-cards { overflow-x: visible; }
+  .table-cards table.tk, .table-cards tbody { display: block; width: 100%; }
+  /* Not `visibility: hidden` or an off-screen clip: with the table box gone
+     the header cells no longer label anything, so keeping them would only add
+     seven orphan strings to the reading order. Each cell in a card is
+     self-describing instead (a date, a badge, a status word, "1.7h"). */
+  .table-cards thead { display: none; }
+  .table-cards table.tk tbody tr {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: var(--space-2) var(--gap-inline);
+    padding: var(--space-4);
+    border-bottom: var(--border-w) solid var(--border);
+  }
+  .table-cards table.tk tbody tr:last-child { border-bottom: 0; }
+  /* `table.tk` is in the selector on purpose: the touch block at the bottom of
+     this file re-pads every td to 12px at exactly this width, and it would
+     otherwise tie on specificity and win on source order — putting 24px of
+     dead space between every line of the card. */
+  .table-cards table.tk tbody td {
+    display: block; min-width: 0; max-width: 100%;
+    padding: 0; border: 0;
+  }
+  /* Row hover is a desktop scanning aid. On a touchscreen it sticks to the
+     last thing tapped, which reads as a selection that isn't one. */
+  .table-cards table.tk tbody tr:hover td { background: none; }
+}
+
+/* ---------------------------------------------------------------------------
+   Inline validation — a MESSAGE, sized to its message.
+
+   The wave-0 critic: "validation messages render as full-bleed flat grey slabs
+   roughly 900px wide with a small icon at the left ('Narrative is empty.').
+   The shape reads as a progress bar or a loading skeleton, not as a message,
+   and two stacked slabs on one card make the card look broken. The tiny
+   coloured left edge is the only thing carrying severity."
+
+   Both halves are answered here. SHAPE: the row is inline-flex and the list
+   aligns to the start, so a five-word finding is a five-word chip and never a
+   900px bar. SEVERITY: a tint derived from the severity token plus text in
+   that same colour — Primer's InlineMessage model — instead of a grey field
+   with a 4px rule. Colour is still never the only channel: the icon in the
+   markup (⛔ / ⚠️) says the same thing, per component-notes §8.
+
+   Contrast of the coloured text on its own tint: light 4.89:1 (block) and
+   5.42:1 (warn); dark 5.55:1 and 6.90:1.
+--------------------------------------------------------------------------- */
+.validation-list {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: var(--space-1); margin: var(--space-2) 0;
+}
+.validation-item {
+  display: inline-flex; gap: var(--space-2); align-items: baseline;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  background: var(--surface-2); color: var(--text-secondary);
+}
+.validation-item.level-block {
+  background: var(--status-critical-soft); color: var(--status-critical);
+}
+.validation-item.level-warn {
+  background: var(--attention-soft); color: var(--attention);
+}
+.validation-icon { flex: none; }
+.validation-list.compact .validation-item {
+  padding: var(--space-0-5) var(--space-2);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+}
+
+/* ---------------------------------------------------------------------------
+   Client/matter picker (a shared combobox, not an editor-only control)
+--------------------------------------------------------------------------- */
+.cmpicker { position: relative; }
+.cmpicker-menu {
+  position: absolute; z-index: var(--z-dropdown);
+  top: calc(100% + var(--space-1)); left: 0; right: 0;
+  background: var(--surface-raised);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+  max-height: var(--menu-max-h); overflow-y: auto;
+  padding: var(--space-1);
+}
+.cmpicker-item {
+  position: relative;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm); cursor: pointer;
+  display: flex; gap: var(--gap-inline); align-items: center;
+  transition: background-color var(--dur-fast) var(--ease-standard);
+}
+/* Pointer hover — a hint, not a commitment. */
+.cmpicker-item:hover { background: var(--surface-2); }
+
+/* THE ACTIVE OPTION — what Enter will select. It carries its own token
+   because the generic hover surface could not: the wave-0 critic measured the
+   dark menu at rgb(35,35,32) against a highlighted row of rgb(38,38,34), "a
+   3/255 step", so on the app's fastest and most-used input, arrow-keying
+   through matters told a dark-theme user nothing. --option-active is a real
+   band in both themes (see tokens.css §7) and the bar at the leading edge is
+   the second, colour-free channel — the same shape cue the sidebar's active
+   row uses. Ordered after :hover so the keyboard's idea of "active" wins over
+   whatever the pointer happens to be resting on. */
+.cmpicker-item.hover {
+  background: var(--option-active);
+  color: var(--text-primary);
+}
+.cmpicker-item.hover::before {
+  content: ''; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1);
+  width: var(--border-w-thick);
+  border-radius: var(--radius-pill);
+  background: var(--option-active-mark);
+}
+/* Meta text on the active row: the muted grey is tuned for the menu surface,
+   not for the highlight, where it drops to 3.2:1. One step up restores it. */
+.cmpicker-item.hover .client, .cmpicker-item.hover .num { color: var(--text-secondary); }
+/* NAME FIRST, CODE SECOND — the wave-0 critic found this inverted at every
+   width: "Acme lease dispute" collapsed to "Acm…" while "100001-000012" kept
+   its full 13 characters. The cause is a flexbox detail: `overflow: hidden`
+   zeroes a flex item's automatic minimum size, so .name was the ONLY cell
+   that could shrink and it absorbed every pixel of the shortfall. The name is
+   what a lawyer reads to identify a matter; the number is a lookup key you
+   confirm afterwards. So the number stops shrinking the name (flex: none
+   here) and, on a phone, moves to a second line entirely (below). */
+.cmpicker-item .num {
+  font-variant-numeric: tabular-nums; color: var(--text-muted);
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
+  flex: none;
+}
+.cmpicker-item .client {
+  color: var(--text-muted);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  flex: 0 1 auto; max-width: 40%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The client sits BEFORE the matter on one line, so the separator is a
+   hierarchy mark. It comes from CSS rather than from the markup because the
+   phone layout below moves the client onto a meta line where it no longer
+   points at anything — "Acme Holdings › 100001-000012" would read as though
+   the number were the matter. */
+.cmpicker-item .client::after { content: ' ›'; }
+.cmpicker-item .name {
+  font-weight: var(--fw-medium); flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Phone: two lines. The matter name owns the first one on its own, and the
+   client and the number share a quiet meta line under it — the same
+   name-over-meta shape the entry cards and the day list already use, instead
+   of three things fighting for 288px. The ::after is a flex line break: it
+   sits between the name (order 0) and the meta cells (orders 2 and 3). */
+@media (max-width: 767px) {
+  .cmpicker-item {
+    flex-wrap: wrap; align-items: baseline;
+    column-gap: var(--gap-inline); row-gap: 0;
+    padding: var(--space-2) var(--space-3);
+  }
+  .cmpicker-item .name { order: 0; flex: 1 1 auto; }
+  .cmpicker-item::after { content: ''; flex: 0 0 100%; order: 1; }
+  .cmpicker-item .client { order: 2; max-width: 60%; }
+  .cmpicker-item .client::after { content: ' ·'; }
+  .cmpicker-item .num { order: 3; }
+}
+.cmpicker-section {
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  text-transform: uppercase; letter-spacing: var(--ls-micro);
+  color: var(--text-muted); font-weight: var(--fw-micro);
+  padding: var(--space-2) var(--space-3) var(--space-0-5);
+}
+
+/* ---------------------------------------------------------------------------
+   kbd
+--------------------------------------------------------------------------- */
+kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border-input);
+  border-bottom-width: var(--border-w-thick);
+  border-radius: var(--radius-xs);
+  padding: 0 var(--space-1);
+  min-width: var(--space-5);
+  font-family: inherit;
+  font-size: var(--fs-caption); line-height: calc(var(--lh-caption) + var(--space-1));
+  font-weight: var(--fw-medium);
+  /* explicit: the key cap keeps its grey background inside coloured buttons
+     (e.g. "Close the day"), so it must not inherit their white text */
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Misc primitives
+--------------------------------------------------------------------------- */
+.icon { vertical-align: var(--icon-nudge); flex: none; }
+
+.spinner {
+  width: var(--spinner-size); height: var(--spinner-size);
+  border-radius: var(--radius-circle);
+  margin: var(--space-7) auto;
+  border: var(--border-w-thick) solid var(--surface-3);
+  border-top-color: var(--accent);
+  animation: spin calc(var(--dur-slow) * 3) linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-box {
+  background: var(--status-critical-soft);
+  border: var(--border-w) solid color-mix(in srgb, var(--status-critical) 55%, transparent);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+   Focus — one ring, everywhere, via :focus-visible.
+
+   It is a double ring: an inner band (--focus-inner) that contrasts with
+   saturated fills, and an outer band (--focus-outer) that contrasts with page
+   surfaces. Whatever the control sits on, at least one band clears 3:1. A
+   single-colour ring cannot do that in dark mode, where the accent fill is
+   light and the page is near-black.
+
+   :focus (without -visible) intentionally shows nothing extra beyond the
+   control's own focus border, so a mouse click does not paint a ring.
+
+   TWO WAYS A CONTROL CAN LOSE THE RING, both found by the wave-0 critic:
+     1. a variant that sets `box-shadow: none` (.btn-ghost) can out-specify
+        the halo below, since `button:focus-visible` is only (0,1,1). The
+        explicit .btn rules below settle it at (0,2,0) so every button
+        variant carries the same two bands.
+     2. a control that is only PAINTED on hover (.timer-more) is still
+        `visibility: hidden` when focus arrives, so the ring is drawn on
+        something invisible. Any hover-revealed control must also reveal
+        itself on :focus-visible — see the rule in timers.css.
+--------------------------------------------------------------------------- */
+:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+}
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+  box-shadow: var(--focus-halo);
+}
+/* Beats every variant's own box-shadow (including the ghost's `none`). */
+.btn:focus-visible, .btn-ghost:focus-visible, .btn-tonal:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+  box-shadow: var(--focus-halo);
+}
+/* Keyboard focus on a text field also colours its border, so the field reads
+   as active even where the ring is clipped by a scroll container. */
+input:focus-visible, select:focus-visible, textarea:focus-visible { border-color: var(--accent); }
+
+/* ===========================================================================
+   THE TOUCH FLOOR — 44×44 CSS px, and it is a floor, not a target.
+
+   The BRIEF: "Minimum touch target 44×44 CSS px for any primary control."
+   The wave-0 critic measured the app against that and found the single most
+   important control in it — the timer start/stop button — at 33×44 on a
+   390px phone, the entry row's five action icons at 34×44, three different
+   segmented controls at 20px tall, calendar cells at 40.3px wide, and the
+   clock you tap to correct a timer's hours at 25.9×17.
+
+   The old rule here bought WIDTH with an invisible centred ::before overlay
+   instead of a wider box, reasoning that WCAG measures the region that
+   accepts the pointer. That is true, and it is still how a control INSIDE a
+   dense row gets its hit area at tablet width — but on a phone it produced a
+   UI where nothing you can press LOOKS pressable, and a hit area you cannot
+   see is a hit area you do not aim at. So the floor is now enforced twice:
+
+     1. Under the phone breakpoint (≤767px) every control gets a REAL 44×44
+        box. At that width the layout is the phone layout, whatever the
+        pointer claims to be, and the modules that used to be squeezed by a
+        wider button now stack instead (see the entry row).
+     2. Under (pointer: coarse) at ANY width — a tablet, a touchscreen in
+        landscape — heights go to 44 and the ::before overlay still buys
+        width inside dense rows that have not stacked.
+
+   The list below deliberately names controls that live in feature modules
+   (.seg, .timer-tab, .timer-clock, .cal-day, .star, .alert-pill). Touch
+   sizing is a design-system rule, not six private decisions, and the critic
+   found exactly that: "This is a design-system failure, not a feature-module
+   one." Only min-height / min-width / hit area are set from here; every one
+   of those modules keeps its own colour, padding and type.
+   ========================================================================= */
+
+/* --- Tier 1: any coarse pointer, and the phone layout at any pointer ----- */
+@media (pointer: coarse), (max-width: 767px) {
+  .btn, .btn-sm, .btn-lg, .btn-icon,
+  button.chip-btn, .banned-chip button {
+    min-height: var(--tap-min);
+    position: relative;
+  }
+  /* Inside a row that has NOT stacked (tablet, landscape), width is still
+     bought with a centred invisible hit area rather than a wider box —
+     Material's filter chip does the same: "the hit area is bigger than the
+     chip looks." The phone block below replaces this with a real box. */
+  .btn::before, button.chip-btn::before, .banned-chip button::before {
+    content: '';
+    position: absolute; top: 50%; left: 50%;
+    width: var(--tap-min); height: var(--tap-min);
+    transform: translate(-50%, -50%);
+  }
+  /* A deliberate icon-only button has room, so it gets a real square box. */
+  .btn-icon, .btn-icon.btn-sm, .btn-icon.btn-lg {
+    width: var(--tap-min); min-width: var(--tap-min);
+  }
+  .banned-chip button { justify-content: center; }
+
+  input[type="text"], input[type="password"], input[type="number"], input[type="date"],
+  input[type="time"], input[type="email"], input[type="search"], select {
+    min-height: var(--tap-min);
+  }
+  /* The row, not the box, is the target for a label+box pair. */
+  .checkbox-row { min-height: var(--tap-min); }
+  .cmpicker-item { min-height: var(--tap-min); }
+  table.tk td, table.tk th { padding: var(--space-3); }
+  /* Row-action buttons wrap rather than overflow once each one is 44 wide. */
+  .row, .row-end { row-gap: var(--space-2); }
+}
+
+/* --- Tier 2: the phone layout (≤767px) — real 44×44 boxes ---------------- */
+@media (max-width: 767px) {
+  /* Buttons, in every variant and size. .btn-sm keeps its smaller type and
+     tighter padding — it is a QUIETER button on a phone, not a smaller
+     target. */
+  .btn, .btn-sm, .btn-lg, .btn-ghost, .btn-icon,
+  button.chip-btn, .banned-chip button,
+  /* controls owned by feature modules; see the note above */
+  .alert-pill, .star, .week-day-btn, .client-name-add,
+  .timer-tab, .timer-clock, .timer-name, .timer-start-btn, .timer-stop-btn {
+    min-height: var(--control-h-touch);
+    min-width: var(--tap-min);
+  }
+  /* A button is centred content by default; these three are text-styled
+     buttons that were left-aligned inline text, so say it explicitly now
+     that they own a box. */
+  .star, .timer-clock, .week-day-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* Segmented controls (grouping · Day/Week/Month/Range · export status).
+     20px tall was the worst offender on the phone. A segmented control is a
+     primary control at this width, so it takes a full-width row of its own
+     and each segment is a 44px-tall equal share of it — iOS's segmented
+     control and Material's single-select button group both do exactly this
+     below the tablet breakpoint. */
+  .seg { flex: 1 1 100%; }
+  /* `auto`, not `0`: the segments share the row but a long label ("Not
+     finalized") still sets its own width, so nothing is clipped by the
+     group's overflow. */
+  .seg > button {
+    flex: 1 1 auto;
+    min-height: var(--control-h-touch);
+    min-width: var(--tap-min);
+  }
+
+  /* Checkbox and radio. The painted box stays 22px — a 44px tick-box next to
+     14px text reads as a toolbar, not a form — but the ELEMENT is a full 44px
+     target, and the negative margin gives the layout back the 22px it used to
+     occupy, so nothing shifts and the extra reach is invisible. That needs
+     appearance:none (a native control cannot paint smaller than its box), so
+     the mark is drawn here from tokens and works in both themes. */
+  input[type="checkbox"], input[type="radio"],
+  .checkbox-row input[type="checkbox"], .checkbox-row input[type="radio"] {
+    appearance: none; -webkit-appearance: none;
+    display: inline-grid; place-content: center;
+    width: var(--tap-min); height: var(--tap-min);
+    min-width: var(--tap-min); min-height: var(--tap-min);
+    margin: 0 calc((var(--checkbox-size-touch) - var(--tap-min)) / 2);
+    background: none; border: 0; padding: 0;
+  }
+  input[type="checkbox"]::before, input[type="radio"]::before {
+    content: '';
+    width: var(--checkbox-size-touch); height: var(--checkbox-size-touch);
+    border: var(--border-w-thick) solid var(--border-input);
+    border-radius: var(--radius-xs);
+    background: var(--surface-1);
+    transition: var(--transition-control);
+  }
+  input[type="radio"]::before { border-radius: var(--radius-circle); }
+  input[type="checkbox"]:checked::before {
+    background-color: var(--accent);
+    background-image: var(--check-mark);
+    background-position: center;
+    background-size: var(--icon-md);
+    background-repeat: no-repeat;
+    border-color: var(--accent);
+  }
+  input[type="checkbox"]:indeterminate::before {
+    background: var(--accent); border-color: var(--accent);
+  }
+  input[type="radio"]:checked::before {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: inset 0 0 0 var(--space-1) var(--surface-1);
+  }
+  input[type="checkbox"]:disabled::before, input[type="radio"]:disabled::before {
+    background: var(--surface-2); border-color: var(--border);
+  }
+  input[type="checkbox"]:checked:disabled::before, input[type="radio"]:checked:disabled::before {
+    background: var(--surface-3);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion.
+   tokens.css already zeroes --dur-*; this catches anything written without a
+   token. The loading spinner is exempted and slowed rather than frozen — a
+   stopped spinner reads as a hung request, which is worse than the motion.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  .spinner, .btn[aria-busy="true"]::after, .btn.is-loading::after {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+}

@@ -80,7 +80,7 @@ const html = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timekeeper UI overhaul — progress</title>
+<title>Timekeeper Redesign Log</title>
 <style>
   :root {
     --bg: #0f1012; --panel: #17181b; --line: #2a2c31; --text: #f2f2f0;
@@ -93,6 +93,7 @@ const html = `<!doctype html>
     background: rgba(15,16,18,.92); backdrop-filter: blur(8px); z-index: 5; }
   h1 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.02em; }
   .sub { color: var(--muted); font-size: 13px; }
+  .counts { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
   main { padding: 16px 20px 64px; max-width: 1200px; margin: 0 auto; }
   .piece { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
     padding: 16px; margin: 0 0 18px; }
@@ -119,7 +120,12 @@ const html = `<!doctype html>
 <body>
 <header>
   <h1>Timekeeper UI overhaul</h1>
-  <div class="sub">branch <code>${esc(log.branch || 'ui-overhaul-2026-08')}</code> · updated ${esc(log.updated || '')} · ${sections.length} pieces</div>
+  <div class="sub">branch <code>${esc(log.branch || 'ui-overhaul-2026-08')}</code> · updated ${esc(log.updated || '')}</div>
+  <div class="counts">
+    <span class="tag pass">${sections.filter((s) => s.piece.verdict === 'pass').length} passed</span>
+    <span class="tag wip">${sections.filter((s) => s.piece.verdict === 'in progress').length} in progress</span>
+    <span class="tag">${sections.filter((s) => s.piece.verdict === 'queued').length} queued</span>
+  </div>
 </header>
 <main>
 ${sections.map(({ piece, shots }) => `

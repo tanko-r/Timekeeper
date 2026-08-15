@@ -5,11 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>SPIKE — WebGPU in-browser LLM evaluation</title>
-<link rel="stylesheet" href="/css/app.css">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/shell.css">
+<link rel="stylesheet" href="/css/timers.css">
+<link rel="stylesheet" href="/css/entries.css">
+<link rel="stylesheet" href="/css/editor.css">
+<link rel="stylesheet" href="/css/views.css">
+<link rel="stylesheet" href="/css/overlays.css">
 <style>
   /* Spike-only layout. Everything component-ish (.card, .btn, table.tk,
-     .field, .badge, .chip) comes from /css/app.css so this still looks like
-     the app. This block is just page scaffolding that app.css doesn't have. */
+     .field, .badge, .chip) comes from the public/css/ modules so this still
+     looks like the app. This block is just page scaffolding those don't have. */
   body { padding: 20px 24px 60px; max-width: 1180px; margin: 0 auto; }
   .spike-banner {
     display: flex; align-items: center; gap: 10px; padding: 10px 14px;

@@ -117,10 +117,11 @@ export function fmtClockParts(totalSeconds) {
   return { dim: str.slice(0, dim), rest: str.slice(dim) };
 }
 
-// Mirrors app.css's design tokens (copied by hand — stylesheets are NOT
-// inherited into the PiP document): light by default, dark via the OS
-// preference, and the app's explicit Settings theme wins through the
-// data-theme attribute mirrored from the main document in toggleTimerPip.
+// Mirrors public/css/tokens.css's design tokens (copied by hand —
+// stylesheets are NOT inherited into the PiP document): light by default,
+// dark via the OS preference, and the app's explicit Settings theme wins
+// through the data-theme attribute mirrored from the main document in
+// toggleTimerPip.
 const PIP_CSS = `
   @font-face {
     font-family: 'InterVariable';
@@ -130,7 +131,7 @@ const PIP_CSS = `
     font-display: swap;
   }
   /* ClockFace: clean plain-zero numerals for the float clocks — matches the
-     main app timer view (see app.css). */
+     main app timer view (see public/css/tokens.css / timers.css). */
   @font-face {
     font-family: 'ClockFace';
     src: url('/vendor/clockface/NotoSansNum-Regular.woff2') format('woff2');

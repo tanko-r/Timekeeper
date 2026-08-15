@@ -1382,6 +1382,13 @@ await step('stalled time: banner pill → Export filtered to exactly those entri
 
   await page.waitForFunction(() =>
     [...document.querySelectorAll('.seg button')].some((b) => b.classList.contains('on') && b.textContent.includes('Not finalized')));
+  // The segment flips synchronously on the route change but the filtered rows
+  // arrive from a fetch, so reading the table straight away races the render.
+  // Swallow the timeout — the assertions below produce the useful message.
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('table.tk tbody tr')]
+      .some((r) => r.textContent.includes('stalled matter correspondence')),
+  { timeout: 5000 }).catch(() => {});
   const { fromVal, rows } = await page.evaluate(() => ({
     fromVal: document.querySelectorAll('input[type="date"]')[0].value,
     rows: [...document.querySelectorAll('table.tk tbody tr')].map((r) => r.textContent),
@@ -1415,8 +1422,20 @@ await step('dark mode applies', async () => {
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'dark' }]);
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
   await waitFor('.meter-bar');
-  const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-  if (bg !== 'rgb(18, 18, 17)') throw new Error(`dark surface not applied: ${bg}`);
+  // Assert the *property* of a dark theme (dark page, light text) rather than
+  // one exact hex, so a palette revision in tokens.css does not read as a
+  // regression here. The capability under test is "the dark tokens apply".
+  const { bg, fg } = await page.evaluate(() => {
+    const s = getComputedStyle(document.body);
+    return { bg: s.backgroundColor, fg: s.color };
+  });
+  const lum = (css) => {
+    const [r, g, b] = css.match(/\d+(\.\d+)?/g).slice(0, 3).map((n) => Number(n) / 255);
+    const f = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  if (lum(bg) > 0.06) throw new Error(`dark surface not applied: body background ${bg}`);
+  if (lum(fg) < 0.5) throw new Error(`dark text not applied: body color ${fg}`);
   await shot('dashboard-dark');
 });
 
@@ -1511,7 +1530,7 @@ await step('alt+drag feedback: select region → note box → TODO entry filed',
   // real tab capture (getDisplayMedia → video frame → canvas) can take well
   // over the default 5s on a loaded box — and if this wait gives up early,
   // the note modal opens AFTER the step ends, poisoning the close-out
-  // step's modal-backdrop fence check with a false "n leaked".
+  // step's entry-editor fence check with a false "n leaked".
   await waitFor('.feedback-note', 30000);
   const hasShot = await page.evaluate(() => !!document.querySelector('.feedback-shot'));
   if (!hasShot) throw new Error('annotated screenshot preview missing from the note box');
@@ -1553,31 +1572,33 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   // propagation of unhandled keys before app.js's bubble handler sees them)
   await page.keyboard.press('n');
   await sleep(300);
-  if (await page.$('.modal-backdrop')) throw new Error('global `n` leaked under the close-out overlay');
+  // (`.modal` is the entry-editor panel — the dialog shell moved to the shared
+  // .ovl primitive, so the panel, not a per-dialog backdrop, is the tell.)
+  if (await page.$('.modal')) throw new Error('global `n` leaked under the close-out overlay');
   if (!(await page.$('.closeout-card'))) throw new Error('close-out vanished after the fence check');
 
   // sweep through every draft card (Enter accepts and advances) until the summary
   for (let i = 0; i < 20; i++) {
-    const phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+    const phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
     if (phase !== 'sweep') break;
     const before = await page.$$eval('.closeout-dot.on', (els) => els.length);
     await page.keyboard.press('Enter');
     await page.waitForFunction((prevOn) => {
-      const backdrop = document.querySelector('.closeout-backdrop');
+      const backdrop = document.querySelector('.closeout-card');
       if (!backdrop || backdrop.dataset.phase !== 'sweep') return true;
       return document.querySelectorAll('.closeout-dot.on').length > prevOn;
     }, { timeout: 4000 }, before);
   }
-  const afterSweep = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+  const afterSweep = await page.$eval('.closeout-card', (el) => el.dataset.phase);
   if (afterSweep !== 'summary') throw new Error(`expected the summary card after sweeping, got phase="${afterSweep}"`);
 
   await clickText('.closeout-card button', 'Finalize & export');
   await page.waitForFunction(() => {
-    const p = document.querySelector('.closeout-backdrop')?.dataset.phase;
+    const p = document.querySelector('.closeout-card')?.dataset.phase;
     return p === 'closed' || p === 'warn' || p === 'blocked';
   }, { timeout: 6000 });
 
-  let phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+  let phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
   if (phase === 'warn') {
     // the harness's entries must be clean to reach here on a warning, not a
     // hard block — assert the warning card, then accept and finalize anyway.
@@ -1586,16 +1607,16 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
     if (!hasAccept) throw new Error('warn phase reached without an "Accept warnings & finalize" button (hard block?)');
     await clickText('.closeout-card button', 'Accept warnings & finalize');
     await page.waitForFunction(() => {
-      const p = document.querySelector('.closeout-backdrop')?.dataset.phase;
+      const p = document.querySelector('.closeout-card')?.dataset.phase;
       return p === 'closed' || p === 'blocked';
     }, { timeout: 6000 });
-    phase = await page.$eval('.closeout-backdrop', (el) => el.dataset.phase);
+    phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
   }
   if (phase !== 'closed') throw new Error(`expected the closed card, got phase="${phase}"`);
   await page.waitForFunction(() => document.body.textContent.includes('Day closed'), { timeout: 4000 });
   await shot('closeout-closed');
   await clickText('.closeout-card button', 'Done');
-  await page.waitForFunction(() => !document.querySelector('.closeout-backdrop'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.closeout-card'), { timeout: 4000 });
 
   const after = await (await fetch(`${base}/api/entries/${seeded.id}`)).json();
   if (after.status !== 'finalized') throw new Error(`seeded draft was not finalized: status=${after.status}`);
