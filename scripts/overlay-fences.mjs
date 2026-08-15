@@ -115,8 +115,8 @@ const DIALOGS = [
     key: 'closeout',
     hash: '#/',
     async open(page) {
-      await page.waitForSelector('.tf-close', { timeout: 5000 });
-      await clickOpener(page, '.tf-close');
+      await page.waitForSelector('.runbar-close', { timeout: 5000 });
+      await clickOpener(page, '.runbar-close');
     },
   },
   {
@@ -230,7 +230,7 @@ const probe = (page, tapMin) => page.evaluate((TAP) => {
   });
 
   // hit test at the CENTRE of every fixed bar behind the scrim
-  const hits = ['.botnav', '.today-footer'].map((sel) => {
+  const hits = ['.botnav', '.runbar'].map((sel) => {
     const el = document.querySelector(sel);
     if (!el) return { sel, present: false };
     const r = el.getBoundingClientRect();

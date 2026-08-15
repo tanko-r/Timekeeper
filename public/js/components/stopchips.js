@@ -11,6 +11,103 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { formatSuggestion } from '/js/lib/narrativesync.js';
 
 // ---------------------------------------------------------------------------
+// WHAT THE STOP OFFER IS FOR  (wave-2b — read this before the history below)
+//
+// Measured on a five-entry day at 390×844, after wave 2a:
+//
+//   leave every stop alone, let close-out pre-fill    12 interactions
+//   tap a chip on every stop                          17 interactions
+//
+// The chip cost five taps and bought nothing, because close-out pre-fills from
+// the SAME phrasebook the chip draws from: an entry left alone at stop time
+// arrives at close-out with the identical sentence already in its box, and the
+// primary writes it. So the app's headline one-tap feature was buying a choice
+// between two or three phrasings, at one tap per entry, and the fast path made
+// the day LONGER — the wave-1 review's finding, still true after the sweep was
+// fixed.
+//
+// A tap at stop time can only pay for itself if it removes a tap later, and
+// close-out already costs only two (`c`, then the primary) however many drafts
+// there are. There is nothing left for it to remove. So a per-entry tap here
+// cannot be the default, and the offer had to become one of two things:
+//
+//   (a) show chips only where the phrasebook offers more than one plausible
+//       option, so the chip appears when it is genuinely a choice; or
+//   (b) reduce it to a single "looks right?" confirmation on the row and let
+//       the pre-fill carry the rest.
+//
+// BUILT: (b), with (a) folded into it, because (a) alone still charges a tap
+// whenever it appears and so still lands the day at 13–17.
+//
+//   THE PRE-FILL HAPPENS HERE, NOT AT CLOSE-OUT. The instant the offer knows
+//   the matter's own top phrase, it WRITES it — one PATCH, no tap — and the
+//   offer becomes a confirmation of something already saved. The entry is
+//   finished at stop time, which is what the teardown asked for ("the entry
+//   finishes itself"), and it stays finished whether or not the day is ever
+//   closed.
+//   CONFIRMING COSTS NOTHING. The row shows the sentence, the offer says where
+//   it came from, and it retires itself after 30s like any other confirmation.
+//   Doing nothing is the happy path: 0 taps.
+//   ALTERNATIVES ONLY WHEN THERE IS A CHOICE. The other phrases are rendered
+//   under the confirmation, one tap each, and only when the phrasebook has
+//   more than one — that is (a), in the one place where a tap is buying
+//   something a lawyer could not get for free.
+//   ONLY HIS OWN WORDING IS WRITTEN UNASKED. A phrase auto-applies only when
+//   it is the attorney's own, on THIS matter (`source: 'matter'`). A model's
+//   suggested-on-start line, or wording borrowed from a sibling matter, stays
+//   a chip — the app fills in what he has written before and ASKS before using
+//   anything else.
+//   AND IT IS REVERSIBLE THREE WAYS: Undo in the toast the write raises, the
+//   alternatives right there, and the row's own narrative field.
+//
+// Re-measured, same five-entry day: chipped 12, unchipped 12 (see the report).
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// ONE OFFER PER STOP  (wave-2b3 — the data-correctness fix)
+//
+// The mount site renders a single `<StopChips popup=…>` for whichever stop is
+// current, with no key. React therefore reconciled the SAME component instance
+// across two different stops, and the offer kept the previous entry's state
+// while re-anchoring itself into the new entry's row. Reproduced in the app's
+// natural rhythm — stop A, start B, stop B:
+//
+//   head:   "0.7h filed — Northgate diligence"     ← the new entry
+//   row:    "no narrative · Write narrative"       ← the new entry, unwritten
+//   chip:   "Reviewed the landlord's termination notice and the underlying
+//            lease."  chip-applied, aria-pressed="true", kbd 1
+//   note:   "Written in from your own wording on this matter — already saved."
+//   db:     entries.narrative = '' for that entry
+//
+// Two ways to lose: a lawyer reads "already saved" and leaves Northgate
+// unwritten, or he taps the ticked chip and writes ACME HOLDINGS' billing
+// narrative onto NORTHGATE PARTNERS' entry (verified in SQLite: entry 17 went
+// from '' to Acme's sentence, toast "Narrative filled in from this matter ·
+// Undo"). On desktop the stale `1` key did the same thing. It also silently
+// suppressed the pre-fill for every stop after the first, because `autoRef`
+// (one unasked write, ever) was still latched from the previous entry — so the
+// leave-it-alone day arrived at close-out with four unwritten drafts.
+//
+// Picking a chip happened to escape it, because a pick unmounts the offer.
+// Doing nothing — the path this component was redesigned around — did not.
+//
+// THE FIX IS TWO-PART, and both parts are here rather than at the mount site
+// because another agent owns that file this wave:
+//
+//   1. `StopChips` is now a shell whose only job is to give the real offer a
+//      key derived from the stop. A new stop is a new instance: suggestions,
+//      pre-fill, applied state, caption, undo target and hot keys are all
+//      re-derived from THAT entry, and the previous offer is unmounted (its
+//      row slot removed) rather than re-dressed.
+//   2. Nothing renders as "already saved" on the strength of a remembered
+//      flag. `settled` is the intersection of what this offer wrote and what
+//      the SERVER says the entry's narrative is right now (`saved`, re-read on
+//      every entry write). If they ever disagree — a stale render, a failed
+//      PATCH, an edit from the row or the float window — there is no
+//      confirmation on screen and no ticked control to tap.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // THE STOP CHIP FINISHES THE ENTRY  (teardown §17, E2, D4)
 //
 // The instant a timer stops, this offers 2–3 one-tap narratives drawn from
@@ -78,7 +175,21 @@ const HOT_KEYS_MS = 90_000;
 // ARE the stop chips, at both placements, for CSS and for the smoke test.
 const SLOT_CSS = 'all:unset;display:block;order:3;flex:1 1 100%;min-width:0';
 
-export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
+// The shell. It holds no state of its own beyond "which stop is this", and it
+// exists so the offer below can never be handed a second entry mid-life. The
+// counter rides along with the entry id because the same entry can be stopped
+// twice in a day (one timer, two stretches): a second stop on entry 17 is
+// still a new stop, with a fresh suggestion fetch and a fresh undo target.
+export function StopChips(props) {
+  const stamp = useRef({ popup: null, n: 0 });
+  if (stamp.current.popup !== props.popup) {
+    stamp.current = { popup: props.popup, n: stamp.current.n + 1 };
+  }
+  const entryId = props.popup?.result?.entry?.id ?? 'none';
+  return html`<${StopOffer} key=${`${entryId}#${stamp.current.n}`} ...${props} />`;
+}
+
+function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
   const { result } = popup;
   const entry = result.entry;
   const timer = result.timer || popup.timer; // stop payload carries the fresh row
@@ -87,6 +198,11 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   const [historyOpen, setHistoryOpen] = useState(false);
   const [typed, setTyped] = useState('');    // the field under the chips
   const [writing, setWriting] = useState(false);
+  const [applied, setApplied] = useState(null); // the phrase this offer wrote by itself
+  // …and what the SERVER says this entry's narrative is right now. Nothing is
+  // ever shown as settled on the strength of `applied` alone: the two have to
+  // agree, so a confirmation can only ever describe THIS entry's real text.
+  const [saved, setSaved] = useState(() => String(entry.narrative || ''));
   const wide = useWideViewport();
   const shortcuts = useShortcuts();
   const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
@@ -95,6 +211,10 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   const rootRef = useRef(null);    // the element the dismissal stack ranks
   const hotUntil = useRef(Date.now() + HOT_KEYS_MS);
   const dismissRef = useRef(null);
+  const autoRef = useRef(false);   // the unasked write happens once, ever
+  const ownWriteRef = useRef(null); // what THIS offer last wrote, so the
+  // entries-changed watcher below can tell its own echo from the lawyer
+  // writing the narrative somewhere else (which does retire the offer)
 
   // never clobber: chips only when the narrative is blank and not auto-generated
   const offerChips = !entry.narrative_auto && String(entry.narrative || '').trim() === '';
@@ -124,14 +244,48 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
     let alive = true;
     // The suggested-on-start line may have been refined by the local model
     // (timers.js: refineSuggestedNarrative); the phrasebook chips are the
-    // attorney's own past phrases. Picking one has to record which, so AI text
-    // never enters the pool the model learns its voice from (spec §5) — and
-    // the chip says so, with its leading glyph.
-    const build = (phrases) => dedupe(clean([timer.suggested_narrative, ...phrases])
-      .map(formatSuggestion))
-      .map((text) => ({ text, ai: text === formatSuggestion(timer.suggested_narrative || '') }));
+    // attorney's own past phrases, and the endpoint says whether each one is
+    // his on THIS matter or borrowed from a client sibling. All three
+    // provenances are kept on the chip: `ai` decides what gets recorded in
+    // narrative_ai (so AI text never enters the pool the model learns his
+    // voice from, spec §5) and `own` decides what may be written WITHOUT
+    // being asked for.
+    const build = (phrases) => {
+      const byKey = new Map();
+      const order = [];
+      const add = (raw, meta) => {
+        // Suggested narratives must never invent time amounts (spec: the app
+        // records duration separately) — a stored free-text narrative can
+        // carry baked-in amounts like "(0.5)" and still rank as a phrasebook
+        // hit, so those never become a chip, let alone an unasked write.
+        const src = String(raw || '').trim();
+        if (!src || containsTimeAmounts(src)) return;
+        const text = formatSuggestion(src);
+        if (!text) return;
+        const k = text.toLowerCase();
+        const had = byKey.get(k);
+        if (had) {
+          // PROVENANCE MERGES, IT DOES NOT COLLIDE. The line computed at timer
+          // start is the phrasebook's own top hit whenever the local model is
+          // off or has not answered yet (routes/timers.js), so it very often
+          // IS one of these phrases. Dropping the duplicate used to drop the
+          // one that knew it was his — which both mislabelled his own wording
+          // as the model's in narrative_ai and, now, left nothing that may be
+          // written without being asked for. Measured before this: 2 of 5
+          // stops pre-filled instead of 5.
+          if (meta.own) { had.own = true; had.ai = false; }
+          return;
+        }
+        const chip = { text, ai: !!meta.ai, own: !!meta.own };
+        byKey.set(k, chip);
+        order.push(chip);
+      };
+      add(timer.suggested_narrative, { ai: true, own: false });
+      for (const p of phrases) add(p.text, { ai: false, own: p.source !== 'client' });
+      return order.slice(0, 3);
+    };
     api.get(`/api/matters/${cmId}/suggestions`)
-      .then((r) => { if (alive) setChips(build(r.phrases.map((p) => p.text))); })
+      .then((r) => { if (alive) setChips(build(r.phrases)); })
       .catch(() => { if (alive) setChips(build([])); });
     return () => { alive = false; };
   }, []); // eslint-disable-line
@@ -145,10 +299,18 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
       if (doneRef.current) return;
       api.get(`/api/entries/${entry.id}`).then((e) => {
         if (!alive || doneRef.current) return;
-        liveRef.current = {
-          narrative: e.narrative || '', narrative_ai: e.narrative_ai ? 1 : 0,
-        };
-        if (String(e.narrative || '').trim() || e.status !== 'draft') finish(false);
+        const narrative = String(e.narrative || '');
+        // Whatever else this write was, it is the truth about this entry now,
+        // and the confirmation on screen is checked against it.
+        setSaved(narrative);
+        // Our OWN write is not somebody else finishing this entry — the offer
+        // has to survive the pre-fill it just made, and Undo has to put the
+        // entry back the way the stop found it, not the way this offer left
+        // it. So liveRef (the undo target) only ever tracks changes that came
+        // from somewhere else, and those still retire the offer.
+        if (ownWriteRef.current !== null && narrative === ownWriteRef.current) return;
+        liveRef.current = { narrative, narrative_ai: e.narrative_ai ? 1 : 0 };
+        if (narrative.trim() || e.status !== 'draft') finish(false);
       }).catch(() => { /* offline or deleted — leave the offer standing */ });
     };
     window.addEventListener('tk:entries-changed', refresh);
@@ -182,13 +344,72 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
     if (el) el.focus();
   }, [writing]);
 
-  // ---- the bare stop: nothing to pick, nothing to WRITE, nothing to warn ----
+  // ---- THE PRE-FILL, WITHOUT A TAP ----
   //
-  // An entry that still needs a narrative always has something to do here now
-  // — the field is part of the offer — so only a pure confirmation retires
-  // itself: a stop on an entry that already says what the work was (chipped
-  // earlier, typed on the row, AUTO from task lines).
-  const bare = !offerChips && !result.relinked;
+  // The whole reason this offer is worth its pixels. His own top phrase on
+  // this matter is written to the entry the moment it is known, so the entry
+  // is finished at stop time and the day's interaction count does not move.
+  // Nothing borrowed and nothing the model wrote goes in unasked (see the
+  // header): those stay chips, because they are a choice.
+  const own = chips ? chips.filter((c) => !c.ai && c.own) : [];
+  useEffect(() => {
+    if (!offerChips || chips === null || autoRef.current || doneRef.current) return;
+    if (own.length === 0) return;
+    autoRef.current = true;
+    const chip = own[0];
+    api.patch(`/api/entries/${entry.id}`, { narrative: chip.text, narrative_ai: 0 })
+      .then(() => {
+        if (doneRef.current) return;
+        ownWriteRef.current = chip.text;
+        setApplied(chip.text);
+        setSaved(chip.text);
+        // An unasked write says so, and carries its own way back. `onFiled` is
+        // deliberately NOT called: it unmounts this offer, and the offer is
+        // now the confirmation of what was just written. The row redraws
+        // anyway — api.js announces every entry write and the app refreshes
+        // the day on it.
+        emitToast('Narrative filled in from this matter', {
+          actionLabel: 'Undo',
+          action: () => undoAuto(),
+        });
+      })
+      .catch(() => { autoRef.current = false; }); // leave it a plain chip list
+  }, [chips]); // eslint-disable-line
+
+  async function undoAuto() {
+    const before = liveRef.current;
+    try {
+      await api.patch(`/api/entries/${entry.id}`, {
+        narrative: before.narrative, narrative_ai: before.narrative_ai,
+      });
+      ownWriteRef.current = before.narrative;
+      setApplied(null); // …and the offer stands, so a different phrase is one tap away
+      setSaved(before.narrative);
+      emitToast('Narrative put back');
+    } catch (e) { emitToast(e.message, { error: true }); }
+  }
+
+  // ---- WHAT IS ACTUALLY ON THIS ENTRY ----
+  //
+  // The one gate every "already saved" claim passes through. `applied` is only
+  // this offer's memory of what it wrote; `saved` is what the server last said
+  // the narrative is. A confirmation is drawn only where the two agree, on
+  // THIS entry — so a stale render, a PATCH that failed, or a narrative
+  // rewritten from the row can never leave a tick on screen against text the
+  // entry does not carry, and can never hand a lawyer another client's
+  // sentence to accept.
+  const settled = (applied !== null && String(saved).trim() === String(applied).trim())
+    ? applied : null;
+
+  // ---- what retires itself: an offer that is asking for nothing ----
+  //
+  // A pure confirmation times out; an offer with an unanswered question does
+  // not. That is a stop on an entry that already said what the work was
+  // (chipped earlier, typed on the row, AUTO from task lines) — and now also
+  // one this offer has just filled in for him, because there is nothing left
+  // to do on it either. A matter with no wording of his own still has a
+  // question on screen, and that one stays until it is answered.
+  const bare = (!offerChips || settled !== null) && !result.relinked;
   const clearDismiss = () => { clearTimeout(dismissRef.current); dismissRef.current = null; };
   const armDismiss = () => {
     clearDismiss();
@@ -225,6 +446,25 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
 
   function edit() { finish(false); openEditor({ id: entry.id }); }
 
+  // ---- CHIP SHAPE IS RESERVED FOR THINGS THAT WOULD CHANGE SOMETHING ----
+  //
+  // Measured on the five-entry day: leaving every stop alone cost 12
+  // interactions and tapping the offer's ticked chip on every stop cost 17.
+  // The five taps bought nothing. The narrative was already written by the
+  // time the offer appeared, and the offer then re-drew that same sentence as
+  // a chip — same size, same weight, same shape, same 1 key as the genuine
+  // alternatives beside it — so an untaken-looking control sat there asking to
+  // be taken, and taking it re-PATCHed identical text and fired a toast.
+  //
+  // So the settled sentence is TEXT now, with a quiet way to change it, and a
+  // chip means "tap this and the entry says something different". The 1 2 3
+  // caps index the alternatives alone, because those are the only keys that do
+  // anything. Re-measured: 12 when the pre-fill is right (nothing to tap), 13
+  // when it is not (one alternative).
+  const alternatives = settled === null
+    ? (chips || []) : (chips || []).filter((c) => c.text !== settled);
+  const shown = alternatives;
+
   // 1/2/3 pick · e edit. Scoped, because the offer no longer expires: keys
   // this cheap may not stay captured forever, or `g e` (go to Entries) and
   // every future digit binding would be dead for as long as a draft sits
@@ -260,17 +500,19 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
       if (e.key === 'e') {
         if (Date.now() - lastG < 900) return; // the chord owns it
         e.preventDefault(); e.stopPropagation(); edit();
-      } else if (['1', '2', '3'].includes(e.key) && chips && chips[Number(e.key) - 1]) {
+      } else if (['1', '2', '3'].includes(e.key) && shown[Number(e.key) - 1]) {
         e.preventDefault();
         e.stopPropagation();
-        pick(chips[Number(e.key) - 1]);
+        pick(shown[Number(e.key) - 1]);
       }
     };
     // Capture phase: the stopped row usually keeps DOM focus, so these keys
     // would otherwise route through the Today list's own handlers first.
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [chips, busy]); // eslint-disable-line
+    // `saved` is in here because `shown` is derived from it: the digit keys
+    // must index exactly the chips on screen, never a list from a moment ago.
+  }, [chips, applied, saved, busy]); // eslint-disable-line
 
   const hoursFiled = fmtHours(result.hours);
   const body = html`
@@ -298,19 +540,60 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
       ${offerChips && chips === null ? html`
         <p class="muted small stop-chips-note">Looking for what you wrote last time…</p>` : null}
 
-      ${offerChips && chips && chips.length > 0 ? html`
+      ${/* WHAT IS ON THE ENTRY — SETTLED TEXT, NOT A CONTROL.
+            The sentence is already saved by the time this is read, so it is
+            drawn as what it is: the entry's narrative, quoted, with a settled
+            mark down its edge. It used to be a chip — same size, weight, shape
+            and key cap as the real alternatives next to it — which read as
+            untaken and cost a tap that changed nothing (measured: +5 on a
+            five-entry day). A confirmation nobody has to answer does not need
+            a button; it needs to be legible and to be easy to overrule, and
+            the quiet "Change the wording" under it is the overrule.
+            `data-stop-settled` carries the text for the smoke test, which
+            asserts that whatever is shown as settled is what the entry
+            actually holds. */''}
+      ${settled ? html`
+        <div class="stop-chips-settled" data-stop-settled=${settled} style=${SETTLED}>
+          <${Icon} name="check" size=${14} />
+          <p style=${SETTLED_TEXT}>${settled}</p>
+        </div>
+        <p class="muted small stop-chips-note" style=${NOTE}>
+          Written in from your own wording on this matter — <strong>already saved</strong>.
+          Nothing to do if it is right.
+        </p>
+        ${!writing ? html`
+          <div style=${QUIET_ROW}>
+            <button type="button" class="btn btn-sm" onClick=${() => setWriting(true)}>
+              <${Icon} name="edit" size=${14} /> Change the wording
+            </button>
+          </div>` : null}` : null}
+
+      ${/* THE ALTERNATIVES — shown only when the phrasebook has more than one
+            plausible option, so a chip appears exactly where it is a genuine
+            choice rather than a tax on every stop.
+
+            A chip carries a leading visual, the way every filter/assist chip
+            in a mature system does — without one a full-width bordered box
+            of prose reads as a field, not an action, and at phone width
+            the number cap that used to be the only leading mark is not
+            drawn at all. It doubles as provenance: ⟲ is something the
+            attorney wrote on this matter before, ✦ is the model's
+            suggested-on-start line. He should be able to tell which he is
+            accepting — the app already tracks it (narrative_ai) so that AI
+            text never re-enters the pool the model learns his voice from,
+            and that distinction is worth showing rather than hiding. */''}
+      ${offerChips && alternatives.length > 0 ? html`
+        ${settled ? html`
+          <p class="muted small stop-chips-note" style=${NOTE}>Or use one of these instead:</p>` : null}
         <div class="stop-chips-list">
-          ${/* A chip carries a leading visual, the way every filter/assist chip
-                in a mature system does — without one a full-width bordered box
-                of prose reads as a field, not an action, and at phone width
-                the number cap that used to be the only leading mark is not
-                drawn at all. It doubles as provenance: ⟲ is something the
-                attorney wrote on this matter before, ✦ is the model's
-                suggested-on-start line. He should be able to tell which he is
-                accepting — the app already tracks it (narrative_ai) so that AI
-                text never re-enters the pool the model learns his voice from,
-                and that distinction is worth showing rather than hiding. */''}
-          ${chips.map((chip, i) => html`
+          ${alternatives.map((chip, i) => html`
+            ${/* No `aria-pressed` on these. It used to be here because one
+                  chip claimed to be the applied one, and a toggle state is
+                  what that claim was made of — but a suggestion chip commits
+                  and closes, it does not toggle, so announcing it as a
+                  two-state control was wrong twice over. Nothing in this list
+                  is ever the entry's current narrative: the settled sentence
+                  is filtered out of it above. */''}
             <button type="button" key=${chip.text} class="chip-btn" disabled=${busy}
               style=${{ alignItems: 'center' }}
               title=${chip.ai
@@ -356,8 +639,12 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
           </div>
         </div>` : null}
 
-      ${offerChips && chips && chips.length > 0 && !writing ? html`
-        <div style=${WRITE}>
+      ${/* Nothing settled, but something on offer: the field is still one tap
+            away rather than a second thought. When something IS settled the
+            same affordance already sits under it ("Change the wording"), so it
+            is not drawn twice. */''}
+      ${offerChips && !settled && alternatives.length > 0 && !writing ? html`
+        <div style=${QUIET_ROW}>
           <button type="button" class="btn btn-sm" onClick=${() => setWriting(true)}>
             <${Icon} name="edit" size=${14} /> Write your own
           </button>
@@ -406,6 +693,36 @@ const WRITE_FIELD = {
   minHeight: 'calc(2 * var(--lh-body) + 2 * var(--pad-control-y) + 2 * var(--border-w))',
 };
 const WRITE_ACT = { display: 'flex', justifyContent: 'flex-end' };
+// THE SETTLED NARRATIVE. Deliberately not chip-shaped: no full border, no
+// fill, no radius, nothing that reads as a raised, untaken control. What it
+// has instead is the app's own settled-choice mark — a 2px rule down the left
+// edge in the tier-2 family (`--state-selected-mark`, "a settled choice") —
+// which is how this design system already says "this one IS the current
+// value" everywhere else. The tick and the rule share that color; the sentence
+// itself is plain body text, because it is the entry's own words.
+const SETTLED = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: 'var(--gap-inline)',
+  margin: 'var(--space-1) 0 var(--space-2)',
+  padding: 'var(--space-0-5) 0 var(--space-0-5) var(--space-3)',
+  borderLeft: 'var(--state-mark-w) solid var(--state-selected-mark)',
+  color: 'var(--state-selected-mark)',
+};
+const SETTLED_TEXT = {
+  margin: 0,
+  minWidth: 0,
+  color: 'var(--text-primary)',
+  fontSize: 'var(--fs-body)',
+  lineHeight: 'var(--lh-body)',
+};
+const NOTE = { margin: '0 0 var(--space-2)' };
+// The way to overrule the settled sentence. It sits at its own width on the
+// reading edge: a full-bleed button with centred content reads as a primary,
+// and the whole point of this control is that it is the exception, not the
+// expected next move. Same small bordered shape as Dismiss / More / Edit in
+// the foot, so it reads as one of the secondary controls it belongs with.
+const QUIET_ROW = { display: 'flex', justifyContent: 'flex-start', margin: 'var(--space-1) 0 var(--space-2)' };
 
 // ---------------------------------------------------------------------------
 // The row slot.
@@ -473,23 +790,7 @@ function useWideViewport() {
   return wide;
 }
 
-// Suggested narratives must never invent time amounts (spec: the app records
-// duration separately) — a stored free-text narrative can carry baked-in
-// amounts like "(0.5)" and still rank as a phrasebook hit, so drop those
-// before they ever become a one-tap chip.
-function clean(list) {
-  return list.filter((t) => !containsTimeAmounts(t));
-}
-
-function dedupe(list) {
-  const seen = new Set();
-  const out = [];
-  for (const t of list) {
-    const text = String(t || '').trim();
-    if (!text) continue;
-    const k = text.toLowerCase();
-    if (!seen.has(k)) { seen.add(k); out.push(text); }
-    if (out.length === 3) break;
-  }
-  return out;
-}
+// (The filter that drops phrases carrying baked-in time amounts — "(0.5)" — and
+// the three-deep dedupe both live inside `build` now, because a chip has to
+// keep its provenance through them: which of them may be written unasked is
+// decided by `own`, and that was lost when the pipeline was a list of strings.)

@@ -7,7 +7,9 @@ import {
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
-import { InlineNarrative, EmptyState } from '/js/components/entrylist.js';
+import {
+  InlineNarrative, EmptyState, useDensity, writeDensity,
+} from '/js/components/entrylist.js';
 import { Menu, rowMenuItems as buildRowMenu, rowMenuTitle, menuTriggerProps } from '/js/components/menu.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
@@ -136,6 +138,26 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   // timers.sort_order, and is what A–Z writes into.
   const [order, setOrderState] = useState(() => (localStorage.getItem('tk:timerOrder') === 'manual' ? 'manual' : 'activity'));
   const setOrder = (v) => { localStorage.setItem('tk:timerOrder', v); setOrderState(v); };
+
+  // DENSITY — the whole-list half of the owner's expansion constraint. Lives in
+  // localStorage under `tk:listDensity` (components/entrylist.js), so the
+  // choice survives a reload, a restart and a route change, and the calendar's
+  // day panel reads the same key.
+  const density = useDensity();
+
+  // EXPANSION — the per-row half. A compact row is the matter, its state, its
+  // hours and its transport control; everything the compact form leaves out —
+  // the narrative, the task split, the findings, the clock when it is not the
+  // row's own figure — is one disclosure away, reachable three ways: the 44×44
+  // chevron in the control strip, a click anywhere on the row that is not a
+  // control, and `x` on the focused row.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpanded = useCallback((key) => setExpanded((s) => {
+    const next = new Set(s);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  }), []);
+  const openExpanded = useCallback((key) => setExpanded((s) => (s.has(key) ? s : new Set([...s, key]))), []);
 
   // Keyboard focus model (spec §4): ONE focused row via roving tabindex.
   const [focusKey, setFocusKey] = useState(null);
@@ -422,6 +444,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         : onMatter.length === 1 ? `t${onMatter[0].id}`
           : cmId ? `m${cmId}` : `e${id}`;
       setFocusKey(target);
+      openExpanded(target);
       setWritingKey(target);
       setWriteEntryId(id);
       requestAnimationFrame(() => {
@@ -443,6 +466,23 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     };
     window.addEventListener('tk:timer-search', onSearch);
     return () => window.removeEventListener('tk:timer-search', onSearch);
+  }, []);
+
+  // CLEARING THE FILTER, BY THUMB.
+  //
+  // Measured by the wave critic: `.timer-search-wrap` contained exactly one
+  // node, the input. The ✕ visible in the desktop screenshot was Chrome's
+  // `::-webkit-search-cancel-button` — not a DOM node, and not drawn by Chrome
+  // for Android, which is the browser the installed PWA runs in. So on the
+  // phone there was no clear control at all, and the toolbar's ⌕ no-opped once
+  // a query was typed: the only way out was to select the text and backspace.
+  //
+  // There are three ways out now, and none of them needs a keyboard: the ✕
+  // inside the field (below), the ⌕ toggle (which clears AND closes when a
+  // query is present), and Escape.
+  const clearFilter = useCallback((refocus) => {
+    setGridFilter('');
+    if (refocus === 'input') requestAnimationFrame(() => searchInputRef.current?.focus());
   }, []);
 
   // Focus the search input whenever it opens — an effect, not a same-tick rAF:
@@ -542,7 +582,11 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       startBackdated: (t, opts) => { setMenu(null); guard(start(t, opts)); },
       startForEntry: (e) => guard(startForEntry(e)),
       openEntry: (e) => openEditor({ id: e.id }),
-      writeNarrative: (e) => { setFocusKey(row.key); setWritingKey(row.key); setWriteEntryId(e.id); },
+      // The narrative editor lives in the row's expandable half, so asking for
+      // it opens that half — otherwise the item is a no-op at compact density.
+      writeNarrative: (e) => {
+        openExpanded(row.key); setFocusKey(row.key); setWritingKey(row.key); setWriteEntryId(e.id);
+      },
       finalize: (e) => guard(finalizeEntry(e)),
       unlock: (e) => guard(unlockEntry(e)),
       copyToToday: (e) => openEditor({ copyFrom: e.id }),
@@ -727,11 +771,36 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   };
   const rowSecs = (r) => (r.timer ? liveElapsed(r.timer) : 0);
 
+  // A FORGIVING FILTER (owner constraint 4: "timer search must be excellent
+  // rather than merely present"). Three things it now forgives that a single
+  // `includes` did not:
+  //
+  //   WORD ORDER   the query is split on whitespace and every term has to
+  //                appear SOMEWHERE in the row — so "lease acme" finds
+  //                "Acme — lease dispute", and so does "acme dispute".
+  //   PUNCTUATION  a copy of the haystack with every non-alphanumeric squeezed
+  //                out is searched too, so "100001000012" finds
+  //                "100001-000012", "acmelease" finds "Acme — lease", and an
+  //                em dash or an apostrophe never costs a match.
+  //   ACCENTS      both sides are NFD-folded, so "verite" finds "Verité".
+  //
+  // It searches the same fields as before plus the timer's task code, and it is
+  // matched against the row's whole text rather than field by field, so a query
+  // may straddle two of them ("acme merger" spans the name and the matter).
+  const fold = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const squash = (s) => s.replace(/[^a-z0-9]+/g, '');
   const norm = gridFilter.trim().toLowerCase();
-  const matchesFilter = (r) => !norm || [
-    rowName(r), r.timer?.cm_short_name, r.timer?.client_name, r.timer?.client_number, r.timer?.cm_number,
-    ...r.entries.flatMap((e) => [e.cm?.short_name, e.cm?.cm_number, e.narrative]),
-  ].some((v) => String(v || '').toLowerCase().includes(norm));
+  const terms = fold(gridFilter).split(/\s+/).filter(Boolean);
+  const matchesFilter = (r) => {
+    if (terms.length === 0) return true;
+    const hay = fold([
+      rowName(r), r.timer?.cm_short_name, r.timer?.client_name, r.timer?.client_number,
+      r.timer?.cm_number, r.timer?.task_code,
+      ...r.entries.flatMap((e) => [e.cm?.short_name, e.cm?.client_name, e.cm?.cm_number, e.narrative]),
+    ].filter(Boolean).join(' '));
+    const tight = squash(hay);
+    return terms.every((t) => hay.includes(t) || (squash(t) && tight.includes(squash(t))));
+  };
 
   const nowMs = Date.now();
   const ACTIVITY = activityWindows(nowMs);
@@ -871,6 +940,17 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       return done();
     }
 
+    // EXPAND FROM THE KEYBOARD. `x`, because every other candidate is taken:
+    // Enter and Space start and stop the clock, the arrows walk the list, and a
+    // bare `e` would swallow the second half of the app's `g` then `e`
+    // navigation chord for as long as a row had focus. It is one keystroke on
+    // the row the roving tabindex already owns, and the chevron beside it says
+    // so in its tooltip.
+    if ((e.key === 'x' || e.key === 'X') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      toggleExpanded(cur.key);
+      return done();
+    }
+
     if (e.key === 'Tab' && norm) {
       // While the filter is active, Tab walks the matching rows; past either
       // end it falls through so focus leaves the list naturally.
@@ -925,6 +1005,12 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         ['act-week', 'Week'], ['act-recent', 'Recent'],
       ]),
       seg('Group', grouping, setGrouping, [['flat', 'Flat'], ['group', 'By group'], ['client', 'By client']]),
+      // DENSITY, beside the other two view switches. "Compact is the right
+      // default, and denser than today is better — provided it expands"
+      // (BRIEF, owner constraint 5). Compact is two lines: the matter with its
+      // state, then the control strip. Comfortable adds the narrative at rest.
+      // Either way every row still expands, by chevron, by click or by `x`.
+      seg('Density', density, writeDensity, [['compact', 'Compact'], ['comfortable', 'Comfortable']]),
     ];
     if (grouping !== 'flat') {
       items.push({
@@ -976,8 +1062,29 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
           ${f.label} <${Icon} name="x" size=${12} />
         </button>`)}
       <div class="spacer" style=${{ flex: 1 }}></div>
-      <button class="btn btn-sm today-search-btn" title="Search timers and entries ( / )"
-        aria-label="Search timers and entries" onClick=${() => setSearchOpen((v) => !v)}>
+      ${/* A TOGGLE THAT NEVER NO-OPS. With a query typed this button did
+            nothing at all: the bar could only be closed from an EMPTY field,
+            so on a phone — where the native ✕ is not drawn — a filter could be
+            entered and never left except by selecting the text. It clears and
+            closes now, and it reports its own state with aria-pressed instead
+            of only painting it. */''}
+      <button class=${'btn btn-sm today-search-btn' + (norm ? ' on' : '')}
+        aria-pressed=${(searchOpen || !!gridFilter) ? 'true' : 'false'}
+        title=${norm ? `Clear the filter “${gridFilter.trim()}” and close the bar`
+          : searchOpen ? 'Close the filter bar ( / )' : 'Filter today’s work ( / )'}
+        aria-label=${norm ? 'Clear the filter and close the search bar' : 'Search timers and entries'}
+        onClick=${() => {
+          if (norm) {
+            clearFilter();
+            setSearchOpen(false);
+            if (tabbableKey != null) focusRow(tabbableKey);
+            return;
+          }
+          setSearchOpen((v) => !v);
+        }}>
+        ${/* It stays a magnifier: the field carries its own ✕, and two ✕ glyphs
+              four inches apart doing two different things is worse than one ✕
+              beside a lit-up toggle. */''}
         <${Icon} name="search" size=${16} />
       </button>
       <button class="btn btn-sm today-menu-btn" title="List options — filter, group, order, import"
@@ -988,10 +1095,26 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     </div>
     ${(searchOpen || gridFilter) ? html`
       <div class="timer-search-wrap">
-        <input ref=${searchInputRef} type="search" class="timer-search" placeholder="Filter today’s work…"
-          value=${gridFilter}
-          onInput=${(e) => setGridFilter(e.target.value)}
-          onKeyDown=${onSearchKeyDown} />
+        <div class="timer-search-field">
+          <input ref=${searchInputRef} type="search" class="timer-search" placeholder="Filter today’s work…"
+            autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck=${false}
+            aria-label="Filter today’s work by matter, client, number or narrative"
+            value=${gridFilter}
+            onInput=${(e) => setGridFilter(e.target.value)}
+            onKeyDown=${onSearchKeyDown} />
+          ${/* A REAL BUTTON, not Chrome's ::-webkit-search-cancel-button — that
+                pseudo-element is not a DOM node, is not drawn by Chrome for
+                Android at all, and is 12px wide where it is drawn. This one is
+                44×44 under a thumb, keeps focus in the field so the next query
+                can be typed straight away, and is hidden the moment the field
+                is empty so it never sits there meaning nothing. */''}
+          ${gridFilter ? html`
+            <button type="button" class="timer-search-clear" aria-label="Clear the filter"
+              title="Clear the filter (Esc)"
+              onClick=${() => clearFilter('input')}>
+              <${Icon} name="x" size=${16} />
+            </button>` : null}
+        </div>
         ${gridFilter ? html`<span class="muted small">${shown.length}/${allRows.length}</span>` : null}
       </div>` : null}
 
@@ -1041,7 +1164,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
                   <span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
                 <span class="muted small">${list.length}</span>
               </div>` : null}
-            <div class="work-rows">
+            <div class=${`work-rows density-${density}`}>
               ${list.flatMap((r) => {
                 const dropHere = () => { endDrag(); guard(dropOn({ kind: 'timer', timer: r.timer })); };
                 const row = html`
@@ -1053,6 +1176,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
                     onToggleSelected=${() => r.timer && toggleSelected(r.timer.id)}
                     onSelect=${(e) => r.timer && selectCard(e, r.timer, list)}
                     tabbable=${tabbableKey === r.key} onFocusRow=${() => setFocusKey(r.key)}
+                    expanded=${expanded.has(r.key)} onToggleExpand=${() => toggleExpanded(r.key)}
                     writing=${writingKey === r.key}
                     onWritingDone=${() => { setWritingKey(null); setWriteEntryId(null); }}
                     onStart=${() => guard(r.timer ? start(r.timer) : startForEntry(r.focus))}
@@ -1184,6 +1308,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 function WorkRow({
   row, secs, idleAfter, roundMode, canDrag = true, dragging = false,
   selectMode = false, selected = false, tabbable = false, writing = false,
+  expanded = false, onToggleExpand,
   onFocusRow, onSelect, onToggleSelected, onStart, onStop, onSet, onSetHours, onRename, onMenu, menuOpen = false,
   onOpenEntry, onAssignMatter, onEntryChanged, onWritingDone,
   onDragStart, onDragEnd, onDragOverRow, onDropOn,
@@ -1200,10 +1325,14 @@ function WorkRow({
 
   // The timer's own clock, in decimal hours — what a stop would file.
   const tenths = timer ? Number(fmtTenths(secs, roundMode)) : null;
-  // TODAY'S RECORDED HOURS ON THIS MATTER. A running timer's entry does not
-  // catch up until it stops, so its share is read off the live clock.
-  const liveTotal = (e) => (running && timer.linked_entry_id === e.id ? tenths : e.total);
-  const filed = entries.reduce((a, e) => a + liveTotal(e), 0);
+  // TODAY'S RECORD ON THIS MATTER, and only the record.
+  //
+  // It used to add the running timer's unfiled clock, which is how Today came
+  // to report "Acme — merger 2.7" while the ledger held the same work as 2.6
+  // and 0.0 and the figure 2.7 appeared nowhere in the data (wave-1 review,
+  // D8). The unfiled time IS the clock, it is beside this figure while it runs,
+  // and this figure catches up the instant the timer stops and files.
+  const filed = entries.reduce((a, e) => a + e.total, 0);
 
   // accumulated time today (elapsed > 0 or an entry) vs still-at-zero
   const worked = entries.length > 0 || secs > 0;
@@ -1252,15 +1381,33 @@ function WorkRow({
   const editingText = editingName || !!editKind;
   const draggable = canDrag && !editingText;
 
-  // TWO FIGURES OR ONE. Where the clock and the day's record agree — the
-  // ordinary case, because the timer filed the entry — the row states the
-  // number ONCE, as the clock, which is both. They only part company when time
-  // was recorded some other way (keyed by hand, a second entry on the matter,
-  // "New entry (zero clock)"), and then both are true and the row says both:
-  // the recorded hours as the figure that matters, the clock behind the word
-  // "clock", a size down.
+  // ONE NUMBER PER ROW.
+  //
+  // The wave critic: «"1.7 clock 0.0" is two numbers where one is always
+  // zero.» Both were true, which is why the previous pass kept them — but a
+  // resting row does not need to answer a question nobody asked, and a decimal
+  // pair with no header is unreadable at a glance whatever the labels say. So:
+  //
+  //   ONE decimal figure at rest, and it is the day's RECORD on this matter.
+  //   Where the row has a timer and no separate record — the ordinary case,
+  //   because the timer filed the entry — that figure IS the clock, and it
+  //   edits the clock, as it always did.
+  //   THE LIVE CLOCK appears only while the clock is actually running, in
+  //   HH:MM:SS, which can never be mistaken for a decimal.
+  //   THE DECIMAL CLOCK, on the one row shape where it has parted company with
+  //   the record, moves into the row's expanded half — labelled, tap-editable,
+  //   and also in Edit timer → "Clock now". It is demoted in the surface, not
+  //   out of reach.
   const diverged = entries.length > 0 && (!timer || Math.abs(filed - tenths) >= 0.05);
-  const showFiled = !timer || diverged || running;
+  // The figure is the CLOCK (and edits the clock) when the row is a timer whose
+  // record has not parted company with it; otherwise it is the record.
+  const figureIsClock = !!timer && !running && !diverged;
+  // A record of 0.0 beside a ticking counter is the same defect in another
+  // costume: while a timer runs with nothing else filed on the matter, the
+  // clock is the row's one number.
+  const showRecord = !running || filed > 0;
+  // Only a divergent, stopped timer has a second true figure to hide.
+  const extraClock = !!timer && !running && diverged;
 
   const stateClass = running ? ' running' : needsNarrative ? ' needs-narrative' : worked ? ' worked' : '';
 
@@ -1278,7 +1425,7 @@ function WorkRow({
     for (const e of entries) {
       bodyContent.push(html`
         <div key=${`e${e.id}`} class="work-entry">
-          <span class="work-entry-h mono" title=${`${fmtHours(liveTotal(e))}h on this entry`}>${fmtHours(liveTotal(e))}h</span>
+          <span class="work-entry-h mono" title=${`${fmtHours(e.total)}h on this entry`}>${fmtHours(e.total)}h</span>
           ${isLive(e) && !(e.narrative || '').trim()
             ? html`<span class="muted small">running — files at the next stop</span>`
             : html`<${InlineNarrative} entry=${e} onChanged=${onEntryChanged}
@@ -1291,30 +1438,74 @@ function WorkRow({
   } else if (worked && !entry) {
     bodyContent.push(html`<p key="hint" class="work-hint muted small">Time on the clock, nothing filed yet.</p>`);
   }
-  if (entry && entries.length === 1 && entry.tasks.length > 1) {
-    bodyContent.push(html`<div key="tasks" class="muted small work-tasks">
-      ${entry.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration)}`).join(' · ')}</div>`);
+  // EVERY ROW OWES THE NARRATIVE SLOT A LINE.
+  //
+  // At comfortable density the slot is reserved whether or not there is a
+  // narrative (timers.css), because a list whose rows grow only when they have
+  // text is not a band: measured at 1440px before this, six rows came out 126,
+  // 72, 79, 79, 47, 47 — a 2.68× spread, from rows with a narrative growing
+  // while rows without stayed short. A reserved slot with nothing in it is a
+  // hole, so the two states that used to leave `bodyContent` empty say what
+  // they are instead. The running case cannot borrow the "nothing recorded"
+  // wording: its time is on the clock and files at the next stop.
+  if (bodyContent.length === 0) {
+    bodyContent.push(running
+      ? html`<p key="none" class="work-hint muted small">Running — files at the next stop.</p>`
+      : html`<p key="none" class="work-hint muted small">Nothing recorded on this timer today.</p>`);
   }
   if (draft && !running) {
     const findings = entry.validation.filter((f) => f.code !== 'narrative_empty' && f.code !== 'no_matter');
     if (findings.length) bodyContent.push(html`<${ValidationList} key="valid" compact=${true} findings=${findings} />`);
   }
+  // THE EXPANDED HALF: what the compact row leaves out. The task split and the
+  // decimal clock on a row where the clock is not already the row's own figure.
+  const extraContent = [];
+  // (The "nothing recorded" line moved UP into `.work-body` above: a disclosure
+  // that opens onto nothing is still a broken control, and the body is where
+  // that sentence now lives on every density.)
+  if (entry && entries.length === 1 && entry.tasks.length > 1) {
+    extraContent.push(html`<div key="tasks" class="muted small work-tasks">
+      ${entry.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration)}`).join(' · ')}</div>`);
+  }
+  if (extraClock) {
+    extraContent.push(html`
+      <div key="clock" class="work-extra-clock">
+        <span class="figure-tag">clock</span>
+        <button class="timer-clock mono" tabIndex=${-1}
+          title=${`${fmtClock(secs)} on this timer's clock — click to edit (decimal hours)`}
+          onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
+          ${fmtTenths(secs, roundMode)}
+        </button>
+        <span class="muted small">not filed yet</span>
+      </div>`);
+  }
+
+  const bodyId = `wb-${row.key}`;
 
   return html`
     <div class=${'work-row' + (timer ? ' timer-row' : ' entry-row') + stateClass
       + (noMatter ? ' unassigned' : '') + (dragging ? ' dragging' : '') + (editingText ? ' editing' : '')
-      + (selected ? ' selected' : '')}
+      + (selected ? ' selected' : '') + (expanded ? ' expanded' : '')}
       tabIndex=${tabbable ? 0 : -1}
+      aria-expanded=${expanded ? 'true' : 'false'}
       data-row-key=${row.key}
       data-timer-id=${timer ? timer.id : undefined}
       data-entry-id=${entry ? entry.id : undefined}
       onFocus=${() => onFocusRow && onFocusRow()}
+      ${/* A PLAIN CLICK ON THE ROW EXPANDS IT. That gesture used to do nothing
+            visible at all (it cleared a multi-selection that was almost never
+            set), so it is free — and a row that opens when you tap it is what
+            every disclosure list in the reference set does. Ctrl/⌘ and Shift
+            keep their multi-select meaning, and a tap that lands on a control
+            is that control's. */''}
       onClickCapture=${(e) => {
-        if (!onSelect || selectMode) return;
-        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        if (selectMode) return;
+        if (onSelect && (e.ctrlKey || e.metaKey || e.shiftKey)) {
           e.preventDefault(); e.stopPropagation(); onSelect(e); return;
         }
-        if (!e.target.closest('button, input, select, textarea')) onSelect(e);
+        if (e.target.closest('button, input, select, textarea, a, label')) return;
+        if (onSelect) onSelect(e);
+        if (onToggleExpand) onToggleExpand();
       }}
       draggable=${draggable ? 'true' : 'false'}
       title=${rowTitle}
@@ -1326,130 +1517,149 @@ function WorkRow({
             caller that passes a point instead of an anchor. */''}
       onContextMenu=${(e) => { e.preventDefault(); onMenu({ x: e.clientX, y: e.clientY }); }}>
 
-      ${selectMode ? html`
-        <label class="work-pick"
-          title=${timer ? `Select ${name}` : 'Only timers can be selected — the batch actions (move to group, pin, delete) are timer actions'}>
-          <input type="checkbox" checked=${selected} disabled=${!timer}
-            aria-label=${timer ? `Select ${name}` : `${name} cannot be selected`}
-            onChange=${() => onToggleSelected && onToggleSelected()} />
-        </label>` : running ? html`
-        <button class="btn btn-sm work-toggle timer-stop-btn" tabIndex=${-1} title="Stop & file time"
-          onClick=${onStop}><${Icon} name="stop" size=${15} /><span class="work-toggle-label">Stop</span></button>` : html`
-        <button class="btn btn-sm work-toggle timer-start-btn" tabIndex=${-1}
-          title=${canStart ? 'Start' : 'Finalized — unlock this entry before recording more time against it'}
-          disabled=${!canStart} onClick=${onStart}>
-          <${Icon} name="play" size=${15} /><span class="work-toggle-label">Start</span></button>`}
+      ${/* LINE ONE IS IDENTITY — the matter and the exceptions that qualify it,
+            and nothing else. It NEVER wraps: an ellipsis is a truncation you
+            can see, while a wrap makes one row silently 40px taller than the
+            one above it, which is how the phone list came to run 109–184px for
+            six rows and clear only two of them above the fold. */''}
+      <div class="work-main">
+        ${selectMode ? html`
+          <label class="work-pick"
+            title=${timer ? `Select ${name}` : 'Only timers can be selected — the batch actions (move to group, pin, delete) are timer actions'}>
+            <input type="checkbox" checked=${selected} disabled=${!timer}
+              aria-label=${timer ? `Select ${name}` : `${name} cannot be selected`}
+              onChange=${() => onToggleSelected && onToggleSelected()} />
+          </label>` : null}
+        ${editingName ? html`
+          <input class="name-input" autoFocus value=${nameText}
+            onInput=${(e) => setNameText(e.target.value)}
+            onBlur=${commitName}
+            onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setEditingName(false); }} />`
+        : timer ? html`
+          <button class="timer-name" tabIndex=${-1} title=${`${timer.name} — click to rename`}
+            onClick=${() => { setNameText(timer.name); setEditingName(true); }}>${timer.name}</button>`
+        : html`
+          <button class="timer-name entry-open" tabIndex=${-1} title="Open this entry"
+            onClick=${onOpenEntry}>${name}</button>`}
+        ${cmNumber ? html`<span class="work-cm muted mono small" title=${cmName}>${cmNumber}</span>` : null}
+        ${entry && !entry.billable ? html`<${BillableBadge} billable=${0} />` : null}
+        ${entry && entry.status !== 'draft' ? html`<${StatusChip} entry=${entry} />` : null}
+        ${entry && entry.exported_at ? html`
+          <span class="chip chip-exported" title=${'Exported ' + fmtStamp(entry.exported_at)}>
+            <${Icon} name="export" size=${12} /> exported</span>` : null}
+        ${needsNarrative ? html`
+          <span class="chip chip-todo" title="This entry cannot be finalized until it has a billing narrative">
+            no narrative</span>` : null}
+        ${/* "ASSIGN MATTER" IS AN IDENTITY DEFECT, SO IT LIVES ON THE IDENTITY
+              LINE. It used to sit first in the control strip, and it was the
+              one thing on any row that changed the strip's WIDTH: measured at
+              1440px, `.work-controls` came out 303px on five rows and 410.8px
+              on the quick-timer row, which pushed that row's Start 108px left
+              of the column the other five share (left edges 1055, 1052, 1052,
+              1052, **944**, 1052). Harvest's day view holds one dead-straight
+              Start column — that is what lets an eye run a list without
+              re-finding the button on every row — and a trailing cluster whose
+              width is row state cannot hold one.
+              Here it is beside the matter it is missing, in the same dashed
+              attention dress as `Write narrative`: the row's two "this cannot
+              be filed yet" blockers now look like one family and neither one
+              is in the control column. */''}
+        ${noMatter ? html`
+          <button class="btn btn-sm work-assign" tabIndex=${-1}
+            title="Assign a client/matter — required before this time can finalize or export"
+            onClick=${onAssignMatter}>Assign matter</button>` : null}
+        ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
+        ${timer && timer.pinned ? html`
+          <span class="timer-flag pinned" title="Pinned to the always-on-top float window">
+            <${Icon} name="pin" size=${12} /></span>` : null}
+      </div>
 
-      <div class="work-head">
-          ${editingName ? html`
-            <input class="name-input" autoFocus value=${nameText}
-              onInput=${(e) => setNameText(e.target.value)}
-              onBlur=${commitName}
-              onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setEditingName(false); }} />`
-          : timer ? html`
-            <button class="timer-name" tabIndex=${-1} title=${`${timer.name} — click to rename`}
-              onClick=${() => { setNameText(timer.name); setEditingName(true); }}>${timer.name}</button>`
-          : html`
-            <button class="timer-name entry-open" tabIndex=${-1} title="Open this entry"
-              onClick=${onOpenEntry}>${name}</button>`}
-          ${cmNumber ? html`<span class="work-cm muted mono small" title=${cmName}>${cmNumber}</span>` : null}
-          ${noMatter ? html`
-            <button class="btn btn-sm work-assign" tabIndex=${-1}
-              title="Assign a client/matter — required before this time can finalize or export"
-              onClick=${onAssignMatter}>Assign matter</button>` : null}
-          ${entry && !entry.billable ? html`<${BillableBadge} billable=${0} />` : null}
-          ${entry && entry.status !== 'draft' ? html`<${StatusChip} entry=${entry} />` : null}
-          ${entry && entry.exported_at ? html`
-            <span class="chip chip-exported" title=${'Exported ' + fmtStamp(entry.exported_at)}>
-              <${Icon} name="export" size=${12} /> exported</span>` : null}
-          ${idle ? html`<span class="timer-flag idle-nudge" title="Running a long time — still working?"><${Icon} name="alert" size=${12} /></span>` : null}
-          ${timer && timer.pinned ? html`
-            <span class="timer-flag pinned" title="Pinned to the always-on-top float window">
-              <${Icon} name="pin" size=${12} /></span>` : null}
-        </div>
+      ${/* LINE TWO IS THE CONTROL STRIP — transport, the day's one figure, the
+            disclosure, the overflow, in that order on every row, so a thumb
+            learns one place and finds it there whatever state the row is in. */''}
+      <div class="work-controls">
+        ${running ? html`
+          <button class="btn btn-sm work-toggle timer-stop-btn" tabIndex=${-1} title="Stop & file time"
+            onClick=${onStop}><${Icon} name="stop" size=${15} /><span class="work-toggle-label">Stop</span></button>` : html`
+          <button class="btn btn-sm work-toggle timer-start-btn" tabIndex=${-1}
+            title=${canStart ? 'Start' : 'Finalized — unlock this entry before recording more time against it'}
+            disabled=${!canStart} onClick=${onStart}>
+            <${Icon} name="play" size=${15} /><span class="work-toggle-label">Start</span></button>`}
 
-      ${/* Conditional chrome: a row that is fine is just text. A RUNNING row
-            says nothing about its narrative — the reference set never
-            pre-flags work in progress as a defect (reference-analysis gap 7),
-            and the server agrees: a running timer's entry is excluded from the
-            attention buckets for exactly this reason. */''}
-      ${bodyContent.length ? html`<div class="work-body">${bodyContent}</div>` : null}
-
-      ${/* ONE NUMBER PER ROW, and it is the one a lawyer bills.
-            The wave critic read this column as "two unlabelled numbers with
-            different dotted underlines and no header" — 0.1 2.7, 0.0 1.7,
-            00:00:00 0.0 — with nothing saying that the small one is the timer
-            clock and the large one is the day's record on that matter. So:
-
-              ordinary row   ONE figure. The clock and the record agree because
-                             the timer filed the entry, so the row says it once.
-              running row    the live HH:MM:SS beside the day's record. Two
-                             figures in two different formats, one of them
-                             visibly ticking — never an ambiguous pair.
-              divergent row  the record, then the clock behind the WORD "clock",
-                             a size down. That case only exists where time was
-                             recorded some other way, and then both are true.
-
-            Every figure here stays tap-editable, with the ±0.1 pills beside the
-            field while it is open — Harvest's quick-add duration pills
-            (shots/refs-v2/harvest-new-time-entry.mobile.jpg) — which is what
-            replaced the four ±0.1/±0.2 rows in the ⋯ menu. */''}
-      <div class=${'work-figures' + (editKind ? ' editing-figure' : '') + (diverged && timer ? ' dual' : '')}>
-        ${editKind ? html`
-          <span class="figure-edit">
-            <button class="btn btn-sm figure-step" tabIndex=${-1} title="−0.1 h (6 min)"
-              onClick=${() => nudgeText(-0.1)}>−</button>
-            <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
-              aria-label=${editKind === 'clock' ? 'Clock, decimal hours' : 'Recorded hours'}
-              onInput=${(e) => setClockText(e.target.value)}
-              onBlur=${commitClock}
-              onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditKind(null); }} />
-            <button class="btn btn-sm figure-step" tabIndex=${-1} title="+0.1 h (6 min)"
-              onClick=${() => nudgeText(0.1)}>+</button>
-          </span>` : html`
-          <span class="timer-clock-pair">
-            ${timer && running ? html`
-              <button class="timer-clock-raw mono" tabIndex=${-1}
-                title=${`${fmtClock(secs)} on the clock — click to edit (decimal hours)`}
-                onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
-                ${fmtClock(secs)}
-              </button>` : null}
-            ${showFiled ? html`
-              <button class="work-hours mono" tabIndex=${-1}
-                title=${`${fmtHours(filed)}h recorded on this matter today — click to edit`}
-                onClick=${() => { setClockText(fmtHours(entry ? liveTotal(entry) : filed)); setEditKind('hours'); }}>
-                ${fmtHours(filed)}
-              </button>` : null}
-            ${/* A zero clock beside a real recorded figure looks like noise,
-                  and hiding it was the first thing tried — but the clock is
-                  the row's only touch path to "put half an hour on this timer
-                  by hand", so hiding it takes a capability away rather than
-                  simplifying. The LABEL is the fix: "1.7  clock 0.0" says two
-                  true things, where "1.7 0.0" said neither. */''}
-            ${timer && !running ? html`
-              <span class=${'figure-clock' + (secs ? '' : ' zero')}>
-                ${diverged ? html`<span class="figure-tag">clock</span>` : null}
+        ${/* THE ROW'S ONE NUMBER. Every figure here stays tap-editable, with
+              the ±0.1 pills beside the field while it is open — Harvest's
+              quick-add duration pills
+              (shots/refs-v2/harvest-new-time-entry.mobile.jpg) — which is what
+              replaced the four ±0.1/±0.2 rows in the ⋯ menu. */''}
+        <div class=${'work-figures' + (editKind ? ' editing-figure' : '')}>
+          ${editKind ? html`
+            <span class="figure-edit">
+              <button class="btn btn-sm figure-step" tabIndex=${-1} title="−0.1 h (6 min)"
+                onClick=${() => nudgeText(-0.1)}>−</button>
+              <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
+                aria-label=${editKind === 'clock' ? 'Clock, decimal hours' : 'Recorded hours'}
+                onInput=${(e) => setClockText(e.target.value)}
+                onBlur=${commitClock}
+                onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditKind(null); }} />
+              <button class="btn btn-sm figure-step" tabIndex=${-1} title="+0.1 h (6 min)"
+                onClick=${() => nudgeText(0.1)}>+</button>
+            </span>` : html`
+            <span class="timer-clock-pair">
+              ${timer && running ? html`
+                <button class="timer-clock-raw mono" tabIndex=${-1}
+                  title=${`${fmtClock(secs)} on the clock — click to edit (decimal hours)`}
+                  onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
+                  ${fmtClock(secs)}
+                </button>` : null}
+              ${figureIsClock ? html`
                 <button class=${'timer-clock mono' + (secs ? '' : ' zero')} tabIndex=${-1}
                   title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
                   onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
                   ${fmtTenths(secs, roundMode)}
-                </button>
-              </span>` : null}
-          </span>`}
+                </button>`
+              : showRecord ? html`
+                <button class="work-hours mono" tabIndex=${-1}
+                  title=${`${fmtHours(filed)}h recorded on this matter today — click to edit`}
+                  onClick=${() => { setClockText(fmtHours(entry ? entry.total : filed)); setEditKind('hours'); }}>
+                  ${fmtHours(filed)}
+                </button>` : null}
+            </span>`}
+        </div>
+
+        ${/* THE DISCLOSURE. 44×44 under a thumb, `aria-expanded` +
+              `aria-controls` so a screen reader is told what it opens, and the
+              same state the row itself reports. `x` does it from the keyboard;
+              a plain click on the row does it with a thumb anywhere. */''}
+        <button class="btn btn-ghost btn-sm work-expand" tabIndex=${-1}
+          aria-expanded=${expanded ? 'true' : 'false'} aria-controls=${bodyId}
+          title=${expanded ? 'Hide the narrative and the details (x)' : 'Show the narrative and the details (x)'}
+          aria-label=${`${expanded ? 'Collapse' : 'Expand'} — ${name}`}
+          onClick=${() => onToggleExpand && onToggleExpand()}>
+          <${Icon} name=${expanded ? 'chevronUp' : 'chevronDown'} size=${16} />
+        </button>
+
+        ${/* ONE NAME FOR ONE MENU. Two visually identical rows used to say
+              "Timer menu" and "Entry menu" and open two different item lists —
+              the wave-1 review's D7. The menu is state-driven now, so the
+              trigger names the ROW rather than promising a menu shape, and the
+              element itself is handed over: it is what the popover hangs off
+              and what focus returns to. */''}
+        <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1}
+          title="Row menu" aria-label=${`Row menu — ${name}`}
+          ...${menuTriggerProps(menuOpen)}
+          onClick=${(e) => onMenu({ anchor: e.currentTarget })}>
+          <${Icon} name="more" size=${15} />
+        </button>
       </div>
 
-      ${/* ONE NAME FOR ONE MENU. Two visually identical rows used to say
-            "Timer menu" and "Entry menu" and open two different item lists —
-            the wave-1 review's D7. The menu is state-driven now, so the
-            trigger names the ROW rather than promising a menu shape, and the
-            element itself is handed over: it is what the popover hangs off and
-            what focus returns to. */''}
-      <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1}
-        title="Row menu" aria-label=${`Row menu — ${name}`}
-        ...${menuTriggerProps(menuOpen)}
-        onClick=${(e) => onMenu({ anchor: e.currentTarget })}>
-        <${Icon} name="more" size=${15} />
-      </button>
+      ${/* THE EXPANDABLE HALF. `.work-body` is the narrative and the findings —
+            hidden at compact density, shown at comfortable, and shown at either
+            once the row is expanded. `.work-extra` is the task split and the
+            decimal clock, which only an expanded row shows. Both are collapsed
+            with `display: none` rather than a zero height, so a keyboard never
+            walks into content that is not on screen. */''}
+      <div class="work-body" id=${bodyId}>${bodyContent}</div>
+      ${extraContent.length ? html`<div class="work-extra">${extraContent}</div>` : null}
     </div>`;
 }
 

@@ -1,5 +1,5 @@
 import { api, accessSignInUrl } from '/js/api.js';
-import { html, React, useState, useEffect, useRef, useCallback, Spinner, fmtHours, Icon } from '/js/ui.js';
+import { html, React, useState, useEffect, useRef, useCallback, Spinner, Icon } from '/js/ui.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
 import { DayView } from '/js/views/day.js';
@@ -52,6 +52,8 @@ export function nav(to) {
 //   #/export/<filter>           → #/entries/export/<filter>
 //   #/export/<filter>/<from>    → #/entries/export/<filter>/<from>
 //   #/stats                     → #/calendar/stats           stats, inside it
+//                                 …or #/calendar once Calendar has absorbed
+//                                 its contents outright — see CALENDAR_STATS
 //   #/cms                       → #/settings/cms             reference data
 //   #/day/<date>                → unchanged; Calendar owns it in the nav
 //
@@ -59,18 +61,46 @@ export function nav(to) {
 // navigation: they keep every control they had, one tap from the destination
 // that absorbed them (see PAGENAV below), until the screens that absorbed them
 // finish swallowing their contents outright.
+//
+// STATISTICS IS HALFWAY THROUGH THAT. The wave-1 review's own verdict on it:
+// "Stats was relocated, not merged … a panel that documents its own redundancy
+// should be deleted. Keep #/stats as a redirect to #/calendar." The three
+// header stat tiles already carry Total / Billable / Not closed for whatever
+// period the calendar is drawing; what is left to move is the two BarLists,
+// which belong to views/calendar.js and not to this file.
+//
+// So the tab's existence is ONE constant, read by the redirect, by the
+// sub-navigation chip and by the route — flip it to false the moment Calendar
+// carries the bar lists under its own grid, and `#/stats` and `#/calendar/stats`
+// both fold to `#/calendar` instead of resolving to a screen that no longer
+// renders. A retired URL must never become a "Not found"; that is the whole
+// promise of this table.
+const CALENDAR_STATS = true;
+
 const ROUTE_ALIASES = {
   search: (args) => ['entries', args],
   export: (args) => ['entries', ['export', ...args]],
-  stats: () => ['calendar', ['stats']],
+  stats: () => ['calendar', CALENDAR_STATS ? ['stats'] : []],
   cms: () => ['settings', ['cms']],
 };
 
+// Retired SECTIONS fold exactly the way retired screens do: [destination,
+// section] → the destination, carrying whatever came after it.
+const RETIRED_SECTIONS = CALENDAR_STATS ? [] : [['calendar', 'stats']];
+
 function canonicalRoute(route) {
+  let at = route;
   const alias = ROUTE_ALIASES[route.path];
-  if (!alias) return route;
-  const [path, args] = alias(route.args);
-  return { path, args };
+  if (alias) {
+    const [path, args] = alias(route.args);
+    at = { path, args };
+  }
+  for (const [path, section] of RETIRED_SECTIONS) {
+    if (at.path === path && at.args[0] === section) return { path, args: at.args.slice(1) };
+  }
+  // The SAME object when nothing moved, never a copy: the rewrite effect below
+  // compares by identity to decide whether the URL needs replacing at all.
+  return at;
 }
 
 const hashFor = (path, args) =>
@@ -153,8 +183,13 @@ const routeOf = (path) => (path === 'dashboard' ? '#/' : `#/${path}`);
 // only reach by typing a URL is a mode a thumb cannot reach.
 //
 // [arg, label] — arg '' is the destination's own default surface.
+// A destination with only its own default surface has no sub-navigation at all
+// — a one-chip strip is a label, not a control — which is what Calendar becomes
+// the moment CALENDAR_STATS goes false.
 const PAGENAV = {
-  calendar: { label: 'Calendar sections', items: [['', 'Calendar'], ['stats', 'Statistics']] },
+  calendar: CALENDAR_STATS
+    ? { label: 'Calendar sections', items: [['', 'Calendar'], ['stats', 'Statistics']] }
+    : null,
   entries: { label: 'Entries sections', items: [['', 'All entries'], ['export', 'Export']] },
 };
 
@@ -310,34 +345,67 @@ function ToastHost() {
 // Seventeen rows in one flat table before this — global shortcuts and
 // timer-grid chords mixed together. Slack, GitHub and Linear all group a
 // shortcut sheet by task area, and component.gallery §7 says the same, so it is
-// four groups now. The Navigation group is also the one place the new route
-// table has to be told the truth about: `g` then `d`/`c`/`e`/`s` goes to the
-// four destinations that now exist.
+// grouped now. The Navigation group is also the one place the new route table
+// has to be told the truth about: `g` then `d`/`c`/`e`/`s` goes to the four
+// destinations that now exist.
+//
+// THIS TABLE IS A CONTRACT, NOT A BROCHURE. "This is a keyboard-driven desktop
+// app that also works on a phone… the keys deserve to be discoverable, and the
+// shortcut overlay must describe what the keys actually do" (BRIEF, owner
+// constraint). Every row below was driven against the running app before it was
+// written here; where a key only fires on some screens the row says which, and
+// where a key was remapped when navigation collapsed to four destinations the
+// row says what it does now. Four claims were wrong or missing at the last
+// audit and are fixed here:
+//
+//   `x`            expands the focused row — the whole point of a compact list
+//                  that expands (BRIEF, owner constraint 5) — and it appeared
+//                  NOWHERE. Its only hint was a `title` on the chevron, which
+//                  is pointer-only.
+//   `s`            claimed "the day in view"; it is dispatched only from Today
+//                  and from a day view (#/day/<date>). On #/calendar and
+//                  #/entries it does nothing.
+//   `[` / `]`      claimed unconditionally; they step the day on Today and move
+//                  the selection on Calendar, and are dead on Entries and
+//                  Settings.
+//   "timer cards"  there are no cards and no grid: one list of rows, in which
+//                  ← → do exactly what ↑ ↓ do (the column geometry went with
+//                  the masonry board).
+//
+// The filter bar gets its own group because `/` is the control the owner uses
+// most, and its three keys — jump to the matches, walk them, clear and close —
+// were undocumented.
 const HELP_GROUPS = [
   ['Recording time', [
     ['q', 'Quick capture — file an entry from one sentence'],
     ['n', 'New time entry'],
-    ['t', 'Start / stop the last-used timer'],
+    ['t', 'Start / stop the last-used timer (goes to Today first)'],
     ['c', 'Close the day — review, finalize and export (Today)'],
-    ['s', 'Summary of the day in view as plain text'],
+    ['s', 'Summary as plain text (Today and a day view)'],
   ]],
   ['Getting around', [
     ['g then d/c/e/s', 'Go to Today / Calendar / Entries / Settings'],
     ['/', 'Search — timers on Today, the entry ledger everywhere else'],
-    ['[ and ]', 'Previous / next day'],
+    ['[ and ]', 'Previous / next day (Today and Calendar)'],
     ['?', 'This help'],
   ]],
   ['The timer list', [
-    ['Tab / click', 'Focus the timer grid'],
-    ['← → ↑ ↓', 'Move between timer cards'],
-    ['Enter or Space', 'Start–stop the focused timer'],
-    ['Alt+↑ / Alt+↓', 'Nudge the focused timer ±0.1h (+Shift: ±0.2h)'],
-    ['Shift+Enter', 'Edit the focused timer'],
-    ['Ctrl+Enter', 'Open the focused timer’s entry'],
+    ['Tab / click', 'Focus the list'],
+    ['↑ ↓ (or ← →)', 'Move between rows'],
+    ['Enter or Space', 'Start–stop the focused row'],
+    ['x', 'Expand or collapse the focused row'],
+    ['Shift+Enter', 'Edit the focused timer (or open the row’s entry)'],
+    ['Ctrl+Enter', 'Open the focused row’s entry'],
+    ['Alt+↑ / Alt+↓', 'Nudge the focused timer’s clock ±0.1h (+Shift: ±0.2h)'],
   ]],
-  ['Dialogs', [
+  ['The filter bar ( / )', [
+    ['Enter or Tab', 'Jump from the field to the matching rows'],
+    ['Esc', 'Clear the filter and close the bar'],
+  ]],
+  ['Dialogs and menus', [
     ['Ctrl+Enter', 'Save and close the entry editor'],
-    ['Esc', 'Close the dialog on top'],
+    ['↑ ↓ or a letter', 'Move to / jump to an item in an open menu'],
+    ['Esc', 'Close the menu or dialog on top'],
   ]],
 ];
 
@@ -511,25 +579,24 @@ function App() {
   const closeQuickCapture = useCallback(() => setQuickCapture(false), []);
   const openQuickCapture = useCallback(() => setQuickCapture(true), []);
 
-  // The day's filed total, owned by the shell so it can be stated once per
-  // viewport: the run bar carries it on wide screens away from the dashboard,
-  // the phone's bottom bar carries it everywhere (see runbar.css's ownership
-  // note). One read of /api/stats for today; no new endpoint.
+  // The day's filed total, owned by the shell so it is stated exactly once at
+  // every width: the run bar carries it on every screen EXCEPT Today, where the
+  // day's own stat strip already says it with the billable split, the target
+  // and the week beside it. One read of /api/stats for today; no new endpoint.
+  // (It used to be said twice on desktop Today — a 49px day footer under a 48px
+  // run bar under a stat strip — and by the phone's bottom bar as a seventh
+  // slot. See the ownership note at the end of runbar.css.)
   const dayTotal = useDayTotal(!!settings);
 
-  // "Close the day" from the phone's bottom bar. The sweep is the dashboard's
-  // (it is a day-level commit, and the dashboard owns the day's data), so from
-  // anywhere else this goes home first and then asks. Two dispatches, because
-  // the listener mounts with the view: the first lands when we are already
-  // there, the second after the route has painted. setCloseOut is idempotent.
+  // "Close the day" from the run bar. It renders on Today only, which is also
+  // the only screen `c` fires on — before this the phone's bottom bar carried
+  // a permanent Close slot that, pressed from Calendar, closed a day other than
+  // the one on screen. The sweep itself is the dashboard's: it is a day-level
+  // commit and the dashboard owns the day's data, so this is the same event the
+  // keyboard raises and DashboardView answers it.
   const closeDay = useCallback(() => {
-    const fire = () => window.dispatchEvent(new CustomEvent('tk:close-day'));
-    if (route.path !== 'dashboard') {
-      nav('#/');
-      requestAnimationFrame(() => requestAnimationFrame(fire));
-      setTimeout(fire, 300);
-    } else fire();
-  }, [route.path]);
+    window.dispatchEvent(new CustomEvent('tk:close-day'));
+  }, []);
 
   // Back / the Android gesture dismisses the top overlay instead of leaving
   // the screen under it. Order is irrelevant — each hook owns its own marker.
@@ -673,7 +740,7 @@ function App() {
     // #/day/<date> keeps its route and its bookmarks; the navigation has
     // always called it Calendar (and now Calendar owns it outright).
     day: () => html`<${DayView} date=${args[0]} ...${ctx} />`,
-    calendar: () => (args[0] === 'stats'
+    calendar: () => (CALENDAR_STATS && args[0] === 'stats'
       ? html`<${StatsView} ...${ctx} />`
       : html`<${CalendarView} ...${ctx} />`),
     // #/entries is the ledger; #/entries/export[/<filter>[/<from>]] is the
@@ -713,10 +780,11 @@ function App() {
 
   return html`
     <div class="shell">
-      ${/* The bar carries the day's number only where nothing else does: the
-            dashboard's own day footer says it there (≥768px), and below that
-            the bottom bar says it on every screen. */''}
-      <${RunBar} dayTotal=${dayTotal} showTotal=${here !== 'dashboard'} />
+      ${/* THE APP'S ONE PERSISTENT BAR. It carries the day's number only where
+            nothing else does — Today's stat strip says it there, with more —
+            and "Close the day" only where `c` works, which is Today. */''}
+      <${RunBar} dayTotal=${dayTotal} showTotal=${here !== 'dashboard'}
+        showClose=${here === 'dashboard'} onCloseDay=${closeDay} />
       <nav class="sidebar" aria-label="Main">
         <div class="brand">
           <${Icon} name="timer" size=${21} />
@@ -745,20 +813,21 @@ function App() {
         ${view()}
       </main>
     </div>
-    ${/* THE PHONE'S ONE BOTTOM BAR. Four destinations, quick capture in the
-          middle — Material 3's BottomAppBar-with-a-FAB — and, since this wave,
-          the day footer's two jobs folded into the same bar rather than
-          stacked above it: the filed total as the leading label, "Close the
-          day" as the trailing action. That is M3's own bottom-app-bar anatomy
-          (a leading text slot, actions, one trailing action), and it takes the
-          phone's permanent chrome from three bars and 173px to two and 112px.
-          Nothing was deleted: both controls are here on every screen now,
-          where before they existed only on the dashboard. */''}
+    ${/* THE PHONE'S ONE BOTTOM BAR — FIVE SLOTS. Four destinations with quick
+          capture in the middle: Material 3's BottomAppBar-with-a-FAB, and M3's
+          own cap of five destinations, which is also Apple HIG's.
+
+          It briefly carried seven: a filed-total label at the head and a
+          "Close" action at the tail, about 56px per slot in 390px. Both are
+          contents of the run bar now — the total on every screen that does not
+          already state it, Close the day on Today, where `c` also works. That
+          is a strictly better home for both: the total is a status readout and
+          belongs beside the running clock rather than among destinations, and
+          a once-a-day commit does not earn a permanent thumb slot (the same
+          objection the teardown made about Export having one) — least of all
+          one that, pressed from Calendar, closed a different day than the one
+          on screen. */''}
     <nav class="botnav" aria-label="Main">
-      <span class="botnav-total" title="Filed today (all entries)">
-        <strong class="mono">${dayTotal == null ? '—' : `${fmtHours(dayTotal)}h`}</strong>
-        <span class="botnav-total-cap">filed</span>
-      </span>
       ${NAV.slice(0, CAPTURE_SLOT).map(([path, label, icon, short]) => html`
         <button key=${path}
           class=${'botnav-item' + (active === path ? ' active' : '')}
@@ -782,11 +851,6 @@ function App() {
           <span class="botnav-ind"><${Icon} name=${icon} size=${20} /></span>
           <span class="botnav-label">${short}</span>
         </button>`)}
-      <button class="botnav-item botnav-close" onClick=${closeDay}
-        title="Review, finalize and export today (c)" aria-label="Close the day">
-        <span class="botnav-ind"><${Icon} name="lock" size=${20} /></span>
-        <span class="botnav-label">Close</span>
-      </button>
     </nav>
     <${ToastHost} />
     <${FeedbackCapture} />

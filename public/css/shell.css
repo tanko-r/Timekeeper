@@ -42,8 +42,8 @@
    one. `aria-current="page"` carries the same fact to assistive tech.
 
    Every value here comes from tokens.css. The three derived measurements
-   below are compositions of tokens, declared once so the day footer and the
-   toast host can clear the bottom bar without guessing its height.
+   below are compositions of tokens, declared once so the toast host and any
+   pinned surface can clear the bottom bar without guessing its height.
    ========================================================================== */
 
 :root {
@@ -491,32 +491,14 @@
 .botnav-capture:active .botnav-ind { background: var(--accent-active); }
 .botnav-capture .botnav-label { color: var(--text-primary); font-weight: var(--fw-semibold); }
 
-/* The bar's LEADING TEXT SLOT — the day's filed total, which used to need a
-   whole second fixed bar 61px tall directly above this one. It is a status
-   readout, not a control: no tap target, no hue, and it ranks by weight and
-   tabular figures the way every other figure in the app does (tokens.css
-   §7a tier 3). */
-.botnav-total {
-  flex: 0 0 auto;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: var(--space-0-5);
-  padding: var(--space-1) var(--space-1);
-  color: var(--figure);
-}
-.botnav-total strong {
-  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
-  letter-spacing: var(--ls-num-sm); font-variant-numeric: tabular-nums;
-  line-height: var(--lh-num-sm);
-}
-.botnav-total-cap {
-  font-size: var(--fs-caption); line-height: var(--lh-caption);
-  letter-spacing: var(--ls-caption); color: var(--text-muted);
-}
-/* …and the TRAILING ACTION. It is the day's commit, so it reads as a
-   destination-shaped slot rather than a second filled surface competing with
-   the capture control. */
-.botnav-close .botnav-ind { color: var(--text-secondary); }
-.botnav-close:hover .botnav-ind { background: var(--state-hover); color: var(--text-primary); }
+/* FIVE SLOTS, AND ONLY FIVE. The bar briefly carried seven — a filed-total
+   label, four destinations, capture, and a "Close" action — about 56px each in
+   390px, which is how the wave-1 review found it: Material 3 caps a navigation
+   bar at five destinations, and Apple HIG at five tabs. The two extras are
+   gone from here and are contents of the run bar now (runbar.css's ownership
+   note says which is where and why): the day's filed total, and a once-a-day
+   commit that had taken a permanent thumb slot and, pressed from Calendar,
+   closed a day other than the one on screen. */
 
 /* Settings → Tools: the three actions that left the navigation. They are the
    same .navlink rows they were in the sidebar, so the armed/agent-live states
@@ -813,8 +795,6 @@
   /* (The six Settings category links have no room in a 76px rail; the
      ≤1023px block below moves them into the page as .pagenav chips.) */
   .sidebar .foot { display: none; }
-
-  .shell .today-footer { left: var(--shell-rail-w); }
 }
 
 @media (max-width: 1023px) {
@@ -863,21 +843,19 @@
    Stacking, deliberately, from the bottom edge up:
      1. the device's safe-area inset (padding inside the bar)
      2. the bottom navigation bar        z-index --z-nav   (95)
-     3. the day footer                   z-index --z-sticky (90), pushed up by
-        exactly --shell-nav-total so the two never overlap and "Close the day"
-        stays a full 44px target
-     4. toasts, above both
-     5. modals and sheets cover everything, as they should
+     3. toasts, above it
+     4. modals and sheets cover everything, as they should
    .main reserves the height of the bar so the last card is never trapped
    under it.
 
-   And from the TOP edge down, when a timer is running:
+   And from the TOP edge down:
      1. the device's top safe-area inset (padding inside the bar)
-     2. the running-timer bar            z-index --z-nav   (95)
-   It is at the top precisely BECAUSE of the list above: two bars already spend
-   121px — 14% of a 390×844 phone — on the bottom edge, and a third would be
-   indefensible. .main reserves its height too, through .tk-running in
-   runbar.css. See that file for the whole contract.
+     2. the run bar                      z-index --z-nav   (95)
+   Two fixed bars, and that is all of them. There was a third — the day footer,
+   pinned above this bar — and the two of them cost 121px, 14% of a 390×844
+   phone, permanently. It is deleted; its filed total and its "Close the day"
+   are contents of the run bar now. .main reserves the run bar's height too,
+   through .tk-runbar in runbar.css. See that file for the whole contract.
    ========================================================================= */
 
 @media (max-width: 767px) {
@@ -899,28 +877,19 @@
     border-top: var(--border-w) solid var(--border);
   }
 
-  /* THREE FIXED BARS ON A PHONE, MEASURED: run bar 0→52, day footer 722→783,
-     bottom navigation 784→844 — 173px, 20.5% of the screen, and the reason
-     exactly 34px of the first row of the day's work was visible, cut
-     mid-word. The teardown's instruction was to MERGE the footer into the
-     bottom-navigation region rather than stack a second bar above it, so
-     below 768px the footer does not render at all: its filed total is this
-     bar's leading label and its "Close the day" is this bar's trailing
-     action, both above in this file. Nothing was lost — both are now on
-     EVERY screen instead of only the dashboard. */
-  .shell .today-footer { display: none; }
   #root .toast-host { bottom: calc(var(--shell-nav-total) + var(--space-3)); }
 
-  /* Seven slots in 390px: the total, four destinations, capture, close. The
-     destinations share what is left evenly and the two ends take only what
-     they need. */
+  /* Five equal slots in 390px — 78px each, comfortably past the 48dp Material
+     asks for. It was seven at about 56px, which is what forced the labels down
+     to --fs-micro; they stay there because the words are short and the icon is
+     the primary cue, but there is room to grow them again if a later hand
+     wants it. */
   .botnav-item { padding-inline: 0; }
   .botnav-ind { width: var(--space-9); height: var(--space-6); }
   .botnav-label {
     font-size: var(--fs-micro); line-height: var(--lh-micro);
     letter-spacing: var(--ls-micro);
   }
-  .botnav-total { padding-inline: var(--space-2) var(--space-1); }
 
   /* Page header: the title keeps its own line (break above), and the actions
      share the lines below, growing to fill them — a lone primary action ends

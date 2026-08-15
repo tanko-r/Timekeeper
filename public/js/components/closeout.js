@@ -25,7 +25,7 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 // So the sweep no longer charges for finished work:
 //
 //   1. A DRAFT THAT ALREADY HAS A NARRATIVE IS NOT A CARD. It goes in the
-//      "Ready" list, which the lawyer reads and confirms ONCE with the
+//      "Already written" list, which the lawyer reads and confirms ONCE with the
 //      primary. Chipping an entry now removes a step from the day instead of
 //      adding one.
 //   2. WHAT IS LEFT IS A LIST, NOT A CAROUSEL. The teardown: "you cannot tell
@@ -55,37 +55,104 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 // card and the commit, and the review list shows that count the whole time.
 // ===========================================================================
 
-// A draft is "ready" when it already says what the work was — chipped from the
-// stop offer, typed on the row, written in the editor, or built from task
-// lines (AUTO). Ready drafts cost nothing at close-out.
+// ===========================================================================
+// ONE NUMBER  (wave-2b)
+//
+// The panel used to state the same quantity four different ways on one screen.
+// Measured, mixed day: the title said "Close the day — 3 to write", the band
+// head said "NEEDS A NARRATIVE 3", the secondary button said "Accept all 2",
+// and the closing sentence said "saves all 2 narratives above … 1 entry will
+// stay a draft". A lawyer reading top to bottom could not answer the one
+// question a billing screen must never be vague about: HOW MANY ENTRIES AM I
+// ABOUT TO COMMIT? The answer that day was 4, and the figure 4 appeared
+// nowhere on the panel.
+//
+// So every count here now falls out of a single split of the day's drafts:
+//
+//   a draft whose narrative box HAS TEXT  →  it will be FILED
+//   a draft whose narrative box is EMPTY  →  it will STAY A DRAFT
+//
+// "Box" covers all three ways a narrative gets there: already written (chip,
+// row, editor, AUTO task lines), pre-filled from the matter's phrasebook, or
+// typed here. `going` and `staying` below are the only two counts the panel
+// is allowed to speak, and they are what the TITLE, the BANDS, the PRIMARY
+// BUTTON and the closing sentence all say. The number moves live: type one
+// word into an empty box and the title, the primary and the sentence all
+// tick up together.
+//
+// The one count that survives outside that split is the collapsed "Already
+// written" band's own — a band that hides its rows has to say how many it is
+// hiding. Nothing that is on screen carries a badge you could mistake for the
+// commit figure. In particular `Accept all` LOST its count: it wrote a
+// different quantity (suggestions still unsaved) than the primary commits
+// (entries), and that mismatch was two of the four contradictory numbers.
+// ===========================================================================
+
+// A draft is "written" when it already says what the work was — chipped from
+// the stop offer, typed on the row, written in the editor, or built from task
+// lines (AUTO). Written drafts cost nothing at close-out.
 const isReady = (d) => String(d.narrative || '').trim() !== '';
 
-// The line above the buttons. Wave-1 review, D12: the old one read "1 draft
-// still need attention." — ungrammatical, and it never said what the primary
-// was about to do with the text sitting in the fields. Plurals are written
-// out rather than assembled from `s` fragments, because "2 will stay drafts —
-// nothing is lost, and IT will be here tomorrow" is the same defect one clause
-// further along.
-// The day's shape in half a line: how much of it is already done. It replaces
-// the dot pagination, which could only say "card 3 of 5" — a position in a
-// stack, never how much work was left.
-function shapeOf(nNeed, nReady) {
-  if (nNeed === 0) return 'every one already says what the work was';
-  const need = `${nNeed} still ${nNeed === 1 ? 'needs' : 'need'} a narrative`;
-  return nReady > 0 ? `${nReady} ready · ${need}` : need;
+// ---------------------------------------------------------------------------
+// ONE ROW PER MATTER  (wave-2b)
+//
+// The same matter used to appear twice in one dialog — "Acme — Borealis merger
+// 0.0h" under NEEDS A NARRATIVE and "Acme — Borealis merger 2.6h" under READY —
+// because close-out listed ENTRIES while Today lists MATTERS. (That is the
+// wave-1 review's D8 defect, "Today and the ledger disagree about the day",
+// showing up inside a dialog.) Drafts are grouped by matter here, exactly as
+// the Today list groups them, and a matter that is part-written carries BOTH
+// figures on its one row: what still needs words, and what is already written.
+//
+// Matterless drafts are never merged with each other — two unassigned stops
+// are two different pieces of work — so they key by entry.
+// ---------------------------------------------------------------------------
+function buildGroups(list) {
+  const order = [];
+  const byKey = new Map();
+  for (const d of list || []) {
+    const key = d.cm && d.cm.id ? `cm:${d.cm.id}` : `entry:${d.id}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        key,
+        cm: d.cm || null,
+        label: d.cm ? d.cm.short_name : 'No matter yet',
+        entries: [], written: [], blank: [],
+        hours: 0, writtenHours: 0, blankHours: 0,
+      };
+      byKey.set(key, g);
+      order.push(g);
+    }
+    const hours = Number(d.total || 0);
+    g.entries.push(d);
+    g.hours += hours;
+    if (isReady(d)) { g.written.push(d); g.writtenHours += hours; }
+    else { g.blank.push(d); g.blankHours += hours; }
+  }
+  return order;
 }
 
-function noteFor({ nNeed, parked, willSave, willStay, drafts }) {
-  if (nNeed === 0 && parked === 0) {
-    return `Every draft already says what the work was. Finalize & export locks ${drafts === 1 ? 'it' : `all ${drafts}`} and downloads the day as a CSV.`;
+// The closing sentence. It says what the primary is about to DO, in the same
+// two numbers the title and the button carry — because the primary does two
+// things that are not on its label: it writes every suggestion still sitting
+// in a box (the lawyer read them and left them there, so they are his answer),
+// and it leaves anything blank as a draft. Plurals are written out rather than
+// assembled from `s` fragments, because "2 will stay drafts — nothing is lost,
+// and IT will be here tomorrow" is the same defect one clause further along.
+function noteFor({ going, staying, goingHours }) {
+  if (going === 0) {
+    return 'Nothing here says what the work was yet, so nothing can be filed. '
+      + 'Write a narrative above, or leave the day alone — nothing is lost.';
   }
-  const parts = [];
-  if (willSave === 1) parts.push('Finalize & export saves the narrative above, locks the day and downloads the CSV.');
-  else if (willSave > 1) parts.push(`Finalize & export saves all ${willSave} narratives above, locks the day and downloads the CSV.`);
-  if (willStay === 1) parts.push('One entry will stay a draft — nothing is lost, and it will be here tomorrow.');
-  else if (willStay > 1) parts.push(`${willStay} entries will stay drafts — nothing is lost, and they will be here tomorrow.`);
-  if (parts.length === 0) parts.push('Nothing is lost either way — a draft left alone stays a draft.');
-  return parts.join(' ');
+  const locks = going === 1 ? 'the one draft' : `all ${going} drafts`;
+  const first = `Finalize & export saves what is in the boxes above, locks ${locks} (${fmtHours(goingHours)}h) `
+    + 'and downloads them as a CSV.';
+  if (staying === 0) return first;
+  const rest = staying === 1
+    ? 'One entry will stay a draft — nothing is lost, and it will be here tomorrow.'
+    : `${staying} entries will stay drafts — nothing is lost, and they will be here tomorrow.`;
+  return `${first} ${rest}`;
 }
 
 export function CloseOut({ onClose, openEditor }) {
@@ -107,26 +174,62 @@ export function CloseOut({ onClose, openEditor }) {
   const shortcuts = useShortcuts();
   const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
 
-  const ready = useMemo(() => (drafts || []).filter(isReady), [drafts]);
+  const groups = useMemo(() => buildGroups(drafts), [drafts]);
+  const ready = useMemo(() => groups.filter((g) => g.blank.length === 0), [groups]);
   const needs = useMemo(
-    () => (drafts || []).filter((d) => !isReady(d) && !skip[d.id]), [drafts, skip]);
+    () => groups.filter((g) => g.blank.length > 0 && !skip[g.key]), [groups, skip]);
   const parked = useMemo(
-    () => (drafts || []).filter((d) => !isReady(d) && skip[d.id]), [drafts, skip]);
+    () => groups.filter((g) => g.blank.length > 0 && skip[g.key]), [groups, skip]);
+  const groupByKey = useMemo(() => {
+    const m = {};
+    groups.forEach((g) => { m[g.key] = g; });
+    return m;
+  }, [groups]);
   const draftById = useMemo(() => {
     const m = {};
     (drafts || []).forEach((d) => { m[d.id] = d; });
     return m;
   }, [drafts]);
 
-  // The field's value: what the lawyer typed, else the matter's top clean
+  // The box's value: what the lawyer typed, else the matter's top clean
   // phrasebook line, so the primary CONFIRMS rather than composes. Resolved at
   // render instead of synced by an effect — an effect that pre-fills has to
   // know whether the field was touched, and the touched case is exactly
-  // `texts[id] !== undefined`.
-  const valueOf = useCallback((d) => {
-    if (texts[d.id] !== undefined) return texts[d.id];
-    return (sugg[d.cm?.id] || [])[0] || '';
+  // `texts[key] !== undefined`.
+  const valueOf = useCallback((g) => {
+    if (texts[g.key] !== undefined) return texts[g.key];
+    return (sugg[g.cm?.id] || [])[0] || '';
   }, [texts, sugg]);
+
+  // ---- THE ONE NUMBER, and its complement ----
+  // Counted in ENTRIES, because an entry is what gets locked and what becomes a
+  // line in the CSV — the rows above are matters, and a row says so whenever it
+  // stands for more than one entry.
+  const filing = useMemo(() => {
+    const withText = new Set(
+      needs.filter((g) => String(valueOf(g)).trim() !== '').map((g) => g.key));
+    let going = 0;
+    let goingHours = 0;
+    let total = 0;
+    let totalHours = 0;
+    for (const g of groups) {
+      total += g.entries.length;
+      totalHours += g.hours;
+      going += g.written.length + (withText.has(g.key) ? g.blank.length : 0);
+      goingHours += g.writtenHours + (withText.has(g.key) ? g.blankHours : 0);
+    }
+    return {
+      withText,
+      going,
+      goingHours,
+      staying: total - going,
+      stayingHours: totalHours - goingHours,
+      total,
+      // every already-written ENTRY, wherever its row sits — a part-written
+      // matter keeps its finished entries inside its own card now
+      writtenEntries: groups.reduce((n, g) => n + g.written.length, 0),
+    };
+  }, [groups, needs, valueOf]);
 
   // Fresh fetch on open — the dashboard's copy behind this overlay may be
   // stale (a stop-chip pick, another tab, etc.).
@@ -152,9 +255,9 @@ export function CloseOut({ onClose, openEditor }) {
   // One phrasebook read per matter that still needs a narrative — the same
   // endpoint the entry editor and the stop chips use, asked for the whole list
   // at once because a list of N rows cannot call a per-matter hook N times.
-  const needKey = needs.map((d) => d.cm?.id || 0).join(',');
+  const needKey = needs.map((g) => g.cm?.id || 0).join(',');
   useEffect(() => {
-    const ids = [...new Set(needs.map((d) => d.cm?.id).filter(Boolean))];
+    const ids = [...new Set(needs.map((g) => g.cm?.id).filter(Boolean))];
     if (ids.length === 0) return undefined;
     let alive = true;
     Promise.all(ids.map((id) => api.get(`/api/matters/${id}/suggestions`)
@@ -204,17 +307,21 @@ export function CloseOut({ onClose, openEditor }) {
 
   // Enter on a row: write it and drop to the next one that still needs words.
   // The row leaves the list the moment it is saved, so the next field has to be
-  // chosen before the write and focused after the re-render.
-  async function acceptRow(id) {
-    const d = draftById[id];
-    if (!d) return;
-    const i = needs.findIndex((x) => x.id === id);
-    const nextId = i > -1 && needs[i + 1] ? needs[i + 1].id : null;
-    const text = valueOf(d);
-    if (String(text).trim()) await save(d, text);
+  // chosen before the write and focused after the re-render. One box covers
+  // every unwritten entry on that matter — the row says so when there is more
+  // than one, and that is the whole point of merging them.
+  async function acceptGroup(key) {
+    const g = groupByKey[key];
+    if (!g) return;
+    const i = needs.findIndex((x) => x.key === key);
+    const nextKey = i > -1 && needs[i + 1] ? needs[i + 1].key : null;
+    const text = valueOf(g);
+    if (String(text).trim()) {
+      for (const d of g.blank) await save(d, text); // eslint-disable-line no-await-in-loop
+    }
     requestAnimationFrame(() => {
-      const el = nextId
-        ? document.querySelector(`.co-item[data-entry-id="${nextId}"] textarea`)
+      const el = nextKey
+        ? document.querySelector(`.co-item[data-group="${nextKey}"] textarea`)
         : document.querySelector('.closeout-card .co-primary');
       if (el) el.focus();
     });
@@ -223,9 +330,10 @@ export function CloseOut({ onClose, openEditor }) {
   async function acceptAll() {
     setBusy(true);
     try {
-      for (const d of needs) {
-        const text = valueOf(d);
-        if (String(text).trim()) await save(d, text); // eslint-disable-line no-await-in-loop
+      for (const g of needs) {
+        const text = valueOf(g);
+        if (!String(text).trim()) continue;
+        for (const d of g.blank) await save(d, text); // eslint-disable-line no-await-in-loop
       }
     } finally { setBusy(false); }
   }
@@ -273,9 +381,10 @@ export function CloseOut({ onClose, openEditor }) {
       // Everything the lawyer left in a field is his answer — write it before
       // the day is locked, or the primary would finalize past his own text.
       if (!ack) {
-        for (const d of needs) {
-          const text = valueOf(d);
-          if (String(text).trim()) await save(d, text); // eslint-disable-line no-await-in-loop
+        for (const g of needs) {
+          const text = valueOf(g);
+          if (!String(text).trim()) continue;
+          for (const d of g.blank) await save(d, text); // eslint-disable-line no-await-in-loop
         }
       }
       if (ack) {
@@ -365,7 +474,7 @@ export function CloseOut({ onClose, openEditor }) {
       if (phase === 'review' && e.key === 'Enter' && !e.shiftKey && !onButton) {
         e.preventDefault();
         e.stopPropagation();
-        if (item) acceptRow(Number(item.dataset.entryId));
+        if (item) acceptGroup(item.dataset.group);
         else if (!busy) finalizeAndExport(false);
         return;
       }
@@ -397,7 +506,8 @@ export function CloseOut({ onClose, openEditor }) {
 
       if (typing) return; // never fence real typing — the field must see its own keys
       if (!(e.metaKey || e.ctrlKey || e.altKey) && e.key === 'e' && phase === 'review') {
-        const id = item ? Number(item.dataset.entryId) : (needs[0] && needs[0].id);
+        const g = item ? groupByKey[item.dataset.group] : needs[0];
+        const id = g && g.blank[0] ? g.blank[0].id : null;
         if (id) {
           e.preventDefault();
           e.stopPropagation();
@@ -415,11 +525,10 @@ export function CloseOut({ onClose, openEditor }) {
     }
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [phase, drafts, texts, skip, sugg, needs, busy, editingId]); // eslint-disable-line
+  }, [phase, drafts, texts, skip, sugg, needs, groupByKey, busy, editingId]); // eslint-disable-line
 
   // ---------- render ----------
 
-  const totalOf = (list) => list.reduce((s, d) => s + Number(d.total || 0), 0);
   const label = (d) => (d.cm ? d.cm.short_name : 'No matter yet');
 
   let body;
@@ -436,99 +545,148 @@ export function CloseOut({ onClose, openEditor }) {
         </div>
       <//>`;
   } else if (phase === 'review') {
-    const nNeed = needs.length;
-    const nReady = ready.length;
-    const willSave = needs.filter((d) => String(valueOf(d)).trim()).length;
-    const willStay = (nNeed - willSave) + parked.length;
-    title = nNeed === 0 ? 'Close the day' : `Close the day — ${nNeed} to write`;
+    const {
+      withText, going, goingHours, staying, stayingHours, total,
+    } = filing;
+    // THE TITLE IS THE NUMBER. It used to say "3 to write" while the button
+    // said 2 and the sentence said 2 and 1; it now says the only thing the
+    // lawyer needs before he reads a word of the list.
+    title = `Close the day — filing ${going} of ${total}`;
 
     body = html`
       <${React.Fragment}>
         ${/* THE DAY'S SHAPE, in one line, before anything asks for a decision.
               It replaces the dot pagination, which could only say "card 3 of 5"
-              — a position in a stack, never how much work was left. */''}
+              — a position in a stack, never how much of the day was committed.
+              Both halves of the split are here, with their hours, so the figure
+              on the primary button can be checked against the list. */''}
         <p class="co-shape">
-          <strong>${drafts.length} draft${drafts.length === 1 ? '' : 's'}</strong>
-          <span class="co-shape-hours mono">${fmtHours(totalOf(drafts))}h</span>
-          <span class="muted">${shapeOf(nNeed, nReady)}</span>
+          <span class="co-shape-lead">
+            <strong>${going} of ${total} draft${total === 1 ? '' : 's'}</strong> will be filed
+          </span>
+          <span class="co-shape-hours mono">${fmtHours(goingHours)}h</span>
+          <span class="muted">${staying === 0
+            ? 'Nothing is left over — the whole day goes.'
+            : `${staying} ${staying === 1 ? 'entry' : 'entries'} · ${fmtHours(stayingHours)}h `
+              + `will stay ${staying === 1 ? 'a draft' : 'drafts'}.`}</span>
         </p>
 
-        ${nNeed > 0 ? html`
+        ${/* THE BAND HEADS CARRY NO COUNT unless they are hiding their rows.
+              A badge beside a visible list is a second number claiming to
+              answer the same question the title answers, and that is exactly
+              how "3 / 3 / 2 / 2-and-1" happened. */''}
+        ${needs.length > 0 ? html`
           <section class="co-group">
             <div class="co-group-head">
-              <h3 class="co-group-title">Needs a narrative <span class="co-count">${nNeed}</span></h3>
-              ${willSave > 1 ? html`
+              <h3 class="co-group-title">Not written yet</h3>
+              ${withText.size > 0 ? html`
                 <button class="btn btn-sm co-acceptall" disabled=${busy} onClick=${acceptAll}
-                  title="Save every suggestion below as it stands">
-                  <${Icon} name="check" size=${14} /> Accept all ${willSave}
+                  title="Save every suggestion below as it stands, without locking the day">
+                  <${Icon} name="check" size=${14} /> Accept all
                 </button>` : null}
             </div>
             <ul class="co-list">
-              ${needs.map((d) => html`
-                <li key=${d.id} class="co-item" data-entry-id=${d.id}>
+              ${needs.map((g) => {
+    const on = withText.has(g.key);
+    const mixed = g.written.length > 0;
+    return html`
+                <li key=${g.key} class="co-item" data-group=${g.key}
+                  data-entry-id=${g.blank[0].id} data-will=${on ? 'file' : 'stay'}>
                   <div class="co-item-head">
-                    <strong>${label(d)}</strong>
-                    <span class="co-item-hours mono">${fmtHours(d.total)}h</span>
+                    <strong>${g.label}</strong>
+                    <span class="co-item-hours mono">${fmtHours(g.hours)}h</span>
+                    ${/* Marked only where it matters. Filing is the ordinary
+                          outcome and needs no badge; an empty box is the
+                          exception, and it is the one thing on the row that
+                          changes the figure in the title. */''}
+                    ${on ? null : html`<span class="co-state">stays a draft</span>`}
                   </div>
-                  <${GhostInput} multiline rows=${2} value=${valueOf(d)}
-                    suggestions=${sugg[d.cm?.id] || []} expand=${expand}
-                    aria-label=${`Narrative for ${label(d)}`}
+                  ${/* ONE MATTER, ONE ROW, BOTH FIGURES. */''}
+                  ${mixed || g.blank.length > 1 ? html`
+                    <p class="co-item-note">
+                      <span class="mono">${fmtHours(g.blankHours)}h</span>
+                      ${g.blank.length > 1
+    ? ` across ${g.blank.length} entries needs a narrative — this one covers them all`
+    : ' needs a narrative'}
+                      ${mixed ? html`
+                        <span class="co-item-sep">·</span>
+                        <span class="mono">${fmtHours(g.writtenHours)}h</span>
+                        ${` already written${g.written.length > 1 ? ` on ${g.written.length} entries` : ''}: `}
+                        <span class="co-item-had" title=${g.written[0].narrative}>${g.written[0].narrative}</span>` : null}
+                    </p>` : null}
+                  <${GhostInput} multiline rows=${2} value=${valueOf(g)}
+                    suggestions=${sugg[g.cm?.id] || []} expand=${expand}
+                    aria-label=${`Narrative for ${g.label}`}
                     placeholder="What did you do?"
-                    onChange=${(t) => setTexts((p) => ({ ...p, [d.id]: t }))} />
+                    onChange=${(t) => setTexts((p) => ({ ...p, [g.key]: t }))} />
                   <div class="co-item-acts">
-                    <button class="btn btn-sm" onClick=${() => setSkip((s) => ({ ...s, [d.id]: true }))}
+                    <button class="btn btn-sm" onClick=${() => setSkip((s) => ({ ...s, [g.key]: true }))}
                       title="Leave this one as a draft — nothing is lost">Skip</button>
-                    <button class="btn btn-sm" onClick=${() => editEntry(d.id)}
+                    <button class="btn btn-sm" onClick=${() => editEntry(g.blank[0].id)}
                       title="Open the full editor over this review">
                       <${Icon} name="edit" size=${14} /> Edit<kbd class="ovl-kbd" aria-hidden="true">e</kbd>
                     </button>
                   </div>
-                </li>`)}
+                </li>`;
+  })}
             </ul>
           </section>` : null}
 
         ${parked.length > 0 ? html`
           <section class="co-group">
             <div class="co-group-head">
-              <h3 class="co-group-title">Staying a draft <span class="co-count">${parked.length}</span></h3>
+              <h3 class="co-group-title">Staying a draft</h3>
             </div>
             <ul class="co-list co-list-quiet">
-              ${parked.map((d) => html`
-                <li key=${d.id} class="co-row">
-                  <span class="co-row-name">${label(d)}</span>
-                  <span class="co-row-hours mono">${fmtHours(d.total)}h</span>
+              ${parked.map((g) => html`
+                <li key=${g.key} class="co-row">
+                  <span class="co-row-name">${g.label}</span>
+                  <span class="co-row-hours mono">${fmtHours(g.blankHours)}h</span>
                   <button class="btn btn-sm"
-                    onClick=${() => setSkip((s) => { const n = { ...s }; delete n[d.id]; return n; })}
+                    onClick=${() => setSkip((s) => { const n = { ...s }; delete n[g.key]; return n; })}
                     title="Put this one back in the list">Undo</button>
+                  ${/* Skipping a PART-written matter parks only the part with no
+                        words on it; what was already written on the same matter
+                        still files, and is counted in the figure above, so the
+                        row has to say so. */''}
+                  ${g.written.length > 0 ? html`
+                    <span class="co-row-narr">
+                      <span class="mono">${fmtHours(g.writtenHours)}h</span>
+                      ${` on this matter is already written and still files: “${g.written[0].narrative}”`}
+                    </span>` : null}
                 </li>`)}
             </ul>
           </section>` : null}
 
-        ${/* READY — the whole point of this rewrite. A draft that was finished
-              at the moment the timer stopped (a stop chip, the row's own field,
-              the editor) is not a card to be walked through: it is work already
-              done, and it is confirmed once, with everything else, by the
-              primary below. */''}
-        ${nReady > 0 ? html`
+        ${/* ALREADY WRITTEN — the whole point of the wave-1 rewrite. A draft
+              that was finished at the moment the timer stopped (the stop
+              offer, the row's own field, the editor) is not a card to be
+              walked through: it is work already done, and it is confirmed
+              once, with everything else, by the primary below. This is the
+              ONE band that carries a count, because collapsing it hides its
+              rows and a band that hides rows has to say how many. */''}
+        ${ready.length > 0 ? html`
           <section class="co-group co-ready">
             <button class="co-disclosure" aria-expanded=${readyOpen ? 'true' : 'false'}
               onClick=${() => setReadyOpen((v) => !v)}>
               <${Icon} name=${readyOpen ? 'chevronDown' : 'chevronRight'} size=${16} />
-              <span class="co-group-title">Ready <span class="co-count">${nReady}</span></span>
-              <span class="co-row-hours mono">${fmtHours(totalOf(ready))}h</span>
+              <span class="co-group-title">Already written
+                <span class="co-count">${ready.reduce((n, g) => n + g.entries.length, 0)}</span></span>
+              <span class="co-row-hours mono">${fmtHours(ready.reduce((h, g) => h + g.hours, 0))}h</span>
             </button>
             ${readyOpen ? html`
               <ul class="co-list co-list-quiet">
-                ${ready.map((d) => html`
-                  <li key=${d.id} class="co-row">
+                ${ready.map((g) => html`
+                  <li key=${g.key} class="co-row">
                     <span class="co-row-name">
-                      ${label(d)}
-                      ${d.narrative_auto ? html`<span class="auto-badge">AUTO</span>` : null}
+                      ${g.label}
+                      ${g.entries.length > 1 ? html`<span class="co-count">${g.entries.length}</span>` : null}
+                      ${g.written.every((d) => d.narrative_auto) ? html`<span class="auto-badge">AUTO</span>` : null}
                     </span>
-                    <span class="co-row-hours mono">${fmtHours(d.total)}h</span>
-                    <span class="co-row-narr" title=${d.narrative}>${d.narrative}</span>
-                    <button class="btn btn-sm btn-icon" aria-label=${`Edit ${label(d)}`}
-                      title=${`Edit ${label(d)}`} onClick=${() => editEntry(d.id)}>
+                    <span class="co-row-hours mono">${fmtHours(g.hours)}h</span>
+                    <span class="co-row-narr" title=${g.written[0].narrative}>${g.written[0].narrative}</span>
+                    <button class="btn btn-sm btn-icon" aria-label=${`Edit ${g.label}`}
+                      title=${`Edit ${g.label}`} onClick=${() => editEntry(g.written[0].id)}>
                       <${Icon} name="edit" size=${14} />
                     </button>
                   </li>`)}
@@ -545,16 +703,20 @@ export function CloseOut({ onClose, openEditor }) {
               suggestion still sitting in a field (they are the lawyer's answer
               — he read them and left them there), and it leaves anything blank
               as a draft. */''}
-        <p class="closeout-note muted small">${noteFor({ nNeed, parked: parked.length, willSave, willStay, drafts: drafts.length })}</p>
+        <p class="closeout-note muted small">${noteFor({ going, staying, goingHours })}</p>
 
         <div class="ovl-actions">
           <button class="btn" onClick=${() => onClose(changedRef.current)}>
             Not yet<kbd class="ovl-kbd" aria-hidden="true">Esc</kbd>
           </button>
+          ${/* THE PRIMARY CARRIES THE NUMBER, because it is the control that
+                commits it — the same pattern the Export dialog already uses
+                ("Download CSV 17"). */''}
           <button class="btn btn-primary co-primary" disabled=${busy}
-            data-autofocus=${nNeed === 0 ? '' : undefined}
+            data-autofocus=${needs.length === 0 ? '' : undefined}
             onClick=${() => finalizeAndExport(false)}>
-            <${Icon} name="lock" size=${16} /> Finalize & export<kbd class="ovl-kbd" aria-hidden="true">Enter</kbd>
+            <${Icon} name="lock" size=${16} /> Finalize & export${going > 0
+    ? html`<span class="co-primary-count">${going}</span>` : null}<kbd class="ovl-kbd" aria-hidden="true">Enter</kbd>
           </button>
         </div>
       <//>`;
@@ -645,10 +807,24 @@ export function CloseOut({ onClose, openEditor }) {
   // One dialog, every phase. The panel keeps `closeout-card` (this component's
   // own key handler and the e2e suite both select by it) and carries the phase
   // as data, where the backdrop used to.
+  //
+  // It also carries its own shape as data — the smoke suite reads it, and it is
+  // the same split the panel says in words. `data-need` counts ROWS still
+  // needing words (one per matter, so it always equals the number of .co-item
+  // cards on screen); `data-ready` counts already-written ENTRIES wherever they
+  // sit, including the ones now folded into a part-written matter's own card;
+  // `data-filing` / `data-staying` are the one number and its complement.
+  const shapeAttrs = {
+    'data-phase': phase,
+    'data-need': needs.length,
+    'data-ready': filing.writtenEntries,
+    'data-filing': filing.going,
+    'data-staying': filing.staying,
+  };
   return html`
     <${Overlay} title=${title} onClose=${() => onClose(changedRef.current)}
       className=${'closeout-card' + (phase === 'closed' ? ' closeout-closed' : '')}
-      panelAttrs=${{ 'data-phase': phase, 'data-need': needs.length, 'data-ready': ready.length }}
+      panelAttrs=${shapeAttrs}
       initialFocus=".co-item textarea">
       ${body}
     <//>`;

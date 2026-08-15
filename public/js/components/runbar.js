@@ -24,12 +24,45 @@
 //
 // WHERE IT SITS is a stacking decision, made in runbar.css and repeated here
 // because it is the part a future hand will get wrong: the bar is at the TOP.
-// The phone already spends 14% of its screen on two stacked bottom bars (the
-// navigation bar and the dashboard's day footer); a third would be
-// indefensible, and the top edge is the one piece of permanent chrome no other
-// module claims. It clears the sidebar/rail on wider screens rather than
-// painting over the brand, and it sits below --z-overlay so every dialog still
-// covers it (and is marked inert with the rest of .shell while one is open).
+// When it was written the phone was already spending 14% of its screen on two
+// stacked bottom bars (the navigation bar and the dashboard's day footer) and a
+// third would have been indefensible; the top edge is the one piece of
+// permanent chrome no other module claims. It clears the sidebar/rail on wider
+// screens rather than painting over the brand, and it sits below --z-overlay so
+// every dialog still covers it (and is marked inert with the rest of .shell
+// while one is open).
+//
+// ---------------------------------------------------------------------------
+// WAVE 2 — THIS BAR IS NOW THE APP'S ONLY PERSISTENT BAR, and it absorbed the
+// two things that used to need their own.
+//
+// The wave-1 review measured what the first version cost: desktop Today
+// carried .runbar (48px) at the top AND .today-footer (49px) at the bottom —
+// 97px of permanent chrome, both saying "5.5h filed", which the day's stat
+// strip 700px above them also said. Against 49px before the overhaul began.
+// And the phone's bottom bar had grown to seven slots (a filed total, four
+// destinations, capture, close) in 390px, where Material 3 caps a navigation
+// bar at five destinations.
+//
+// So the day footer is gone (components/todayfooter.js renders nothing now)
+// and the phone's bar is back to five, and both of their contents live here:
+//
+//   the FILED TOTAL — but only on the screens that do not already state it.
+//     Today's own stat strip says "5.5h filed today" with the billable split,
+//     the target and the week beside it, which is strictly more than this bar
+//     could. Repeating it 20px higher is precisely the defect the review
+//     raised, so app.js passes showTotal only away from Today. Everywhere else
+//     this bar is the ONLY place the number exists.
+//   CLOSE THE DAY — only on Today, because `c` only fires on Today and because
+//     a "Close" control on Calendar closed a day other than the one on screen
+//     (the review's own D6). Touch and keyboard now agree about where and when
+//     the day can be closed.
+//
+// The bar's height therefore follows what it is carrying rather than being a
+// constant slab: a figures-only STRIP where it has nothing to be pressed, and a
+// full BAR wherever it does — which is Today (Close the day) and any screen
+// with a timer running (Stop). Those two are the same height on purpose; see
+// runbar.css.
 // ============================================================================
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, useCallback, fmtClock, fmtHours, emitToast, todayStr, Icon } from '/js/ui.js';
@@ -44,8 +77,10 @@ const POLL_MS = 5000;
 // It used to be rendered by the dashboard's day footer, which is a dashboard
 // component — so on Calendar, Entries and Settings the number a lawyer manages
 // his day by simply did not exist. One read of the stats range endpoint (no
-// API change), refreshed on every entry write and on wake, shared by the run
-// bar and the phone's bottom bar so the figure is stated once per viewport.
+// API change), refreshed on every entry write and on wake. Exactly one surface
+// consumes it now — this bar — so the figure cannot be stated twice at any
+// width, which is what the day footer and the phone's bottom-bar label were
+// doing to it a wave ago.
 export function useDayTotal(enabled = true) {
   const [total, setTotal] = useState(null);
   useEffect(() => {
@@ -145,7 +180,10 @@ function useBrowserChrome(timers, fetchedAt, enabled) {
   }, [enabled]);
 }
 
-export function RunBar({ enabled = true, dayTotal = null, showTotal = false }) {
+export function RunBar({
+  enabled = true, dayTotal = null, showTotal = false,
+  showClose = false, onCloseDay = null,
+}) {
   const { timers, fetchedAt } = useTimers(enabled);
   const [busy, setBusy] = useState(false);
   const [, tick] = useState(0);
@@ -165,20 +203,30 @@ export function RunBar({ enabled = true, dayTotal = null, showTotal = false }) {
   // shell's padding has to answer it at three different breakpoints. Written
   // imperatively so a bar that appears mid-session does not depend on the app
   // root re-rendering to make room for itself.
-  // TWO STATES, TWO OFFSETS. `tk-runbar` says a bar is on the top edge at all;
-  // `tk-running` says it is the taller, live one. The resting bar carries only
-  // the day's filed total, so it is a slim strip — and on a phone it stands
-  // down altogether, because there the bottom bar states that number (see the
-  // ownership note at the end of runbar.css).
-  const mounted = live || showTotal;
+  //
+  // THREE CLASSES, because the bar's height follows its contents:
+  //   tk-runbar      a bar is on the top edge at all — the figures-only strip.
+  //   tk-runbar-act  …and it carries a control (Close the day, on Today).
+  //   tk-running     …and a timer is live, so it carries Stop as well.
+  // The last two are the same height on purpose (runbar.css says why): Today is
+  // the screen that has a control at rest AND the screen made of timers being
+  // started and stopped, so the list under the bar must not move on every click.
+  // Set together — act and running are refinements of runbar — and read in that
+  // order by runbar.css so the last one that applies wins.
+  //
+  // The bar is ALWAYS mounted now. It used to appear only when a timer ran or
+  // when the day's total had nowhere else to go, which is how `.runbar.resting`
+  // ended up computing to height 0 on a phone while still rendering the text
+  // "5.6h filed" — a fixed element painting nothing. A bar that comes and goes
+  // also shoved the page down 53px every time a timer started.
+  const hasAction = showClose;
   useEffect(() => {
-    document.documentElement.classList.toggle('tk-runbar', mounted);
-    document.documentElement.classList.toggle('tk-running', live);
-    return () => {
-      document.documentElement.classList.remove('tk-runbar');
-      document.documentElement.classList.remove('tk-running');
-    };
-  }, [live, mounted]);
+    const cl = document.documentElement.classList;
+    cl.toggle('tk-runbar', enabled);
+    cl.toggle('tk-runbar-act', enabled && hasAction && !live);
+    cl.toggle('tk-running', enabled && live);
+    return () => { cl.remove('tk-runbar', 'tk-runbar-act', 'tk-running'); };
+  }, [enabled, live, hasAction]);
 
   const stopAll = useCallback(async () => {
     if (busy) return;
@@ -215,21 +263,41 @@ export function RunBar({ enabled = true, dayTotal = null, showTotal = false }) {
     toggleTimerPip().catch((e) => emitToast(String(e.message || e), { error: true }));
   }, []);
 
-  if (!mounted) return null;
+  if (!enabled) return null;
 
-  // The day's number, wherever the bar is. It is the only place it exists on
-  // Calendar, Entries and Settings — measured before this: nowhere at all.
+  // The day's number. It is the ONLY place it exists on Calendar, Entries and
+  // Settings — measured before this bar: nowhere at all — and it is deliberately
+  // absent on Today, where the day's own stat strip already carries it with the
+  // billable split, the target and the week beside it. app.js decides that with
+  // `showTotal`; see the ownership note at the end of runbar.css.
   const total = showTotal && dayTotal != null ? html`
     <span class="runbar-total" title="Filed today (all entries)">
       <strong class="mono">${fmtHours(dayTotal)}h</strong>
-      <span class="muted small">filed</span>
+      <span class="runbar-total-cap muted small">filed</span>
     </span>` : null;
+
+  // The day's one commit, in the one place it exists now. It was a footer
+  // button on the desktop and a seventh bottom-bar slot on the phone; it is a
+  // trailing action here, on Today only, so it and `c` mean the same thing on
+  // the same screen. The label collapses to its icon while a timer is running
+  // on a phone — that is the one state where this bar has a name, a clock and
+  // a Stop to fit in 390px as well.
+  const close = showClose && onCloseDay ? html`
+    <button type="button" class="btn btn-sm runbar-close" onClick=${onCloseDay}
+      aria-label="Close the day"
+      title="Review, finalize and export today (c)">
+      <${Icon} name="lock" size=${14} />
+      <span class="runbar-close-label">Close the day</span>
+      <kbd class="btn-kbd">c</kbd>
+    </button>` : null;
 
   if (!live) {
     return html`
-      <div class="runbar resting" role="region" aria-label="Today">
+      <div class=${'runbar resting' + (close ? ' has-action' : '')}
+        role="region" aria-label="Today">
         ${total}
         <span class="runbar-gap"></span>
+        ${close}
       </div>`;
   }
 
@@ -253,6 +321,7 @@ export function RunBar({ enabled = true, dayTotal = null, showTotal = false }) {
           aria-label="Float timer window" onClick=${popOut}>
           <${Icon} name="copy" size=${16} />
         </button>` : null}
+      ${close}
       <button type="button" class="btn runbar-stop" disabled=${busy} onClick=${stopAll}>
         <${Icon} name="stop" size=${14} /> Stop
       </button>

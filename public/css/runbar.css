@@ -8,62 +8,90 @@
    so a running timer can never be out of sight.
 
    THE STACKING CONTRACT, decided once, here, because it is the part a later
-   hand will get wrong. Two bars already claim the bottom edge of a phone:
-
-     bottom edge ──┐
-                   │  safe-area inset      (padding inside the nav bar)
-                   │  .botnav              --z-nav      (95)
-                   │  .today-footer        --z-sticky   (90), pushed up by
-                   │                       --shell-nav-total
-                   │  toasts               above both
-   ... 121px, 14% of a 390×844 phone, permanently. A third bottom bar would be
-   indefensible, so the run bar takes the TOP edge, which nothing else claims:
+   hand will get wrong. ONE fixed bar on the top edge, one on the bottom, and
+   that is the whole of the app's permanent chrome:
 
      top edge ─────┐
                    │  safe-area inset      (padding inside the bar)
                    │  .runbar              --z-nav      (95)
+     …
+     bottom edge ──┐
+                   │  toasts               above the bar
+                   │  .botnav (phone only) --z-nav      (95)
+                   │  safe-area inset      (padding inside the nav bar)
+
+   There used to be a third — `.today-footer`, pinned above .botnav on a phone
+   and along the bottom of the desktop dashboard. The wave-1 review measured
+   what that cost: desktop Today carried this bar (48px) AND that one (49px) =
+   97px, both saying "5.5h filed", which the day's stat strip already said 700px
+   above them; against 49px before the overhaul began. It is deleted. Its filed
+   total and its "Close the day" are contents of this bar now, which is why this
+   file grew a control and a second height.
 
    Consequences, all deliberate:
-     - it never overlaps the phone's navigation bar or the day footer, and the
-       day footer's own live clock stands down while this bar is up (the rule
-       at the end of this file) so the same seconds are not counted twice ten
-       inches apart;
      - it clears the sidebar (≥1024px) and the rail (768–1023px) rather than
        painting over the brand, so the shell still reads as one frame;
      - it sits below --z-overlay (300), and it is inside .shell — which
        overlay.js marks `inert` + aria-hidden — so every dialog covers it and
        nothing in it can be tapped, focused or announced from behind a scrim;
-     - .main gains exactly the bar's height while it is up (.tk-running, set on
-       <html> by the component, next to .tk-overlay-open) so no content is ever
-       trapped underneath it.
+     - .main gains exactly the bar's current height (.tk-runbar / .tk-runbar-act
+       / .tk-running, set on <html> by the component next to .tk-overlay-open)
+       so no content is ever trapped underneath it.
 
    Every value is a token or a composition of tokens.
    ========================================================================== */
 
 /* THE OFFSET CONTRACT. --runbar-total is how much of the top of the viewport
-   this bar is currently occupying — and it is 0 whenever no timer is running,
-   so anything that pins itself to the top of the scrollport can offset by it
-   unconditionally:
+   this bar is currently occupying, so anything that pins itself to the top of
+   the scrollport can offset by it unconditionally:
 
        position: sticky; top: calc(var(--runbar-total) + var(--space-2));
 
    Any module that sticks something to the top MUST do that, or it will hide
-   under this bar the moment a timer starts. (Known outstanding case at the
-   time of writing: the entry ledger's bulk-action bar, an inline
-   `position: sticky; top: 8px` in views/search.js — flagged for its owner,
-   who is rebuilding that surface in this same wave.) */
+   under this bar. (Known outstanding case at the time of writing: the entry
+   ledger's bulk-action bar, an inline `position: sticky; top: 8px` in
+   views/search.js — flagged for its owner, who is rebuilding that surface in
+   this same wave.)
+
+   THREE CLASSES, TWO HEIGHTS, on one rule: the bar is a STRIP when it carries
+   only figures and a BAR when it carries a control. The component sets the
+   taller classes alongside `tk-runbar`, so these must stay in this order — the
+   last matching rule wins:
+
+     tk-runbar      a figures-only strip: the day's filed total, no control.
+     tk-runbar-act  …plus one control (Close the day, on Today).
+     tk-running     …a timer is live: name, clock, Stop.
+
+   The last two are the same height on purpose. Today is the one screen that
+   carries a control at rest, and it is also the screen whose whole content is
+   a list of timers being started and stopped: if the bar changed height on
+   every start, the list would jump under the thumb every time.
+
+   The bar is always mounted, at every width. It used to render nothing at all
+   when no timer was running and the day's number had somewhere else to go,
+   which is how `.runbar.resting` came to compute to height 0 on a phone while
+   still rendering the text "5.6h filed", and why starting a timer shoved the
+   whole page down 53px. */
 :root {
   /* A 44px touch row plus a little air; on a phone the row itself is the
      44px minimum plus its own padding, so the bar is a step taller. */
   --runbar-h: calc(var(--tap-min) + var(--space-1));
-  /* The RESTING bar carries one figure and no control, so it is a strip, not
-     a bar — a running timer must always be visibly taller than a quiet day. */
+  /* Figures only: sized off the small-control step, not the touch step. */
   --runbar-rest-h: calc(var(--control-h-sm) + var(--space-1));
+  /* Resting, with one control in it (Close the day, on Today). Deliberately
+     the SAME height as the running bar: on the one screen that carries a
+     control at rest, starting or stopping a timer must not move the list of
+     timers underneath it. The owner starts and stops these all day; a 6px
+     lurch under the thumb on every click is not a rounding error to him. */
+  --runbar-act-h: var(--runbar-h);
   --runbar-safe-t: env(safe-area-inset-top, 0px);
   --runbar-total: 0px;
 }
 :root.tk-runbar {
   --runbar-total: calc(var(--runbar-rest-h) + var(--border-w) + var(--runbar-safe-t));
+}
+:root.tk-runbar-act {
+  --runbar-total: calc(var(--runbar-act-h) + var(--border-w) + var(--runbar-safe-t));
 }
 :root.tk-running {
   --runbar-total: calc(var(--runbar-h) + var(--border-w) + var(--runbar-safe-t));
@@ -128,13 +156,23 @@
 .runbar-stop:hover { border-color: var(--border-strong); }
 .runbar-pop { flex: none; }
 
-/* The resting strip: one figure, no controls, no live dot, and a quieter
-   surface so a running timer is unmistakably the louder of the two states. */
+/* THE DAY'S COMMIT. It is a secondary control, not a primary: the accent in
+   this app belongs to the thing you act on twenty times a day (start a timer,
+   capture a line), and closing the day happens once. Same reasoning the day
+   footer's button carried, same shape, one bar higher. */
+.runbar-close { flex: none; font-weight: var(--fw-semibold); }
+.runbar-close:hover { border-color: var(--border-strong); }
+
+/* The resting strip: figures, no controls, no live dot, and a quieter surface
+   so a running timer is unmistakably the louder of the two states. */
 .runbar.resting {
   height: calc(var(--runbar-rest-h) + var(--runbar-safe-t));
   background: var(--surface-2);
   box-shadow: none;
 }
+/* …and the resting strip WITH a control in it. Still the quiet surface — it is
+   the same state — but tall enough to hold a real target. */
+.runbar.resting.has-action { height: calc(var(--runbar-act-h) + var(--runbar-safe-t)); }
 
 /* Room for the bar. Mirrors shell.css's own .main padding steps, and only ever
    changes the top one. */
@@ -150,30 +188,48 @@
 @media (max-width: 767px) {
   /* The Stop button is a real 44px target here (base.css tier 2), so the bar
      grows to hold it rather than clipping it. */
-  :root { --runbar-h: calc(var(--control-h-touch) + var(--space-2)); }
+  :root {
+    --runbar-h: calc(var(--control-h-touch) + var(--space-2));
+    /* Nothing but a figure: one line of tabular numerals plus air. There is no
+       control in this state, so it does not owe the touch floor anything. */
+    --runbar-rest-h: calc(var(--lh-num-sm) + var(--space-2));
+  }
+  /* …and the figure steps down to match, which is also the right rank for it:
+     beside a live clock the filed total is the quieter of the two numbers, and
+     390px has no width to spare for a name that has to truncate anyway. */
+  .runbar-total strong {
+    font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
+    letter-spacing: var(--ls-num-sm); line-height: var(--lh-num-sm);
+  }
   .tk-runbar .main { padding-top: calc(var(--runbar-total) + var(--space-5)); }
-  /* THE PHONE SPENDS NOTHING ON A QUIET DAY. Below 768px the day's filed total
-     is the bottom bar's leading label, so the resting strip has nothing left
-     to say — it stands down entirely and takes its offset with it. Measured
-     before this: three fixed bars, 173px, 20.5% of a 390×844 phone. Now it is
-     60px idle and 112px with a timer running. */
-  :root.tk-runbar:not(.tk-running) { --runbar-total: 0px; }
-  .runbar.resting { display: none; }
-  .runbar-total { display: none; }
+  /* On Today, 390px has to hold a name, a clock, Close and Stop at once. The
+     name is the only elastic thing in the row, so Close gives ground first and
+     drops to its icon — its aria-label and its title both still say "Close the
+     day", and it keeps the full 44×44 target.
+     (The filed total keeps its caption: it and Close are never in the bar at
+     the same time — the total appears only away from Today and Close only on
+     it — so a bare "5.5h" is never left sitting next to a running clock with
+     nothing to say which is which.) */
+  .tk-running .runbar-close-label { display: none; }
   /* Document picture-in-picture is a desktop-Chrome capability; the control
      for it has no business taking a thumb-sized slot on a phone that cannot
      use it. It stays in Settings → Tools on every platform. */
   .runbar-pop { display: none; }
 }
 
-/* WHO OWNS THE DAY'S NUMBER, so no two bars ever say it twice:
-     ≤767px  the BOTTOM BAR — its leading label, on every screen, always
-             visible, with "Close the day" as its trailing action. The day
-             footer is not rendered at this width and this bar's total is
-             hidden.
-     ≥768px  the day footer on the dashboard (where a day is closed), and THIS
-             BAR everywhere else — which is the hole the teardown measured
-             (§7, §D1): navigate off the dashboard and the figure a lawyer
-             manages his day by existed nowhere at all. app.js passes
-             showTotal only where the footer is not.
-   The LIVE CLOCK and Stop are this bar's alone, at every width. */
+/* WHO SAYS WHAT, so nothing in the shell is ever stated twice:
+
+   THE DAY'S FILED TOTAL — this bar, on every screen EXCEPT Today, at every
+     width. On Today the day's own stat strip says "5.5h filed today" with the
+     billable split, the target and the week beside it, and app.js withholds
+     `showTotal` there rather than repeating the figure 20px higher. That
+     repetition, across two fixed bars and a stat strip, is exactly what the
+     wave-1 review measured on desktop Today (97px of chrome for one number).
+     Before this bar existed the figure did not exist off the dashboard at all.
+
+   CLOSE THE DAY — this bar, on Today ONLY, at every width, because `c` fires
+     only on Today. It used to be a footer button on a desktop and a seventh
+     bottom-bar slot on a phone, where it also closed a day other than the one
+     on screen when pressed from Calendar.
+
+   THE LIVE CLOCK AND STOP — this bar's alone, everywhere, always. */

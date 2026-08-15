@@ -300,14 +300,29 @@ await step('dashboard shows the entry and meter', async () => {
   await waitFor('.meter-bar');
 });
 
-await step('persistent today footer: live total, ticking clock, close-the-day button', async () => {
-  await waitFor('.today-footer');
-  await page.waitForFunction(
-    () => /\d+(\.\d+)?h/.test(document.querySelector('.today-footer .tf-total')?.textContent || ''),
-    { timeout: 4000 });
+await step('persistent run bar: live total, ticking clock, close-the-day button', async () => {
+  // The day footer is gone (two fixed bars on desktop Today, both saying the
+  // same filed total the stat strip already said). Both of its jobs are on the
+  // persistent run bar now, so this step asserts them there instead — the
+  // capability is unchanged and reachable on every viewport.
+  await waitFor('.runbar');
   const hasCloseBtn = await page.evaluate(() =>
-    [...document.querySelectorAll('.today-footer button')].some((b) => b.textContent.includes('Close the day')));
-  if (!hasCloseBtn) throw new Error('today footer missing the "Close the day" button');
+    [...document.querySelectorAll('.runbar button')]
+      .some((b) => /close the day/i.test(b.getAttribute('aria-label') || b.textContent || '')));
+  if (!hasCloseBtn) throw new Error('run bar missing the "Close the day" button on Today');
+
+  // The filed total is stated once per screen: on Today the day's stat strip
+  // carries it (with the billable split and the target), and the run bar
+  // carries it on every other screen — which is where it did not exist at all
+  // before the bar (teardown D1).
+  await page.waitForFunction(
+    () => /\d+(\.\d+)?h/.test(document.querySelector('.daystat-hero')?.textContent || ''),
+    { timeout: 4000 });
+  await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(
+    () => /\d+(\.\d+)?h/.test(document.querySelector('.runbar .runbar-total')?.textContent || ''),
+    { timeout: 5000 });
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
 
   // the running clock actually ticks: start a scratch timer via the API,
   // reload so the dashboard payload sees it running, watch the clock move,
@@ -320,9 +335,8 @@ await step('persistent today footer: live total, ticking clock, close-the-day bu
   })).json();
   await fetch(`${base}/api/timers/${scratch.id}/start`, { method: 'POST' });
   await page.reload({ waitUntil: 'networkidle0' });
-  // The live clock lives on the persistent run bar now (it is visible on every
-  // screen, not just this one — teardown D1); the footer keeps the filed total
-  // and Close the day. Same capability, one surface up.
+  // The live clock lives on the persistent run bar (it is visible on every
+  // screen, not just this one — teardown D1).
   await waitFor('.runbar .runbar-clock');
   const before = await page.$eval('.runbar .runbar-clock', (el) => el.textContent.trim());
   await page.waitForFunction((prev) =>
@@ -331,7 +345,7 @@ await step('persistent today footer: live total, ticking clock, close-the-day bu
   const del = await fetch(`${base}/api/timers/${scratch.id}`, { method: 'DELETE' });
   if (!del.ok) throw new Error(`scratch timer cleanup failed: ${del.status}`);
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.today-footer');
+  await waitFor('.runbar');
 });
 
 await step('create timer; a sub-2s stop reverts as if nothing happened', async () => {
@@ -352,7 +366,7 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
   if (!title.startsWith('00:00')) throw new Error(`misclick must fully revert, got ${title}`);
 });
 
-await step('backdated start (10m ago) → stop → inline chips; picking one FINISHES the entry', async () => {
+await step('backdated start (10m ago) → stop → the entry FINISHES ITSELF, inline, no dialog', async () => {
   await page.click('.timer-row button[title="Row menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-inline button', '10m');
@@ -367,32 +381,54 @@ await step('backdated start (10m ago) → stop → inline chips; picking one FIN
     inRow: !!el.closest('.work-row'), position: getComputedStyle(el).position,
   }));
   if (!anchored.inRow) throw new Error(`chips are not on the stopped row: ${JSON.stringify(anchored)}`);
-  // ONE TAP FINISHES IT. Before this the pick PATCHed the narrative and then
-  // opened the 25-control editor to confirm text the user had just chosen —
-  // three interactions and a context switch for a one-tap action. Now the
-  // pick is the commit: no dialog, the row carries the narrative, and the
-  // toast carries the way back.
-  await clickText('.stop-chips .chip-btn', 'Reviewed lease agreement');
-  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 5000 });
-  await sleep(500);
-  if (await page.$('.ovl-panel')) throw new Error('picking a chip must not open a dialog');
+  // ZERO TAPS FINISH IT. This step used to click the offer's ticked chip and
+  // assert that the click finished the entry. Measured across a five-entry
+  // day, that tap was the whole cost of the feature — 17 interactions against
+  // 12 for leaving every stop alone — because the offer had ALREADY written
+  // his own top phrase and was re-offering the same sentence in chip shape.
+  // The pre-fill is the capability; the chip was the tax. So the settled
+  // narrative is text now, and the one-tap commit (which still exists, on
+  // chips that would genuinely change the entry) is asserted in the
+  // stale-surface step below, where the matter has a real alternative.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.stop-chips [data-stop-settled]');
+    return !!el && el.getAttribute('data-stop-settled').includes('Reviewed lease agreement');
+  }, { timeout: 8000 });
+  if (await page.$('.ovl-panel')) throw new Error('the stop offer must not open a dialog');
+  // NOTHING CHIP-SHAPED RE-OFFERS WHAT IS ALREADY ON THE ENTRY, and nothing
+  // is drawn as taken unless the entry really holds it.
+  const settledText = await page.$eval('.stop-chips [data-stop-settled]',
+    (el) => el.getAttribute('data-stop-settled'));
+  const chipTexts = await page.$$eval('.stop-chips .chip-btn',
+    (els) => els.map((el) => el.textContent.replace(/\s+/g, ' ').trim()));
+  if (chipTexts.some((t) => t.includes(settledText))) {
+    throw new Error(`the settled narrative is re-offered as a chip: ${JSON.stringify(chipTexts)}`);
+  }
+  if (await page.$('.stop-chips .chip-btn[aria-pressed="true"]')) {
+    throw new Error('a chip is drawn as already applied');
+  }
   const rowText = await page.$eval('.today-list .work-row', (el) => el.textContent.replace(/\s+/g, ' '));
   if (!rowText.includes('Reviewed lease agreement')) {
-    throw new Error(`chip narrative did not land on the row: "${rowText}"`);
+    throw new Error(`the pre-filled narrative did not land on the row: "${rowText}"`);
   }
-  // …and it really is saved, not just painted
+  // …and it really is saved, not just painted — exactly what the offer says
+  // it saved, character for character.
   const dayEntries = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
-  if (!dayEntries.some((e) => String(e.narrative || '').startsWith('Reviewed lease agreement'))) {
-    throw new Error('chip narrative did not reach the server');
+  if (!dayEntries.some((e) => String(e.narrative || '') === settledText)) {
+    throw new Error(`nothing on the server carries the settled narrative: ${JSON.stringify(settledText)}`);
   }
-  // the overwrite is reversible, through the app's own toast-with-Undo pattern
-  // (up to three toasts can be on screen; earlier steps leave theirs behind)
+  // an unasked write is reversible, through the app's own toast-with-Undo
+  // pattern (up to three toasts can be on screen; earlier steps leave theirs)
   const toasts = await page.$$eval('.toast', (els) => els.map((el) => ({
     text: el.textContent, action: el.querySelector('button')?.textContent.trim(),
   })));
   if (!toasts.some((t) => t.action === 'Undo')) {
-    throw new Error(`the pick must offer Undo, got ${JSON.stringify(toasts)}`);
+    throw new Error(`an unasked write must offer Undo, got ${JSON.stringify(toasts)}`);
   }
+  // there is still a way to overrule it without opening anything
+  const canChange = await page.evaluate(() => [...document.querySelectorAll('.stop-chips button')]
+    .some((b) => /change the wording|write your own/i.test(b.textContent)));
+  if (!canChange) throw new Error('the settled narrative has no change affordance');
   // ONE MERGED LIST, KEYED BY MATTER (wave-1b). The timer, the entry it just
   // filled and the earlier entry recorded by hand on the SAME matter are one
   // row — a timer and a record are the same work at two moments. (Before this
@@ -406,6 +442,199 @@ await step('backdated start (10m ago) → stop → inline chips; picking one FIN
   if (!perRow.some((n) => n >= 2)) {
     throw new Error(`the matter's entries did not merge onto one row: ${JSON.stringify(perRow)}`);
   }
+  // leave the board clean for the next step
+  await page.click('.stop-chips button[title^="Dismiss"]');
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+});
+
+// ---------------------------------------------------------------------------
+// THE STOP OFFER BELONGS TO ONE ENTRY  (wave-2b3 regression)
+//
+// The mount site renders one `<StopChips popup=…>` for whichever stop is
+// current. With no key on it, React reused the SAME instance across two
+// different stops: the offer re-anchored into the new entry's row and headed
+// with the new entry's hours and matter, while its chips, its "already saved"
+// tick and its caption were still the PREVIOUS entry's. Reproduced in the
+// app's own rhythm — stop A, start B, stop B — the surface sat in Northgate's
+// row, over a row reading "no narrative", offering Acme's billing narrative
+// with `chip-applied` and `aria-pressed="true"` under "Written in from your
+// own wording on this matter — already saved". Tapping it (or pressing the `1`
+// its stale key cap advertised) wrote one client's narrative onto another
+// client's entry; verified in SQLite. Leaving it alone was no better: the
+// second entry stayed blank behind a screen that said it was done.
+//
+// Two matters with two different clients and two different phrasebooks, so a
+// leak is unmistakable in the assertions rather than inferred.
+// ---------------------------------------------------------------------------
+await step('stop A → start B → stop B: the offer is B\'s, never A\'s (chips, tick, caption, one-tap commit)', async () => {
+  const mkJson = (url, body) => fetch(`${base}${url}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+  const dayBefore = (n) => {
+    const d = new Date(`${todayLocal()}T12:00:00`);
+    d.setDate(d.getDate() - n);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const A_PHRASE = 'Reviewed the landlord termination notice and the underlying lease.';
+  const B_TOP = 'Reviewed the diligence responses and updated the open issues list.';
+  const B_ALT = 'Prepared the data room index and circulated it to the deal team.';
+
+  const cmA = await mkJson('/api/cms', { cm_number: '999301-000001', short_name: 'Stale-check A', client_name: 'Stale Client A', billable: 1 });
+  const cmB = await mkJson('/api/cms', { cm_number: '999302-000001', short_name: 'Stale-check B', client_name: 'Stale Client B', billable: 1 });
+  const seeded = [];
+  // A's phrasebook holds exactly one phrase; B's holds two, so B has a real
+  // alternative to tap and A's sentence has no business appearing at all.
+  for (let i = 1; i <= 4; i += 1) {
+    seeded.push(await mkJson('/api/entries', { date: dayBefore(i), cm_id: cmA.id, narrative: A_PHRASE, tasks: [{ task_code: 'Review', duration: 1.1 }] }));
+    seeded.push(await mkJson('/api/entries', { date: dayBefore(i), cm_id: cmB.id, narrative: B_TOP, tasks: [{ task_code: 'Due Diligence', duration: 0.9 }] }));
+  }
+  for (let i = 5; i <= 6; i += 1) {
+    seeded.push(await mkJson('/api/entries', { date: dayBefore(i), cm_id: cmB.id, narrative: B_ALT, tasks: [{ task_code: 'Due Diligence', duration: 0.6 }] }));
+  }
+  const tA = await mkJson('/api/timers', { name: '__stale-A__', cm_id: cmA.id, task_code: 'Review' });
+  const tB = await mkJson('/api/timers', { name: '__stale-B__', cm_id: cmB.id, task_code: 'Due Diligence' });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.today-list .work-row');
+
+  const rowAct = async (name, title) => {
+    await page.waitForFunction((nm, t) => [...document.querySelectorAll('.today-list .work-row')]
+      .some((r) => r.textContent.includes(nm) && r.querySelector(`button[title="${t}"]`)), { timeout: 6000 }, name, title);
+    await page.evaluate((nm, t) => {
+      const row = [...document.querySelectorAll('.today-list .work-row')].find((r) => r.textContent.includes(nm));
+      row.scrollIntoView({ block: 'center' });
+      row.querySelector(`button[title="${t}"]`).click();
+    }, name, title);
+  };
+  // Backdated 30m through the row menu, the same UI path the step above uses —
+  // an API start would not tell the running page, and reloading would destroy
+  // the very surface this step is about.
+  const startBackdated = async (name) => {
+    await rowAct(name, 'Row menu');
+    await waitFor('.ctx-menu');
+    await clickText('.ctx-menu .ctx-inline button', '30m');
+    await page.waitForFunction((nm) => [...document.querySelectorAll('.today-list .work-row.running')]
+      .some((r) => r.textContent.includes(nm)), { timeout: 6000 }, name);
+  };
+  // Everything the offer is currently claiming, read straight off the DOM.
+  const readOffer = () => page.evaluate(() => {
+    const el = document.querySelector('.stop-chips');
+    if (!el) return null;
+    const settledEl = el.querySelector('[data-stop-settled]');
+    return {
+      head: el.querySelector('.stop-chips-head')?.textContent.replace(/\s+/g, ' ').trim() || '',
+      entryId: el.closest('.work-row')?.dataset.entryId || null,
+      settled: settledEl ? settledEl.getAttribute('data-stop-settled') : null,
+      notes: [...el.querySelectorAll('.stop-chips-note')].map((n) => n.textContent.replace(/\s+/g, ' ').trim()),
+      chips: [...el.querySelectorAll('.chip-btn')].map((b) => ({
+        text: b.querySelector('span')?.textContent.trim() || '',
+        applied: b.classList.contains('chip-applied') || b.getAttribute('aria-pressed') === 'true',
+        kbd: b.querySelector('kbd')?.textContent.trim() || null,
+      })),
+    };
+  });
+  const entryFor = async (cmNumber) => {
+    const all = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
+    return all.find((e) => e.cm && e.cm.cm_number === cmNumber) || null;
+  };
+
+  // ---- stop A: it pre-fills from A's own phrasebook and stands there ----
+  await startBackdated('__stale-A__');
+  await rowAct('__stale-A__', 'Stop & file time');
+  await waitFor('.stop-chips');
+  await page.waitForFunction((want) => document.querySelector('.stop-chips [data-stop-settled]')
+    ?.getAttribute('data-stop-settled') === want, { timeout: 8000 }, A_PHRASE);
+
+  // ---- start B while A's offer is still up, then stop B ----
+  await startBackdated('__stale-B__');
+  if (!(await page.$('.stop-chips'))) {
+    throw new Error("A's offer closed itself before B stopped — the regression this step exists for cannot happen");
+  }
+  await rowAct('__stale-B__', 'Stop & file time');
+  const entryB = await (async () => {
+    for (let i = 0; i < 40; i += 1) {
+      const e = await entryFor('999302-000001');
+      if (e) return e;
+      await sleep(200);
+    }
+    throw new Error('stopping __stale-B__ never filed an entry');
+  })();
+  // The offer must have re-derived itself for B: B's row, B's pre-fill. When
+  // it has not, say what it is showing instead — a bare timeout here reads as
+  // flake, and this exact failure is a cross-client narrative on screen.
+  await page.waitForFunction((id, want) => {
+    const el = document.querySelector('.stop-chips');
+    if (!el) return false;
+    if (el.closest('.work-row')?.dataset.entryId !== String(id)) return false;
+    return el.querySelector('[data-stop-settled]')?.getAttribute('data-stop-settled') === want;
+  }, { timeout: 10000 }, entryB.id, B_TOP).catch(async () => {
+    throw new Error(`the offer never became B's — it is showing ${JSON.stringify(await readOffer())}`);
+  });
+  await sleep(400);
+  const offer = await readOffer();
+  if (!offer) throw new Error('the offer vanished on B');
+
+  // 1. IT IS B'S SURFACE, HEAD TO FOOT.
+  if (!offer.head.includes('Stale-check B')) {
+    throw new Error(`the offer still heads with the previous entry: ${JSON.stringify(offer.head)}`);
+  }
+  const leak = JSON.stringify([offer.settled, offer.chips.map((c) => c.text), offer.notes]);
+  if (leak.includes('termination notice')) {
+    throw new Error(`A's narrative leaked into B's offer: ${leak}`);
+  }
+  // 2. IT SHOWS B'S PHRASEBOOK — and only B's.
+  if (offer.chips.length === 0) throw new Error("B's alternative phrase is not on offer");
+  for (const c of offer.chips) {
+    if (![B_TOP, B_ALT].includes(c.text)) {
+      throw new Error(`a chip is not from B's phrasebook: ${JSON.stringify(c.text)}`);
+    }
+  }
+  // the key caps index the chips actually on screen, so `1` can never commit
+  // a sentence that is not the first chip
+  offer.chips.forEach((c, i) => {
+    if (c.kbd !== null && c.kbd !== String(i + 1)) {
+      throw new Error(`chip ${i} advertises key ${c.kbd}: ${JSON.stringify(offer.chips)}`);
+    }
+  });
+  // 3. NOTHING IS DRAWN AS APPLIED UNLESS THIS ENTRY REALLY HOLDS IT.
+  const liveB = await (await fetch(`${base}/api/entries/${entryB.id}`)).json();
+  if (offer.settled !== null && String(liveB.narrative || '') !== offer.settled) {
+    throw new Error(`the offer says "${offer.settled}" is saved; the entry holds "${liveB.narrative}"`);
+  }
+  for (const c of offer.chips) {
+    if (c.applied && String(liveB.narrative || '') !== c.text) {
+      throw new Error(`chip "${c.text}" is marked applied but the entry holds "${liveB.narrative}"`);
+    }
+  }
+
+  // 4. TAPPING THE FIRST CHIP WRITES B'S OWN TEXT — and leaves A alone.
+  const firstChip = offer.chips[0].text;
+  await page.evaluate(() => {
+    const b = document.querySelector('.stop-chips .chip-btn');
+    b.scrollIntoView({ block: 'center' });
+    b.click();
+  });
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 6000 });
+  const afterB = await (await fetch(`${base}/api/entries/${entryB.id}`)).json();
+  if (String(afterB.narrative || '') !== firstChip) {
+    throw new Error(`the chip wrote "${afterB.narrative}", not the "${firstChip}" it showed`);
+  }
+  const afterA = await entryFor('999301-000001');
+  if (String(afterA.narrative || '') !== A_PHRASE) {
+    throw new Error(`A's entry changed while B was being finished: "${afterA.narrative}"`);
+  }
+
+  // cleanup: today's two filed entries, the seeded history, both timers
+  for (const e of [afterA, afterB, ...seeded]) {
+    const del = await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`stale-check entry cleanup failed: ${del.status}`);
+  }
+  for (const t of [tA, tB]) {
+    const del = await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' });
+    if (!del.ok) throw new Error(`stale-check timer cleanup failed: ${del.status}`);
+  }
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-row');
 });
 
 await step('quick-capture palette (q): "call re acme .3" parses clean and files', async () => {
@@ -434,7 +663,26 @@ await step('quick-capture palette (q): "call re acme .3" parses clean and files'
   if (!del.ok) throw new Error(`quick-capture cleanup delete failed: ${del.status}`);
 });
 
+// The row's decimal clock is a 44px control where the clock IS the row's own
+// figure (the ordinary case: the timer filed the entry, so the clock and the
+// day's record are the same number). Where they have parted company — this
+// matter carries a hand-keyed entry beside the timer's — the row states the
+// RECORD, which is the number the ledger holds and the number a lawyer bills,
+// and the clock moves into the row's expanded half rather than standing beside
+// it as a second unexplained decimal (wave-2 §4: "1.7 clock 0.0 is two numbers
+// where one is always zero"). It is still edited in place, one disclosure in.
+const openRowOfClock = async () => {
+  await page.evaluate(() => {
+    const clock = document.querySelector('.timer-clock');
+    if (!clock) throw new Error('no .timer-clock on any row');
+    if (clock.offsetParent === null) clock.closest('.work-row').querySelector('.work-expand').click();
+  });
+  await page.waitForFunction(() => document.querySelector('.timer-clock')?.offsetParent !== null,
+    { timeout: 4000 });
+};
+
 await step('timer clock is editable in place', async () => {
+  await openRowOfClock();
   await page.click('.timer-clock');
   await waitFor('.clock-input');
   await page.evaluate(() => {
@@ -455,12 +703,12 @@ await step('timer clock is editable in place', async () => {
   // clock and the day's record HAVE parted company the row shows both, and
   // the smaller one is labelled "clock" so the pair cannot be misread.
   await page.waitForFunction(() => {
-    const pair = document.querySelector('.timer-clock-pair');
-    if (!pair) return false;
-    const clock = pair.querySelector('.timer-clock');
-    return clock?.textContent.trim() === '1.4'
+    const clock = document.querySelector('.timer-clock');
+    if (!clock) return false;
+    const row = clock.closest('.work-row');
+    return clock.textContent.trim() === '1.4'
       && clock.title.startsWith('01:24:00')
-      && !pair.querySelector('.timer-clock-raw');
+      && !row.querySelector('.timer-clock-raw');
   }, { timeout: 4000 });
 });
 
@@ -1104,6 +1352,7 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
     return card && card.querySelector('.timer-clock')?.textContent.trim() === w;
   }, { timeout: 4000 }, want);
 
+  await openRowOfClock();
   await focusAcme();
   await page.keyboard.down('Alt');
   await page.keyboard.press('ArrowUp');           // +0.1 → 1.5
@@ -1197,6 +1446,19 @@ await step('narrative is editable in place from the row, with a visible control'
   const has = await page.evaluate(() =>
     !!document.querySelector('.today-list .narrative-editable, .today-list .narrative-write'));
   if (!has) throw new Error('no visible narrative control on any row of today\'s work');
+  // COMPACT IS THE DEFAULT DENSITY (BRIEF, owner constraint 5: "denser than
+  // today is better — provided it expands"), so the narrative lives in the
+  // row's expandable half. The control is the same control and edits in the
+  // same place; reaching it costs one disclosure, which is what the row's
+  // chevron, a click on the row and `x` all do.
+  await page.evaluate(() => {
+    const el = document.querySelector('.today-list .narrative-editable, .today-list .narrative-write');
+    const row = el.closest('.work-row');
+    if (el.offsetParent === null) row.querySelector('.work-expand').click();
+  });
+  await page.waitForFunction(() =>
+    document.querySelector('.today-list .narrative-editable, .today-list .narrative-write')?.offsetParent !== null,
+    { timeout: 4000 });
   await page.evaluate(() => {
     const el = document.querySelector('.today-list .narrative-editable, .today-list .narrative-write');
     el.scrollIntoView({ block: 'center' });

@@ -43,6 +43,33 @@
    The class names are the OLD ones on purpose: they are what the e2e suite
    binds to, and a unification that renamed every hook would have been
    indistinguishable from one that broke every hook.
+
+   ---------------------------------------------------------------------------
+   TWO PRESENTATIONS, TWO ROW HEIGHTS — CHOSEN, NOT INHERITED.  36px anchored,
+   48px sheet.
+
+   A later critic read the measured 36px popover row against the 48px sheet row
+   and called it "a different component density from the phone one". The two
+   numbers are right and the conclusion is not: every mature system this
+   component is modelled on ships exactly this pair — Material 3's menu item is
+   dense on a pointer and 48dp in a modal bottom sheet, Primer's ActionList is
+   32px on desktop and full-height on touch, Fluent and Polaris the same. The
+   height is a property of the INPUT, not of the component.
+
+   And here desktop density is a stated requirement, not a preference: "Desktop
+   density is a feature… do not carry phone-sized rows, phone-sized spacing or
+   phone-sized type onto the desktop" (BRIEF, owner constraint). List options
+   carries SIXTEEN rows. At 44px it would stand 704px tall — over three
+   quarters of a 900px viewport, and a menu that fits today would start
+   scrolling. At 36 it is 576px and fits with room to spare.
+
+   So the rule is: ONE HEIGHT PER PRESENTATION, and NOTHING inside a menu is
+   allowed to be a different height from the rows around it. Every interactive
+   thing in the popover is ≥36 (48 where the pointer is coarse enough to need
+   44+), every interactive thing in the sheet is ≥48. The defect the critic
+   actually found is fixed below: it was the segmented buttons and inline
+   controls, which were 30 in the popover and 44 in the sheet — a THIRD and a
+   FOURTH density, inside the other two.
    =========================================================================== */
 
 .ctx-menu {
@@ -117,11 +144,21 @@
   gap: var(--space-1); padding: var(--space-1) var(--space-2);
 }
 .ctx-inline select { width: auto; flex: 1 1 8rem; }
-/* A custom row keeps the menu's rhythm. Measured before this rule: the list's
-   Show/Group/Order segments came out 20px tall between 36px rows, which read as
-   a different component dropped into the menu rather than a row of it. */
+/* A custom row keeps the menu's rhythm — ALL of it.
+   30px was still not the popover's row height. Measured on the live app at
+   1440px, the two menus that carry custom rows read:
+
+     row menu       36, **30, 30, 30**, 36, 36, 36, 36, 36
+     List options   **30 ×12**, 36, 36, 36, 36
+
+   — twelve of the sixteen rows in List options were a segmented button, not a
+   menu item, and they were 6px shorter than the items beneath them. That is
+   two densities inside one component, which is exactly the defect the
+   unification above set out to end; it just ended it between the popover and
+   the sheet and not within either. Every interactive thing in the popover is
+   one height now, and the same is done for the sheet below. */
 .ctx-inline .btn, .ctx-inline .seg button, .ctx-inline select {
-  min-height: var(--control-h-sm);
+  min-height: var(--control-h-md);
 }
 
 /* A tablet is a coarse pointer that can still be wide enough for the popover
@@ -184,6 +221,16 @@
 }
 .tk-menu-sheet .sheet-custom .ctx-inline { flex: 1 1 100%; padding: 0; gap: var(--gap-inline); }
 .tk-menu-sheet .sheet-custom .ctx-inline select { flex: 1 1 8rem; }
+/* The sheet's own rhythm, applied to the controls inside a custom row exactly
+   as the popover does it above. They were 44px — over the touch floor, and
+   still 4px short of the 48px rows around them, so the sheet had the same
+   two-densities-in-one-component fault the popover had, four pixels smaller.
+   48 is the floor here, not 44: this is the sheet's row height. */
+.tk-menu-sheet .sheet-custom .ctx-inline .btn,
+.tk-menu-sheet .sheet-custom .ctx-inline .seg button,
+.tk-menu-sheet .sheet-custom .ctx-inline select {
+  min-height: var(--control-h-xl);
+}
 .tk-menu-sheet .sheet-custom + .sheet-custom {
   border-top: var(--border-w) solid var(--border-subtle);
 }
@@ -323,8 +370,57 @@
    outside tokens.css. */
 .toast.error { background: var(--danger); color: var(--text-on-danger); }
 
+/* ---------- the keyboard shortcut sheet ----------
+   "This is a keyboard-driven desktop app… the keys deserve to be discoverable,
+   and the shortcut overlay must describe what the keys actually do" (BRIEF,
+   owner constraint). This is the surface that teaches the model, so it is the
+   one dialog that must never hide a row.
+
+   IT WAS HIDING THREE. Measured at 1440×900 with the audited row list: the
+   panel came out 912px tall in a 900px viewport, `.ovl-body` was NOT
+   scrollable (`scrollHeight === clientHeight`), and the last row's bottom edge
+   sat at y=963 — 63px below the fold with no way to reach it. A one-column
+   list of 21 rows in a 560px panel cannot fit a laptop screen, and the sheet
+   had been one keystroke away from that before any row was added to it.
+
+   Two columns fixes it the way GitHub's, Linear's and Slack's own `?` sheets
+   do, and it is a desktop-only shape: below 768px this is a bottom sheet that
+   scrolls, where one column is correct and two would be unreadable.
+
+   `columns` needs a block container, so the <table> becomes one — but every
+   <tbody> stays `display: table`, so each GROUP is still a real table with
+   real rows and cells, and the markup stays meaningful to a screen reader,
+   which a flat `display: block` everywhere would have thrown away for a layout
+   trick. The width on the key cell is what keeps the description edge straight
+   BETWEEN groups as well as inside one: auto table layout would size each
+   group's key column to its own widest key, so `q n t c s` and
+   `g then d/c/e/s` would start their text 60px apart in the same visual
+   column. (`table-layout: fixed` cannot do this job here — every group's first
+   row is the heading, one `<th colspan="2">`, from which fixed layout can
+   derive no column widths at all, so it splits 50/50 and leaves a 190px gulf
+   between each key and its meaning. Measured.)
+
+   The max-height is the belt to that braces: `.ovl-panel` sets no height cap
+   at desktop width, so the next row anyone adds would walk off the bottom
+   again. Now it scrolls instead. */
 .kbd-help table { border-collapse: collapse; }
-.kbd-help td { padding: 4px 12px 4px 0; }
+.kbd-help td { padding: var(--space-1) var(--space-3) var(--space-1) 0; }
+/* A chord is one token. Left to wrap, the 390px sheet broke `g then d/c/e/s`
+   across two lines inside its own key cap, and `Enter or Space` and
+   `↑ ↓ (or ← →)` with it — a key that reads as two keys is the one thing this
+   sheet cannot afford to get wrong. */
+.kbd-help kbd { white-space: nowrap; }
+
+@media (min-width: 768px) {
+  .kbd-help { max-width: var(--ovl-w-lg); }
+  .kbd-help .ovl-body { max-height: calc(100vh - 11rem); overflow-y: auto; }
+  .kbd-help table { display: block; columns: 2; column-gap: var(--space-7); }
+  .kbd-help tbody {
+    display: table; width: 100%;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  .kbd-help tbody td:first-child { width: 7rem; }
+}
 
 /* ---------- ghost-text autocomplete ---------- */
 .ghost-wrap { position: relative; min-width: 0; }
@@ -364,23 +460,146 @@
 .stop-chips-foot { display: flex; justify-content: flex-end; }
 
 /* ---------- quick capture (bill from a sentence) ----------
-   The card, the scrim and the phone sheet come from .ovl (shell.css). */
-.qc-row { display: flex; align-items: center; gap: 8px; }
-.qc-row input { flex: 1; font-size: 15px; }
-.qc-preview { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; align-items: center; }
-.qc-chips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
-.qc-chip {
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
-  border-radius: 999px; padding: 2px 10px; font-size: 12.5px; cursor: default;
+   The card, the scrim and the phone sheet come from .ovl (shell.css).
+
+   EVERY CHIP IS A CONTROL NOW. The wave-1 review measured the old ones:
+   ".qc-chip.miss is an inert <span> 67×27 with cursor: default; clicking it
+   does nothing. There is no way to follow the instruction the dialog gives."
+   So the chips are buttons that open the picker that fills them, and they are
+   painted as buttons — a raised box with a real edge, a hover, a pressed
+   state and a lit "this one is open" state — rather than as the flat status
+   tags they used to read as. A chip that opens something must look like it
+   does before it is touched, not after. */
+.qc-row { display: flex; align-items: center; gap: var(--gap-inline); }
+.qc-row input { flex: 1; font-size: var(--fs-subheading); }
+.qc-preview {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin-top: var(--space-3); align-items: center;
 }
-button.qc-chip { cursor: pointer; }
-button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft); }
-.qc-chip.miss { border-style: dashed; color: var(--status-warning); border-color: var(--status-warning); }
-.qc-narrative { margin-top: 8px; font-size: 13.5px; }
+.qc-chips { display: inline-flex; gap: var(--space-2); flex-wrap: wrap; align-items: center; }
+.qc-chip {
+  display: inline-flex; align-items: center; gap: var(--gap-tight);
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-1); color: var(--text-primary);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--fs-label); line-height: var(--lh-label); font-weight: var(--fw-label);
+  box-shadow: var(--shadow-1);
+  cursor: default;
+}
+button.qc-chip { cursor: pointer; transition: var(--transition-control); }
+button.qc-chip:hover { border-color: var(--border-strong); background: var(--state-hover); }
+button.qc-chip:active { background: var(--state-pressed); }
+/* The settled choice: this is the matter the entry will be filed against. */
+button.qc-chip.on, button.qc-chip[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft);
+  color: var(--accent-strong); box-shadow: none;
+}
+/* A number reads as a number. */
+.qc-chip-num { font-variant-numeric: tabular-nums; }
+/* "Other matter…" — a way out of three wrong guesses that does not look like
+   a fourth guess or like a missing piece. */
+.qc-chip-alt { background: var(--surface-2); color: var(--text-muted); box-shadow: none; }
+/* Still missing, and now tappable. Warning-tinted rather than warning-outlined
+   only: an empty slot the app is waiting on, not a passive badge. */
+.qc-chip.miss {
+  border-style: dashed; border-color: var(--attention);
+  color: var(--attention); background: var(--attention-soft); box-shadow: none;
+}
+button.qc-chip.miss:hover { border-color: var(--attention); background: var(--attention-soft); }
+/* The chip whose picker is open below it — last, so it outranks both the
+   hover and the missing state: the panel has to read as hanging off a chip
+   rather than floating under the row. A `? ` chip keeps its dashed edge while
+   it is open, because it is still the thing that is missing. */
+button.qc-chip[aria-expanded="true"],
+button.qc-chip[aria-expanded="true"]:hover {
+  border-color: var(--accent); background: var(--accent-subtle);
+  color: var(--accent-strong); box-shadow: none;
+}
+
+/* The picker itself, inline in the sheet: a task-code list, an hours stepper,
+   or the app's own client/matter combobox. Never a second dialog over the
+   first — one overlay layer, and Escape peels it back one step at a time. */
+.qc-fill {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.qc-fill-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--gap-inline); margin-bottom: var(--space-2);
+}
+.qc-fill-title {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-label); color: var(--text-secondary);
+}
+.qc-fill-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.qc-pick {
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-1); color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  min-height: var(--control-h-md);
+  font-size: var(--fs-label); line-height: var(--lh-label); font-weight: var(--fw-label);
+  box-shadow: var(--shadow-1); cursor: pointer;
+  transition: var(--transition-control);
+}
+.qc-pick:hover { border-color: var(--border-strong); background: var(--state-hover); }
+.qc-pick:active { background: var(--state-pressed); }
+.qc-pick[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft);
+  color: var(--accent-strong); box-shadow: none;
+}
+
+/* Hours: a stepper for the awkward figure, one-tap pills for the eight a
+   lawyer actually keys — the shape of Harvest's own duration quick-add row
+   (refs-v2/harvest-new-time-entry.mobile.jpg), except these SET the value
+   rather than adding to it. */
+.qc-hours {
+  display: flex; align-items: center; gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.qc-hours-value {
+  flex: 1 1 auto; text-align: center;
+  font-size: var(--fs-num-lg); line-height: var(--lh-num-lg);
+  font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg);
+  font-variant-numeric: tabular-nums; color: var(--figure);
+}
+.qc-hours-unit {
+  margin-left: var(--space-0-5);
+  font-size: var(--fs-label); font-weight: var(--fw-label); color: var(--text-muted);
+}
+/* No figure yet: say so in words rather than painting an em-dash at 21px, which
+   reads as a value rather than as the absence of one. */
+.qc-hours-none {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-label); letter-spacing: var(--ls-label);
+  color: var(--text-muted);
+}
+.qc-step { min-width: var(--control-h-lg); min-height: var(--control-h-lg); }
+
+.qc-narrative { margin-top: var(--space-2); font-size: var(--fs-body); line-height: var(--lh-body); }
 /* What the parse still needs, in words. It is a hint BESIDE the File button,
    never instead of it (the wave-0 critic: quick capture "exposes no commit or
-   dismiss control: the only affordance is the hint text 'Enter files it'"). */
+   dismiss control: the only affordance is the hint text 'Enter files it'").
+   It is a live region because the sentence it describes changes under the
+   reader's fingers. */
 .qc-hint { margin-top: var(--space-2); }
+
+/* Phone: every chip and every pick is a real 44px target. The screenshot
+   harness only photographs this dialog empty, so none of these are ever
+   measured by the fence — they are sized to the floor because a lawyer's
+   thumb is the thing that measures them. */
+@media (max-width: 767px) {
+  button.qc-chip, .qc-pick {
+    min-height: var(--control-h-touch); min-width: var(--tap-min);
+    justify-content: center;
+  }
+  button.qc-chip { padding-inline: var(--space-4); }
+  .qc-step { min-width: var(--tap-min); min-height: var(--tap-min); }
+}
 
 /* ---------- close the day — a review LIST, not a card carousel ----------
    The panel, the scrim and the phone sheet come from .ovl (shell.css); only
@@ -390,23 +609,36 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
    carousel (teardown §18: "you cannot tell at a glance which of the four
    drafts still need work, and you cannot skip ahead to the one you know is
    wrong. For 4 drafts a carousel is fine; for 12 it is a trap"). What replaces
-   them is a list in three bands — what still needs words, what is staying a
-   draft, and what is already Ready — so the day's shape is readable before the
-   lawyer commits to anything, and the count in the group head is the honest
-   version of "card 3 of 5".
+   them is a list in three bands — what is not written yet, what is staying a
+   draft, and what is already written — so the day's shape is readable before
+   the lawyer commits to anything.
+
+   ONE NUMBER (wave-2b). The panel used to state the same quantity four ways
+   with three different values: title "3 to write", band badge "3", secondary
+   button "Accept all 2", closing sentence "all 2 narratives … 1 will stay a
+   draft". Every count now falls out of one split — a draft whose narrative box
+   has text will be FILED, a draft whose box is EMPTY stays a draft — and that
+   number is what the title, the primary button and the closing sentence say.
+   Band heads carry a badge only when they are HIDING their rows (the
+   collapsible "Already written" band), because a badge beside a visible list
+   is a second figure competing to answer the same question.
 
    Density is the point. Every band is sized so the primary stays in reach: an
    item is a two-line box, not a card, and the Ready band collapses to one row
    per entry. */
 .closeout-card textarea { width: 100%; }
 
-/* THE DAY'S SHAPE, in one line, above everything that asks for a decision. */
+/* THE DAY'S SHAPE, in one line, above everything that asks for a decision.
+   It carries THE one number — how many of the day's drafts the primary is
+   about to file — and its complement. Every other figure on the panel is one
+   of those two, or the hours behind them. */
 .co-shape {
   display: flex; flex-wrap: wrap; align-items: baseline;
   gap: var(--space-1) var(--space-3);
   margin: 0 0 var(--space-4); padding-bottom: var(--space-3);
   border-bottom: var(--border-w) solid var(--border-subtle);
 }
+.co-shape-lead { flex: 1 1 auto; min-width: 0; }
 .co-shape-hours {
   font-size: var(--fs-num-md); line-height: var(--lh-num-md);
   font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
@@ -464,6 +696,41 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
   font-size: var(--fs-num-sm); line-height: var(--lh-num-sm);
   font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
   color: var(--figure-secondary);
+}
+/* THE EXCEPTION, MARKED — never the rule. Filing is what almost every row is
+   about to do, so a badge on those would be noise on every line; an EMPTY box
+   is the one thing on a row that subtracts from the figure in the title and on
+   the primary, so that is what carries a mark. Type one word and it goes, and
+   the two counts move with it. */
+.co-state {
+  flex: none;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--attention-soft); color: var(--attention);
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase;
+}
+/* ONE MATTER, ONE ROW, BOTH FIGURES. When a matter is part-written — a 0.0h
+   stub from a running timer beside the 2.6h it has already recorded — it used
+   to appear twice, once in each band, with two different numbers and no way to
+   tell they were the same work. It is one row now and this line carries the
+   split, including the narrative already on file, so nothing the merge folded
+   together became invisible. */
+.co-item-note {
+  margin: calc(-1 * var(--space-1)) 0 var(--space-2);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-secondary);
+}
+.co-item-sep { margin: 0 var(--space-1); color: var(--text-muted); }
+/* The narrative already on file is evidence, not prose to read here: one line
+   of it under the figures, with the rest in the title attribute and the whole
+   of it one Edit away. Left to wrap it took three lines and pushed the box it
+   belongs to off the phone. */
+.co-item-had {
+  display: block; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-muted);
 }
 /* Two lines, not the form-page default of six. A pre-filled suggestion is
    read and confirmed, not composed, and every row of a list of them costs the
@@ -528,6 +795,19 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
 .co-disclosure:hover { background: var(--state-hover); }
 .co-disclosure .co-group-title { flex: 1 1 auto; }
 
+/* THE COMMIT FIGURE, ON THE CONTROL THAT COMMITS IT — the same pattern the
+   Export dialog already uses ("Download CSV 17"). It is the one number the
+   title and the closing sentence also say. */
+.co-primary-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--space-5); margin-left: var(--space-1); padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-on-accent) 22%, transparent);
+  color: var(--text-on-accent);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-caption); letter-spacing: 0;
+}
+
 /* The reassurance line. It used to be a DESKTOP-ONLY key legend ("Esc quits —
    nothing is lost either way") sitting under the buttons, which meant the one
    sentence that makes quitting safe to press was invisible on the phone, where
@@ -578,7 +858,11 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
   }
   .co-item-head { grid-column: 1; grid-row: 1; }
   .co-item-acts { grid-column: 2; grid-row: 1; margin-top: 0; align-self: start; }
-  .co-item .ghost-wrap { grid-column: 1 / -1; grid-row: 2; }
+  /* The merge line sits between the heading and the box it explains. Rows are
+     placed explicitly so a row without one collapses to nothing rather than
+     pushing the box down. */
+  .co-item-note { grid-column: 1 / -1; grid-row: 2; }
+  .co-item .ghost-wrap { grid-column: 1 / -1; grid-row: 3; }
 
   .closeout-card {
     display: flex; flex-direction: column;

@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, useEffect, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
+  html, useState, useEffect, fmtHours, fmtClock, emitToast, BillableBadge, StatusChip,
   ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, todayStr, Confirm,
 } from '/js/ui.js';
 import { Menu, rowMenuItems, rowMenuTitle, menuTriggerProps } from '/js/components/menu.js';
@@ -36,6 +36,56 @@ export function usePhone() {
     return () => mq.removeEventListener('change', on);
   }, []);
   return phone;
+}
+
+// ===========================================================================
+// DENSITY — the whole-list half of the owner's expansion constraint.
+//
+// "Compact is the right default, and denser than today is better — provided it
+// expands… a compact-versus-comfortable density control for the whole list
+// that persists across sessions" (BRIEF, owner constraint 5).
+//
+// It is ONE setting for both lists that render a `.work-row` — Today and the
+// day/calendar entry list — because "same day, same data, two answers" is the
+// defect this row was rebuilt to close. It is written by the Today list's ⋯
+// menu, persisted per browser, and read here so a reload keeps the choice.
+//
+//   compact       line 1 identity, line 2 controls. The narrative, the task
+//                 split and the findings are one tap away, on the row.
+//   comfortable   the same two lines with the narrative at rest.
+//
+// Expansion is a third step on top of either: see `.work-extra`.
+// ===========================================================================
+export const DENSITY_KEY = 'tk:listDensity';
+const DENSITIES = ['compact', 'comfortable'];
+
+export function readDensity() {
+  try {
+    const v = localStorage.getItem(DENSITY_KEY);
+    return DENSITIES.includes(v) ? v : 'compact';
+  } catch { return 'compact'; }
+}
+
+export function writeDensity(v) {
+  const next = DENSITIES.includes(v) ? v : 'compact';
+  try { localStorage.setItem(DENSITY_KEY, next); } catch { /* private mode */ }
+  window.dispatchEvent(new CustomEvent('tk:density-changed', { detail: { density: next } }));
+}
+
+// Every list that draws a row subscribes, so flipping the switch on Today also
+// flips the calendar's day panel without a reload.
+export function useDensity() {
+  const [density, setDensity] = useState(readDensity);
+  useEffect(() => {
+    const on = () => setDensity(readDensity());
+    window.addEventListener('tk:density-changed', on);
+    window.addEventListener('storage', on);
+    return () => {
+      window.removeEventListener('tk:density-changed', on);
+      window.removeEventListener('storage', on);
+    };
+  }, []);
+  return density;
 }
 
 // Inline narrative editing (2026-07-10 feedback): click a draft entry's
@@ -197,6 +247,14 @@ export function EntryList({
   // fastest path to the narrative is reachable by thumb on this screen too and
   // not only on Today.
   const [writingId, setWritingId] = useState(null);
+  const density = useDensity();
+  // Per-row expansion, keyed by the card's own stable key.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpand = (key) => setExpanded((s) => {
+    const next = new Set(s);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const TODAY = todayStr();
   const hasToday = (entries || []).some((e) => e.date === TODAY);
@@ -219,12 +277,12 @@ export function EntryList({
   const timerList = timers || ownTimers || [];
   const at = fetchedAt || ownFetchedAt;
 
-  // A running timer's time reaches its entry only when the timer stops, so the
-  // filed total sat still while the clock climbed (2026-08-14 feedback: "These
-  // numbers don't update live when the timer is running"). Tick once a second
-  // while any linked timer runs and show what the entry is worth right now,
-  // rounded exactly like the timer row.
-  const roundMode = settings?.rounding?.enabled === false ? 'nearest' : (settings?.rounding?.mode || 'up');
+  // THE LIVE ELEMENT IS THE CLOCK, not the recorded figure. Ticking the hours
+  // (2026-08-14 feedback: "these numbers don't update live") made the row show
+  // a number that existed nowhere else in the app — Today said 2.7 where the
+  // ledger held 2.6 and 0.0 (wave-1 review, D8). The counter that is actually
+  // moving is the HH:MM:SS beside it, which ticks on this same interval; the
+  // recorded figure catches up the moment the timer stops and files.
   const anyRunning = timerList.some((t) => t.running && t.linked_entry_id);
   const [, forceTick] = useState(0);
   useEffect(() => {
@@ -244,11 +302,6 @@ export function EntryList({
   };
 
   const liveSecs = (t) => (t && t.running ? liveTimerSeconds(t, at) : null);
-  const liveTotal = (card, e) => {
-    const t = card.timer;
-    if (t && t.running && t.linked_entry_id === e.id) return Number(fmtTenths(liveSecs(t), roundMode));
-    return e.total;
-  };
 
   // (no manual tk:timers-changed dispatch here — api.js announces every
   // successful /api/timers write itself now)
@@ -314,13 +367,17 @@ export function EntryList({
     entries: card.entries,
     focus: card.focus,
     fmtHours: (h) => fmtHours(h, increment),
-    liveTotal: (e) => liveTotal(card, e),
   }, {
     start: () => startTimer(card.focus),
     stop: (t) => stopTimer(t),
     startForEntry: (e) => startTimer(e),
     openEntry: (e) => openEditor({ id: e.id }),
-    writeNarrative: (e) => setWritingId(e.id),
+    // The editor lives in the expandable half of the row, so asking for it has
+    // to open that half — otherwise the menu item is a no-op in compact.
+    writeNarrative: (e) => {
+      setExpanded((s) => new Set([...s, card.key]));
+      setWritingId(e.id);
+    },
     finalize: (e) => finalize(e),
     unlock: (e) => unlock(e),
     copyToToday: (e) => openEditor({ copyFrom: e.id }),
@@ -415,8 +472,15 @@ export function EntryList({
     const isToday = e.date === TODAY;
     const running = !!(timer && timer.running) || !!(runningIds && runningIds.has(e.id));
     const secs = timer ? liveSecs(timer) : null;
-    const filed = es.reduce((a, x) => a + liveTotal(c, x), 0);
+    // THE DAY'S RECORD, and only the record. It used to carry the running
+    // timer's unfiled clock as well, which is how Today came to report a matter
+    // at 2.7 while the ledger showed the same work as 2.6 + 0.0 and 2.7 existed
+    // nowhere in the data (wave-1 review, D8). Time that has not been filed is
+    // the CLOCK, and the clock is beside it while it runs.
+    const filed = es.reduce((a, x) => a + x.total, 0);
     const needsNarrative = e.status === 'draft' && !(e.narrative || '').trim() && !running;
+    const isOpen = expanded.has(c.key);
+    const bodyId = `eb-${c.key}`;
     // The timer's name where a timer exists, the matter's display name
     // otherwise — the Today screen's label source, on this screen too.
     const name = timer ? timer.name : (e.cm ? e.cm.short_name : null);
@@ -431,8 +495,8 @@ export function EntryList({
       for (const x of es) {
         body.push(html`
           <div key=${`e${x.id}`} class="work-entry">
-            <span class="work-entry-h mono" title=${`${fmtHours(liveTotal(c, x), increment)}h on this entry`}>
-              ${fmtHours(liveTotal(c, x), increment)}h</span>
+            <span class="work-entry-h mono" title=${`${fmtHours(x.total, increment)}h on this entry`}>
+              ${fmtHours(x.total, increment)}h</span>
             ${isLive(x) && !(x.narrative || '').trim()
               ? html`<span class="muted small">running — files at the next stop</span>`
               : html`<${InlineNarrative} entry=${x} onChanged=${onChanged}
@@ -445,13 +509,6 @@ export function EntryList({
       body.push(html`<${InlineNarrative} key="narr" entry=${e} onChanged=${onChanged}
         autoEdit=${writingId === e.id} onDone=${() => setWritingId(null)} />`);
     }
-    // Only a SPLIT is worth a line — the same rule the Today row uses, so a
-    // row does not grow a line on one screen and lose it on the other. A lone
-    // task code is in the entry editor and in every export.
-    if (es.length === 1 && e.tasks.length > 1) {
-      body.push(html`<div key="tasks" class="muted small work-tasks">
-        ${e.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration, increment)}`).join(' · ')}</div>`);
-    }
     if (e.status === 'draft' && !running) {
       // "Narrative is empty" and "No matter" already have their own affordances
       // on this row (the Write-narrative control and the Assign-matter button)
@@ -460,37 +517,33 @@ export function EntryList({
       if (findings.length) body.push(html`<${ValidationList} key="valid" compact=${true} findings=${findings} />`);
     }
 
+    // THE THIRD STEP: what only an expanded row shows. Only a SPLIT is worth a
+    // line — a lone task code is in the entry editor and in every export.
+    const extra = [];
+    if (es.length === 1 && e.tasks.length > 1) {
+      extra.push(html`<div key="tasks" class="muted small work-tasks">
+        ${e.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration, increment)}`).join(' · ')}</div>`);
+    }
+
     const stateClass = running ? ' running' : needsNarrative ? ' needs-narrative' : ' worked';
 
     return html`
-      <div key=${c.key} class=${'entry-card work-row entry-row ' + (e.billable ? 'billable' : 'nonbillable') + stateClass}
-        data-entry-id=${e.id}>
+      <div key=${c.key} class=${'entry-card work-row entry-row ' + (e.billable ? 'billable' : 'nonbillable') + stateClass
+        + (isOpen ? ' expanded' : '')}
+        data-entry-id=${e.id} aria-expanded=${isOpen ? 'true' : 'false'}
+        onClickCapture=${(ev) => {
+          if (ev.target.closest('button, input, select, textarea, a')) return;
+          toggleExpand(c.key);
+        }}>
 
-        ${/* THE ONLY VARIANT BETWEEN THIS ROW AND THE TODAY ROW: a day that is
-              over has nothing to start. Present-but-disabled where the row is
-              on today and finalized, exactly as the Today row is, so the two
-              screens do not disagree about whether a row has a control. */''}
-        ${isToday ? (timer && timer.running ? html`
-          <button class="btn btn-sm work-toggle timer-stop-btn entry-timer-btn running"
-            title=${`Stop "${timer.name}" & file time`}
-            onClick=${() => stopTimer(timer)}>
-            <${Icon} name="stop" size=${15} /><span class="work-toggle-label">Stop</span></button>` : html`
-          <button class="btn btn-sm work-toggle timer-start-btn entry-timer-btn"
-            disabled=${!(timer || e.status === 'draft')}
-            title=${timer ? `Resume "${timer.name}" on this entry`
-              : e.status === 'draft' ? 'Start a timer on this entry (links back to its timer)'
-                : 'Finalized — unlock this entry before recording more time against it'}
-            onClick=${() => startTimer(e)}>
-            <${Icon} name="play" size=${15} /><span class="work-toggle-label">Start</span></button>`) : null}
-
-        <div class="work-head">
+        ${/* LINE ONE IS IDENTITY: the matter, its number, its exceptions. It
+              never wraps — an ellipsis is a truncation you can see, a wrap is a
+              row that is silently 40px taller than the one above it. */''}
+        <div class="work-main">
           ${name ? html`
             <button class="timer-name entry-open" title="Open this entry"
               onClick=${() => openEditor({ id: e.id })}>${name}</button>` : html`
-            <strong class="muted">No matter yet</strong>
-            <button class="btn btn-sm work-assign"
-              title="Assign a client/matter — required before this entry can finalize or export"
-              onClick=${() => openEditor({ id: e.id })}>Assign matter</button>`}
+            <strong class="muted work-noname">No matter yet</strong>`}
           ${cmNumber ? html`<span class="work-cm muted mono small">${cmNumber}</span>` : null}
           ${/* CHIPS ARE FOR THE EXCEPTION, NOT THE RULE (reference-analysis
                 §3). Billable is the default state and carries the figure's
@@ -500,35 +553,79 @@ export function EntryList({
           ${e.status === 'draft' ? null : html`<${StatusChip} entry=${e} />`}
           ${e.exported_at ? html`<span class="chip chip-exported" title=${'Exported ' + fmtStamp(e.exported_at)}>
             <${Icon} name="export" size=${12} /> exported</span>` : null}
+          ${/* With the narrative in the expandable half, the compact row has to
+                say that one is missing — the row still carries the matter, the
+                state, the hours and the transport control. */''}
+          ${needsNarrative ? html`
+            <span class="chip chip-todo" title="This entry cannot be finalized until it has a billing narrative">
+              no narrative</span>` : null}
         </div>
 
-        ${/* ONE NUMBER PER ROW — the hours recorded on it — with the live
-              HH:MM:SS beside it only while the clock is actually running, which
-              is the one moment two figures say two different things. */''}
-        <div class="work-figures">
-          <span class="timer-clock-pair">
-            ${running && secs != null ? html`
-              <span class="timer-clock-raw mono" title=${`${fmtClock(secs)} on the clock`}>${fmtClock(secs)}</span>` : null}
-            <span class=${'work-hours-static mono' + (running ? ' active' : '')}
-              title=${`${fmtHours(filed, increment)}h recorded on this ${es.length > 1 ? 'matter' : 'entry'} today`}>
-              ${fmtHours(filed, increment)}</span>
-          </span>
+        ${/* LINE TWO IS THE CONTROL STRIP: transport, the day's one figure, the
+              disclosure, the overflow. Same four things in the same order on
+              every row, so a thumb learns one place. */''}
+        <div class="work-controls">
+          ${/* THE ONLY VARIANT BETWEEN THIS ROW AND THE TODAY ROW: a day that is
+                over has nothing to start. Present-but-disabled where the row is
+                on today and finalized, exactly as the Today row is, so the two
+                screens do not disagree about whether a row has a control. */''}
+          ${isToday ? (timer && timer.running ? html`
+            <button class="btn btn-sm work-toggle timer-stop-btn entry-timer-btn running"
+              title=${`Stop "${timer.name}" & file time`}
+              onClick=${() => stopTimer(timer)}>
+              <${Icon} name="stop" size=${15} /><span class="work-toggle-label">Stop</span></button>` : html`
+            <button class="btn btn-sm work-toggle timer-start-btn entry-timer-btn"
+              disabled=${!(timer || e.status === 'draft')}
+              title=${timer ? `Resume "${timer.name}" on this entry`
+                : e.status === 'draft' ? 'Start a timer on this entry (links back to its timer)'
+                  : 'Finalized — unlock this entry before recording more time against it'}
+              onClick=${() => startTimer(e)}>
+              <${Icon} name="play" size=${15} /><span class="work-toggle-label">Start</span></button>`) : null}
+          ${!name ? html`
+            <button class="btn btn-sm work-assign"
+              title="Assign a client/matter — required before this entry can finalize or export"
+              onClick=${() => openEditor({ id: e.id })}>Assign matter</button>` : null}
+
+          ${/* ONE NUMBER PER ROW — the hours recorded on it — with the live
+                HH:MM:SS beside it only while the clock is actually running,
+                which is the one moment two figures say two different things.
+                A row whose record is still zero because the clock has not been
+                filed yet shows the clock alone: "0.0" next to a ticking counter
+                is the two-numbers-one-of-them-zero defect in another costume. */''}
+          <div class="work-figures">
+            <span class="timer-clock-pair">
+              ${running && secs != null ? html`
+                <span class="timer-clock-raw mono" title=${`${fmtClock(secs)} on the clock`}>${fmtClock(secs)}</span>` : null}
+              ${!running || filed > 0 ? html`
+                <span class=${'work-hours-static mono' + (running ? ' active' : '')}
+                  title=${`${fmtHours(filed, increment)}h recorded on this ${es.length > 1 ? 'matter' : 'entry'} today`}>
+                  ${fmtHours(filed, increment)}</span>` : null}
+            </span>
+          </div>
+
+          <button class="btn btn-ghost btn-sm work-expand" aria-controls=${bodyId}
+            aria-expanded=${isOpen ? 'true' : 'false'}
+            title=${isOpen ? 'Hide the narrative and the task split' : 'Show the narrative and the task split'}
+            aria-label=${`${isOpen ? 'Collapse' : 'Expand'} — ${name || 'this entry'}`}
+            onClick=${() => toggleExpand(c.key)}>
+            <${Icon} name=${isOpen ? 'chevronUp' : 'chevronDown'} size=${16} /></button>
+
+          ${/* The trigger stores the ELEMENT, not a pair of coordinates: it is
+                what the popover hangs off, what edge-collision measures against,
+                and what focus returns to when the menu closes. */''}
+          ${/* Keyed, not object-identified: `cardsFor` rebuilds these rows on
+                every render, so `menu.card === c` went false the instant the menu
+                opened and the ⋯ reported aria-expanded="false" underneath its own
+                open menu. `c.key` is `t<timer id>` / `e<entry id>`. */''}
+          <button class="btn btn-ghost btn-sm entry-more timer-more" title="Row menu"
+            aria-label=${`Row menu — ${name || 'this entry'}`}
+            ...${menuTriggerProps(!!menu && menu.key === c.key)}
+            onClick=${(ev) => setMenu({ anchor: ev.currentTarget, key: c.key })}>
+            <${Icon} name="more" size=${16} /></button>
         </div>
 
-        ${/* The trigger stores the ELEMENT, not a pair of coordinates: it is
-              what the popover hangs off, what edge-collision measures against,
-              and what focus returns to when the menu closes. */''}
-        ${/* Keyed, not object-identified: `cardsFor` rebuilds these rows on
-              every render, so `menu.card === c` went false the instant the menu
-              opened and the ⋯ reported aria-expanded="false" underneath its own
-              open menu. `c.key` is `t<timer id>` / `e<entry id>`. */''}
-        <button class="btn btn-ghost btn-sm entry-more timer-more" title="Row menu"
-          aria-label=${`Row menu — ${name || 'this entry'}`}
-          ...${menuTriggerProps(!!menu && menu.key === c.key)}
-          onClick=${(ev) => setMenu({ anchor: ev.currentTarget, key: c.key })}>
-          <${Icon} name="more" size=${16} /></button>
-
-        <div class="work-body">${body}</div>
+        <div class="work-body" id=${bodyId}>${body}</div>
+        ${extra.length ? html`<div class="work-extra">${extra}</div>` : null}
       </div>`;
   };
 
@@ -552,11 +649,11 @@ export function EntryList({
       onClose=${() => setMenu(null)} />` : null;
 
   if (!showDate) {
-    return html`<div class="entry-list">${cardsFor(entries, entries[0].date).map(card)}${confirmDelete}${rowMenu}</div>`;
+    return html`<div class=${`entry-list work-rows density-${density}`}>${cardsFor(entries, entries[0].date).map(card)}${confirmDelete}${rowMenu}</div>`;
   }
 
   return html`
-    <div class="entry-list">
+    <div class=${`entry-list work-rows density-${density}`}>
       ${dayGroups.map((g, gi) => {
         const total = g.entries.reduce((a, e) => a + e.total, 0);
         const newWeek = gi > 0 && mondayOf(dayGroups[gi - 1].date) !== mondayOf(g.date);

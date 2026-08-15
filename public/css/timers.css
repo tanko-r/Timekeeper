@@ -35,8 +35,44 @@
 }
 .filter-pill:hover { background: var(--accent-muted-subtle); }
 
+/* ---------- the filter bar ----------
+   `/` is the control the owner uses most ("he uses it constantly. It stays" —
+   BRIEF). Before this pass `.timer-search-wrap` held exactly one node, the
+   input: the ✕ in the desktop screenshot was Chrome's
+   ::-webkit-search-cancel-button, which is not a DOM node, is 12px wide, and
+   is NOT DRAWN AT ALL by Chrome for Android — the browser the installed PWA
+   runs in. So on the phone there was no way to clear the filter but to select
+   the text and backspace it. The native one is suppressed here and replaced
+   with a real 44×44 button.
+
+   HOW TO CHECK THIS, because the obvious check lies. A wave-2 critic reported
+   two ✕ glyphs on desktop from
+   `getComputedStyle(input, '::-webkit-search-cancel-button')` returning
+   `display: block; appearance: auto; width: 320px; height: 36px`. Chrome does
+   not expose UA shadow pseudo-elements to getComputedStyle: handed one it does
+   not recognise, it returns the HOST ELEMENT's style — and 320×36 is exactly
+   this input's own box, which is the tell. The only honest test is a
+   photograph. Driven at 1440px with `acme` typed in the field: hide
+   `.timer-search-clear` and NO ✕ is painted; force this rule off with
+   `-webkit-appearance: auto !important` and Chrome's blue ✕ appears. The rule
+   works. There is exactly one clear affordance, and it is the real button. */
 .timer-search-wrap { display: flex; align-items: center; gap: var(--gap-inline); margin-bottom: var(--space-2); }
-.timer-search { flex: 1 1 auto; max-width: 320px; }
+.timer-search-field { position: relative; display: flex; align-items: center; flex: 1 1 auto; max-width: 320px; }
+.timer-search { flex: 1 1 auto; min-width: 0; padding-right: var(--space-8); }
+.timer-search::-webkit-search-cancel-button,
+.timer-search::-webkit-search-decoration { -webkit-appearance: none; appearance: none; display: none; }
+.timer-search-clear {
+  position: absolute; right: var(--space-1); top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--control-h-md); height: var(--control-h-md);
+  border: 0; background: none; color: var(--text-muted);
+  border-radius: var(--radius-sm); cursor: pointer;
+  transition: var(--transition-control);
+}
+.timer-search-clear:hover { color: var(--text-primary); background: var(--surface-2); }
+.timer-search-clear:focus-visible { outline: var(--border-w-thick) solid var(--accent); outline-offset: calc(-1 * var(--border-w)); }
+/* The toggle wears its state rather than only announcing it. */
+.today-search-btn.on { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-subtle); }
 
 /* ---------- the list surface ---------- */
 .today-list {
@@ -60,17 +96,31 @@
 .group-name { font-size: var(--fs-label); font-weight: var(--fw-bold); }
 .drop-hint { padding: var(--space-3) var(--space-4); }
 
-/* ---------- one row ----------
-   Four things on the first line — the labelled transport control, the matter,
-   the figures, one overflow — and the narrative on its own line beneath, where
-   a billing narrative has room to be read. Harvest's row
-   (shots/refs/harvest-timetracking.desktop.1.png) is the shape: TWO labelled
-   controls, not five unlabelled glyphs. */
+/* ---------- one row: TWO LINES, ALWAYS THE SAME TWO ----------
+   Measured before this pass at 390×844: six rows at 182, 184, 111, 136, 109
+   and 57px — a 3.2× spread, from which only two rows cleared the fold. The
+   spread came from the row being ONE wrapping flex line whose height depended
+   on how long the matter name was, whether it carried a chip, whether it had a
+   narrative and whether that narrative wrapped.
+
+   It is two fixed lines now:
+
+     LINE 1  identity — the matter, its number, its exceptions. `nowrap`, so a
+             long name ellipsises instead of silently making its row 40px
+             taller than the one above it.
+     LINE 2  the control strip — transport, the day's one figure, the
+             disclosure, the overflow, in that order on every row.
+
+   Everything else — the narrative, the findings, the task split, the decimal
+   clock where it has parted company with the record — is in the expandable
+   half below, which density and the disclosure decide between them. Reference:
+   shots/refs-v2/harvest-timesheet-day.desktop.webp, a uniform 93px two-line
+   row with one right-aligned duration and one control. */
 .work-row {
   position: relative;
   display: flex; align-items: center; flex-wrap: wrap;
-  gap: var(--space-2) var(--space-3);
-  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  gap: 0 var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4);
   border-top: var(--border-w) solid var(--border-subtle);
   min-width: 0;
   /* A row scrolled into view (the attention line's "N need a narrative", a
@@ -138,9 +188,65 @@
   min-width: var(--tap-min); min-height: var(--tap-min);
 }
 
-.work-head {
-  flex: 1 1 12rem; min-width: 0;
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+/* LINE 1 — identity. `nowrap` is the whole point: the name shrinks and
+   ellipsises, the chips never move to a second line, and every row of the list
+   is therefore exactly as tall as every other. */
+.work-main {
+  order: 0; flex: 1 1 100%; min-width: 0;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: var(--space-2);
+  overflow: hidden;
+}
+/* LINE 2 — the control strip. The figure and the two trailing controls are
+   pushed to the end by `.work-figures { margin-left: auto }` below, so the
+   number is right-aligned on every row exactly as it is in the Harvest
+   reference. */
+.work-controls {
+  order: 1; flex: 1 1 100%; min-width: 0; overflow: hidden;
+  display: flex; align-items: center; flex-wrap: nowrap; gap: var(--space-2);
+}
+/* ABOVE THE PHONE, THE TWO LINES ARE ONE.
+   Two stacked lines are what a 390px row needs; on a 1400px one they leave
+   700px of white between the matter and its own figure and put the transport
+   control under the name instead of beside it. The flagship reference
+   (shots/refs-v2/harvest-timesheet-day.desktop.webp) puts the duration
+   right-aligned with the single Start/Stop control at the end of the same
+   line, and that is what this is. The figure column is given a fixed minimum
+   so the numbers line up down the list instead of ragging against whatever
+   each row's controls happen to measure.
+
+   ONE DEAD-STRAIGHT START COLUMN — THE FIXED WIDTH IS THE POINT.
+   `flex: 0 0 auto` sized this cluster from its own contents, so its left edge
+   was whatever the row's controls happened to add up to. Measured at 1440px:
+   `.work-controls` was 303px on five rows and 410.8px on the quick-timer row
+   (it carried an extra "Assign matter"), and 300px on the running row (Stop is
+   3px narrower than Start) — so the left edge of `.work-toggle` ran
+   1055.2 / 1053.6 / 1053.6 / 1053.6 / **944.6** / 1053.6. One row's Start sat
+   108px out of the column and every row's wobbled by 1.6px. Harvest's day view
+   holds one column and that is what lets an eye run twenty rows without
+   re-finding the button on each one.
+   The width is 19.5rem = 312px against a worst case of 303 (toggle 68 + 8 +
+   figures 144 + 8 + chevron 34 + 8 + ⋯ 33), so the slack falls between the
+   transport control and the figure — where `.work-figures { margin-left: auto }`
+   puts it — and the toggle is pinned to the column's left edge while the
+   figure, the chevron and the ⋯ are pinned to its right. Nothing that varies
+   by row state may be added inside this cluster again: "Assign matter" is on
+   the identity line now (see timergrid.js), which is the half of the row that
+   is allowed to be elastic. */
+@media (min-width: 768px) {
+  /* `1 1 0`, NOT `1 1 auto`. A wrapping flex container breaks its lines on the
+     items' HYPOTHETICAL sizes — flex-basis before any shrinking — so with
+     `auto` the identity line's max-content width decided whether the control
+     strip stayed beside it or dropped onto a second line, however freely the
+     name was allowed to shrink afterwards. Measured at 1024px: the one row
+     whose name, number and two chips ran long ("Firm administration
+     999000-000001 · non-billable · no narrative") came out 68px tall against
+     47 for its neighbours, with its Start 403px left of the column; at 768 four
+     of the six rows did it. A basis of 0 makes the identity line take only the
+     space the fixed control column leaves, which is what "elastic half, fixed
+     half" has to mean for the column to hold at every width. */
+  .work-main { flex: 1 1 0; }
+  .work-controls { flex: 0 0 19.5rem; }
+  .work-figures { min-width: 9rem; justify-content: flex-end; }
 }
 .timer-name {
   font-size: var(--fs-body); font-weight: var(--fw-semibold);
@@ -152,19 +258,138 @@
 }
 .timer-name:hover { background: var(--surface-2); }
 .timer-name.entry-open { cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
+/* The name is the one part of line 1 that gives ground: it shrinks and
+   ellipsises so the chips beside it keep their meaning. */
+.work-main .timer-name { flex: 0 1 auto; min-width: 0; }
+.work-main > .chip, .work-main > .badge, .work-main .work-cm, .work-main .timer-flag { flex: none; }
+/* The one exception marker on line 1 that is a control rather than a label, so
+   it keeps its own shrink rule (above) instead of the blanket `flex: none`. */
+.work-main > .work-assign { flex: 0 1 auto; }
+.work-noname { flex: none; }
 .name-input { flex: 1 1 8rem; min-width: 0; font-size: var(--fs-body); font-weight: var(--fw-semibold); }
 .work-cm { flex: none; }
-.work-assign { flex: none; }
+/* "ASSIGN MATTER" — AN IDENTITY DEFECT, ON THE IDENTITY LINE.
+   It used to be the second control in the trailing strip, where it was the one
+   thing on any row that changed that strip's WIDTH and so broke the Start
+   column (see the fixed-width note above). It sits with the matter it is
+   missing now, and it wears the same dashed attention dress as
+   `.narrative-write` in entries.css: the row's two "this cannot be filed yet"
+   blockers are one visual family, and neither of them is in the control
+   column. It still shrinks and ellipsises rather than pushing anything off the
+   line — on a 390px row the name gives ground first, then this. */
+.work-assign {
+  flex: 0 1 auto; min-width: 4.5rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  border-style: dashed; border-color: var(--border-strong);
+  background: none; color: var(--attention);
+}
+.work-assign:hover {
+  border-style: solid; border-color: var(--accent);
+  color: var(--accent); background: var(--accent-subtle);
+}
+/* THE STATE THE COMPACT ROW OWES ITS READER. With the narrative in the
+   expandable half, "this entry has no narrative yet" has to be said on line 1
+   — the compact row still carries the matter, the state, the hours and the
+   transport control (BRIEF, owner constraint 5). It takes the one attention
+   hue (tokens.css §7), the same one the row's leading rail takes. */
+.chip-todo {
+  color: var(--attention); background: var(--attention-soft);
+  border-color: color-mix(in srgb, var(--attention) 45%, transparent);
+}
 
-/* DOM order is transport → matter → narrative → figures → menu, which is the
-   order a screen reader should hear a row in. `order` puts the figures and the
-   menu back on the first line and drops the narrative onto its own, where a
-   billing narrative has the full measure to be read. */
-.work-figures { order: 1; }
-.timer-more { order: 1; }
-.work-body { order: 2; flex: 1 1 100%; min-width: 0; }
+/* THE EXPANDABLE HALF.
+   `.work-body`  the narrative, the per-entry lines, the findings.
+   `.work-extra` the task split and the decimal clock — expanded rows only.
+   Collapsed with `display: none`, never a clipped zero height: a keyboard must
+   not be able to walk into content that is not on screen. */
+.work-body { order: 2; flex: 1 1 100%; min-width: 0; padding-top: var(--space-1); }
+.work-extra { order: 2; flex: 1 1 100%; min-width: 0; padding-top: var(--space-1); }
+/* A belt-and-braces guard, not a live rule: every row's body now carries at
+   least one line (timergrid.js gives a row with nothing recorded, or one whose
+   time is still on the clock, a sentence saying so), because the comfortable
+   slot below reserves height and a reserved empty box is a hole. The element
+   itself is always in the DOM so the disclosure's `aria-controls` resolves on
+   every row. */
+.work-body:empty { display: none; }
+.work-row:not(.expanded) .work-extra { display: none; }
+.work-rows.density-compact .work-row:not(.expanded) .work-body { display: none; }
+
+/* ---------- COMFORTABLE DENSITY IS A BAND, NOT A RAGGED EDGE ----------
+   Measured before this rule at 1440×900: six rows at 126, 72, 79, 79, 47 and
+   47px — a 2.68× spread (2.07× at 390px: 200.5, 143, 149, 149, 97, 97) —
+   against 1.02× in Compact. The cause was structural, not decorative: a row
+   with a narrative grew by however many lines it had and a row without one
+   stayed at the two-line minimum, so the list had no rhythm to read down.
+   Compact does not have the problem because it hides the narrative entirely.
+
+   The fix is the pattern every uniform-row list in the reference set uses
+   (harvest-timesheet-day.desktop.webp holds ~93px whether or not the row has a
+   note): RESERVE THE SLOT, then CLAMP WHAT GOES IN IT.
+
+     the floor   two lines of body type plus the slot's own top padding, so a
+                 row with no narrative is exactly as tall as a row with one and
+                 the affordance that writes one — `Write narrative` on a draft,
+                 or the "nothing recorded / running" line the row now always
+                 carries (timergrid.js) — sits in the reserved space.
+     the ceiling the resting narrative is clamped to two lines, and on a matter
+                 that carries SEVERAL entries today each entry's narrative is
+                 clamped to one so that two of them fill the same two lines.
+                 The expansion is what shows the rest, on either density.
+
+   `min-height`, deliberately, not a fixed height: an OPEN inline narrative
+   editor and a validation-findings list are the two things that legitimately
+   need more room, and clipping either would cost a capability to win a
+   measurement. Both are rare and both are the reader's own doing. */
+.work-rows.density-comfortable .work-row:not(.expanded) .work-body {
+  display: block;
+  min-height: calc(2 * var(--lh-body) + var(--space-1));
+}
+/* THE CLAMP GOES ON THE NARRATIVE BOX, NOT ON THE TEXT INSIDE IT.
+   `.narrative-text` used to be in this selector too, and putting
+   `display: -webkit-box` on that inner span turned it into a block — which
+   pushed the trailing pencil onto a SECOND line, so a one-line narrative
+   occupied two and the clamp it was given never fired. Measured: the button
+   came out 50px tall around 21px of text. `.narrative` is the button (and the
+   <p> on a finalized entry); clamping that leaves the span and the pencil
+   inline on the same line, which is what both of them are. */
+.work-rows.density-comfortable .work-row:not(.expanded) .narrative {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* A MATTER WITH SEVERAL ENTRIES TODAY still fills exactly the slot: one line
+   each, no gap between them, and no vertical padding on the control — two
+   entry lines are the same two lines one narrative gets. `.work-entry` is
+   rendered only when there is more than one entry, so none of this needs to
+   count anything. A third entry is expansion's business.
+
+   ONE line is a flex row with an ellipsis, NOT `-webkit-line-clamp: 1`. On the
+   phone base.css gives this control a 44px touch box, and a `-webkit-box` with
+   a min-height taller than its clamped lines stops clamping in Chrome: driven
+   at 390px, the span inside measured 82px (four lines) inside a 44px button,
+   so the row showed a line and a half of narrative cut through the middle of
+   the glyphs. A flex row truncates at the same place whatever height the box
+   is told to be — and it keeps the trailing pencil visible, which an ellipsis
+   on the button itself would have eaten. */
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry .narrative {
+  display: flex; align-items: center; min-width: 0;
+  -webkit-line-clamp: none;
+}
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry .narrative-text {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry + .work-entry { margin-top: 0; }
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry .narrative,
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry .narrative-write { padding-block: 0; }
+.work-rows.density-comfortable .work-row:not(.expanded) .work-entry:nth-child(n+3) { display: none; }
 .work-hint { margin: 0; }
 .work-tasks { margin-top: var(--space-1); }
+.work-extra-clock { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+
+/* THE DISCLOSURE. Quiet until the row is hovered or the row is open — a
+   chevron is a hint, not an action — and it comes forward the moment either is
+   true, so an expanded row always says which control did it. */
+.work-expand { flex: none; color: var(--text-muted); }
+.work-expand:hover, .work-row:hover .work-expand, .work-row.expanded .work-expand { color: var(--text-primary); }
 
 /* A matter with more than one entry today: one line each, behind its own
    hours, so merging the rows never hides a narrative. */
@@ -221,14 +446,10 @@
   cursor: text; flex: none;
 }
 button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-primary); }
-/* THE WORD THAT ENDS THE AMBIGUITY. On the one row shape where two decimal
-   figures are both true — the day's record and a clock that has parted company
-   with it — the smaller one is labelled, so the pair can never be read as an
-   unexplained "0.1 2.7". */
-.figure-clock { display: inline-flex; align-items: baseline; gap: var(--space-1); flex: none; }
 /* Lowercase on purpose: the app's uppercase micro style marks a SECTION
-   heading, and this is a unit beside a number ("clock 0.0"), which is the one
-   thing that stops the pair reading as an unexplained "0.1 2.7". */
+   heading, and this is a unit beside a number ("clock 0.0") in the row's
+   expanded half, where the decimal clock lives on the one row shape whose
+   clock has parted company with its record. */
 .figure-tag {
   flex: none; color: var(--text-muted);
   font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-caption);
@@ -262,15 +483,12 @@ button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-p
    row with no timer states its hours exactly as loudly as one with. */
 .work-hours { font-size: var(--fs-num-lg); font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg); }
 
-/* TWO TRUE NUMBERS ON ONE ROW. Where a matter's recorded hours have parted
-   company with its clock, the recorded figure is the one that matters and the
-   clock steps down a size — never two figures shouting the same rank. */
-.work-figures.dual .timer-clock {
+/* The clock inside the expanded half is a secondary reading, not the row's
+   headline figure, so it steps down a size. */
+.work-extra .timer-clock {
   font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
   color: var(--figure-quiet); letter-spacing: var(--ls-num-sm);
 }
-/* a clock at zero next to a real recorded figure is eight characters of noise */
-.work-figures.dual .timer-clock-raw.zero { display: none; }
 
 /* the counter takes the live accent only while it is actually counting */
 .work-row.running .timer-clock { color: var(--live-strong); }
@@ -340,45 +558,23 @@ button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-p
 .ctx-seg-row .seg { margin-left: 0; }
 
 /* ---------- the row on a phone (≤767px) ----------
-   The first line stays [Start] [matter] [⋯] — the transport control keeps the
-   leading position so a thumb finds it in the same place on every row — and
-   the figures drop under it. A timer with nothing recorded shows "0.0" and no
-   00:00:00 beside it: eight characters that say the same thing as the 0.0 next
-   to them, while the matter name is what a lawyer reads to identify a row. */
+   Two lines, both of them a touch row: identity above, the control strip
+   below. The matter NUMBER is dropped (it is what gets keyed into the billing
+   system at export time, not what identifies a row while you are timing) and
+   the name ellipsises rather than wrapping, because a wrapped name is a row
+   that is silently 40px taller than its neighbours — which is how the list
+   came to run 109–184px with only two rows above the fold. */
 @media (max-width: 767px) {
   /* 32px of air above a section heading is right on a page you read and wrong
      on the one screen where the heading's job is to get out of the way of the
      first row of work. */
   .today-head { margin: var(--space-2) 0 var(--space-1); }
-  .timer-clock-raw.zero { display: none; }
-  .work-row { padding: var(--space-1) var(--space-2) var(--space-2) var(--space-3); gap: var(--space-1) var(--space-2); }
-  /* The name keeps a readable minimum; a non-billable badge or an "Assign
-     matter" prompt wraps under it rather than truncating "Firm administration"
-     to "Firm admini…". Conditional chrome: only the rows that need the extra
-     line get it. */
-  /* 4rem, not 5: flexbox WRAPS before it shrinks, so the hypothetical widths
-     of [Start] [name] [figures] [⋯] have to add up under the row's content
-     box (336px at 390) or the ⋯ drops onto a line of its own — which is what
-     it did on the Calendar day panel's running row. The name still grows into
-     whatever is left over. */
-  .work-head { flex: 1 1 4rem; }
+  .work-row { padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3); }
   .work-toggle { padding-left: var(--space-2); padding-right: var(--space-2); }
-  /* The matter name is what a lawyer reads to identify a row, so at 390px it
-     WRAPS rather than truncating — "Acme — lease disp…" and
-     "Northgate — diligen…" are not identifications. Only the rows with long
-     names pay the second line. 8ch, not 12: at 12 the ⋯ on a RUNNING row was
-     pushed onto a line of its own once [Stop] [name] [00:00:07] [2.7] had to
-     share 358px. */
-  .timer-name {
-    min-width: 8ch; white-space: normal; overflow: visible; text-overflow: clip;
-    line-height: var(--lh-body);
-  }
-  /* The matter NUMBER is what gets keyed into the billing system at export
-     time, not what identifies a row while you are timing — and at 390px it was
-     costing the matter NAME the width it needs. It stays in the row's tooltip,
-     the entry editor and every export. */
+  /* The matter NUMBER stays in the row's tooltip, the entry editor and every
+     export; at 390px it costs the matter NAME the width it needs. */
   .work-cm { display: none; }
-  .timer-search { max-width: none; }
+  .timer-search-field { max-width: none; }
   .filter-pill { min-height: var(--tap-min); }
   /* base.css's phone tier lists the controls it knows by name; the recorded-
      hours figure is new, and it is a real target now that it is editable. */
@@ -386,23 +582,25 @@ button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-p
     min-height: var(--control-h-touch); min-width: var(--tap-min);
     display: inline-flex; align-items: center; justify-content: center;
   }
-  /* NEVER MORE THAN TWO FIGURES ON A ROW, and it is structural now rather
-     than a CSS amputation of a third one: HH:MM:SS renders only while the
-     clock runs, and the decimal clock only when it has parted company with
-     the record and is carrying something. */
   .timer-clock-raw { font-size: var(--fs-num-sm); min-height: var(--control-h-touch); display: inline-flex; align-items: center; }
-
-  /* ONE FIGURE PER ROW ON A PHONE, and it is arithmetic rather than taste.
-     A 390px row holds [Start 68] [name ≥126] [figures] [⋯ 44] with 24px of
-     gaps: 138px is left for the figures, and two touch-sized numbers plus
-     their label need 126 — which is why the ⋯ was being pushed onto a line of
-     its own. So where the clock and the record have parted company the phone
-     states the RECORD, which is the number a lawyer bills.
-
-     The clock did not become unreachable by thumb — it became reachable for
-     the first time: it was hidden at this width before this wave too, with no
-     touch path at all, and Edit timer → "Clock now" is one now. */
-  .work-figures.dual .figure-clock { display: none; }
+  /* A real 44×44 box, not the invisible ::before overlay: this is the control
+     the whole density decision rests on. */
+  .timer-search-clear, .work-expand {
+    min-width: var(--tap-min); min-height: var(--tap-min);
+    width: var(--tap-min); height: var(--tap-min);
+  }
+  /* The clock inside the expanded half keeps its own touch box. */
+  .work-extra .timer-clock { min-height: var(--control-h-touch); }
+  /* THE NARRATIVE SLOT IS TALLER ON A PHONE, because everything that goes in
+     it is. `Write narrative` and the editable narrative are both real 44px
+     touch targets here (base.css tier 2), so a two-line desktop slot would be
+     the floor for half the rows and the ceiling for none: measured at 390px
+     with the 46px slot, the list came out 143, 143, 149, 149 — the split being
+     which rows carried a button rather than text. Sized from the touch target
+     instead, every one of them is 149. */
+  .work-rows.density-comfortable .work-row:not(.expanded) .work-body {
+    min-height: calc(var(--tap-min) + var(--space-2));
+  }
 }
 
 /* ---------- the Edit-timer dialog's "This timer" section ----------
