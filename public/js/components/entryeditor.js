@@ -251,13 +251,16 @@ export function EntryEditor({ spec, settings, onClose }) {
   const seedText = autoOn ? (autoText || '') : (local?.narrative || '').trim();
   const suggestionChips = !autoOn && !String(local?.narrative || '').trim() ? suggestChips(phrases) : [];
 
-  // The task-line editor is COLLAPSED until it has something to show: one
-  // undivided line is the ordinary entry, and its hours are the entry total
-  // already on screen. It opens for real work — two or more lines, a task code
-  // that has to stay visible because the billing system wants it, or the
-  // deliberate press of "Split into tasks".
+  // The task-line editor is COLLAPSED until there is real work in it: two or
+  // more lines. One undivided line IS the entry — its hours are the total
+  // already on screen, and its fragment is only ever a seed for a later split
+  // — so the only thing it needs on the face of the form is its task code,
+  // which the billing system wants and which gets a row of its own. That is
+  // the teardown's rule verbatim: "a one-line entry should show hours and
+  // nothing else". Measured: it takes the existing-entry dialog from 17
+  // visible controls to 12.
   const hasTaskCode = (local?.tasks || []).some((t) => (t.task_code || '').trim());
-  const tasksExpanded = tasksOpen || hasTaskCode
+  const tasksExpanded = tasksOpen
     || (local?.tasks || []).length > 1 || substantiveIdx.length >= 2;
 
   // Edit-through parser for the AUTO box (spec: two-way binding). Parse OK →
@@ -501,6 +504,32 @@ export function EntryEditor({ spec, settings, onClose }) {
     return () => document.removeEventListener('keydown', onKey);
   }, []); // eslint-disable-line
 
+  // A disclosure you cannot see the contents of has not disclosed anything.
+  // "More" sits at the end of a scrolling panel, so on a phone its rows open
+  // below the fold — bring them into the scroll box the way every mature
+  // accordion does (Material's expansion panel, Primer's details).
+  //
+  // scrollIntoView is the wrong tool here, measured rather than assumed:
+  // `block: 'nearest'` stops as soon as the TOGGLE is on screen, which is
+  // where it already was, and `block: 'end'` aligns the block's bottom with
+  // the scrollport's BORDER edge — which in this panel is behind the pinned
+  // action row (measured at 390×844: it scrolled to 110 and left the new rows
+  // ending at y=844, under buttons that start at y=746). The body reserves
+  // that row's measured height as its own bottom padding, so the honest
+  // target is the bottom of the padding box, and one scroll of exactly the
+  // overflow gets there.
+  const moreRef = useRef(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const el = moreRef.current;
+    const box = el && el.closest('.ovl-body');
+    if (!box) return;
+    const reserved = parseFloat(getComputedStyle(box).paddingBottom) || 0;
+    const overflow = el.getBoundingClientRect().bottom
+      - (box.getBoundingClientRect().bottom - reserved);
+    if (overflow > 0) box.scrollTop += overflow;
+  }, [moreOpen]);
+
   // A refused finalize must be READ, not hunted for. The gate renders as the
   // panel's first block and the scroll box goes back to the top with it — the
   // wave-1 measurement was a blocking message rendered in a 17px sliver under
@@ -717,6 +746,34 @@ export function EntryEditor({ spec, settings, onClose }) {
   // never again (see caretClaimed above).
   const claimCaret = !finalized && !caretClaimed.current;
   if (claimCaret) caretClaimed.current = true;
+  // A task code and a task-coded split are both properties of the MATTER's
+  // billing arrangement (client_task_billing decides whether the codes are
+  // wanted at all), so neither control is on the form until a matter has been
+  // picked. On a brand-new entry that is also the difference between ten
+  // controls and twelve.
+  const codeable = !!local.cm;
+
+  // The task-code affordance, shared by the collapsed one-line row and by each
+  // line of the expanded editor: a chip once set, a quiet "+ code" until then,
+  // and a <select> only while one is being chosen. One definition, so the two
+  // places can never drift into two different controls for the same field.
+  const taskCodeCell = (t, i) => html`
+    <div class="task-code-cell">
+      ${t.task_code ? html`
+        <span class="task-code-chip">
+          <span>${t.task_code}</span>
+          <button type="button" title="Remove task code" disabled=${finalized}
+            onClick=${() => updateLine(i, { task_code: '' })}><${Icon} name="x" size=${10} /></button>
+        </span>` : (codeOpenIdx === i ? html`
+        <select autoFocus disabled=${finalized} aria-label="Task code"
+          onChange=${(e) => { updateLine(i, { task_code: e.target.value }); setCodeOpenIdx(null); }}
+          onBlur=${() => setCodeOpenIdx(null)}>
+          <option value="">(task)</option>
+          ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
+        </select>` : html`
+        <button type="button" class="task-code-add" disabled=${finalized}
+          onClick=${() => setCodeOpenIdx(i)}>+ code</button>`)}
+    </div>`;
 
   const narrativeField = autoOn ? html`
     <span class="auto-badge">AUTO</span>
@@ -772,11 +829,22 @@ export function EntryEditor({ spec, settings, onClose }) {
         <${SaveShortcutBar} selection=${selText} />
       </section>
 
-      ${/* 2 — HOURS. Stepper, plus Harvest's quick-add pill row, which appears
-            while the field is being worked on and gets out of the way when it
-            is not — exactly as it does in the reference shot, where the pills
-            ride above the keyboard over the duration field. Typing an exact
-            figure is untouched. */''}
+      ${/* 2 — HOURS. Two shapes for one control, and which one shows is decided
+            by whether there is a figure to correct yet.
+
+            EMPTY (a hand-keyed entry, or a timer that never ran): the field
+            plus Harvest's quick-add pill row and nothing else. There is
+            nothing to subtract from, and "+0.1" IS the plus button — shipping
+            a disabled minus and a plus that duplicates the first pill spends
+            two of the ten controls this dialog is allowed on nothing.
+
+            WITH TIME (the ordinary case — a timer filled it in): the ± stepper
+            flanking the figure, which is what correcting 1.7 to 1.8 wants, and
+            the pills come back the moment the row is engaged — the way they
+            ride above the keyboard over the duration field in
+            refs-v2/harvest-new-time-entry.mobile.jpg.
+
+            Typing an exact figure is untouched in both. */''}
       <div class="ed-hours" ref=${hoursBoxRef}
         onFocus=${() => { if (!finalized) setHoursActive(true); }}
         onBlur=${() => requestAnimationFrame(() => {
@@ -786,19 +854,21 @@ export function EntryEditor({ spec, settings, onClose }) {
         <div class="ed-row">
           <span class="ed-row-label" id="ed-hours-label">Hours</span>
           <div class="ed-stepper">
-            <button type="button" class="ed-step" aria-label=${`Subtract ${fmtHours(increment, increment)} hours`}
-              disabled=${finalized || total <= 0} onClick=${() => bumpTotal(-increment)}>
-              <${Icon} name="minus" size=${16} /></button>
+            ${total > 0 ? html`
+              <button type="button" class="ed-step" aria-label=${`Subtract ${fmtHours(increment, increment)} hours`}
+                disabled=${finalized} onClick=${() => bumpTotal(-increment)}>
+                <${Icon} name="minus" size=${16} /></button>` : null}
             <input type="number" min="0" step=${increment} class="mono total-input"
               inputMode="decimal" aria-labelledby="ed-hours-label"
               value=${local.total || ''} placeholder="0.0" disabled=${finalized}
               onInput=${(e) => updateTotal(e.target.value)} />
-            <button type="button" class="ed-step" aria-label=${`Add ${fmtHours(increment, increment)} hours`}
-              disabled=${finalized} onClick=${() => bumpTotal(increment)}>
-              <${Icon} name="plus" size=${16} /></button>
+            ${total > 0 ? html`
+              <button type="button" class="ed-step" aria-label=${`Add ${fmtHours(increment, increment)} hours`}
+                disabled=${finalized} onClick=${() => bumpTotal(increment)}>
+                <${Icon} name="plus" size=${16} /></button>` : null}
           </div>
         </div>
-        ${hoursActive && !finalized ? html`
+        ${!finalized && (hoursActive || total <= 0) ? html`
           <div class="ed-pills" role="group" aria-label="Add time">
             ${QUICK_ADD.map((h) => html`
               <button key=${h} type="button" class="ed-pill"
@@ -821,7 +891,11 @@ export function EntryEditor({ spec, settings, onClose }) {
       </div>
       <${ValidationList} findings=${findingsFor(validation, 'matter')} compact=${true} />
 
-      ${/* 4 — TASK LINES, behind one control until there are two or more. */''}
+      ${/* 4 — TASK LINES, behind one control until there are two or more. One
+            undivided line collapses to the only part of it the billing system
+            needs on the face of the form: its task code. Both it and the split
+            control arrive with the matter, whose client_task_billing decides
+            whether task codes are wanted at all. */''}
       ${tasksExpanded ? html`
         <div class="ed-tasks">
           <div class="ed-tasks-head">
@@ -838,22 +912,7 @@ export function EntryEditor({ spec, settings, onClose }) {
           <div class="task-lines">
             ${local.tasks.map((t, i) => html`
               <div key=${i} class="task-line">
-                <div class="task-code-cell">
-                  ${t.task_code ? html`
-                    <span class="task-code-chip">
-                      <span>${t.task_code}</span>
-                      <button type="button" title="Remove task code" disabled=${finalized}
-                        onClick=${() => updateLine(i, { task_code: '' })}><${Icon} name="x" size=${10} /></button>
-                    </span>` : (codeOpenIdx === i ? html`
-                    <select autoFocus disabled=${finalized} aria-label="Task code"
-                      onChange=${(e) => { updateLine(i, { task_code: e.target.value }); setCodeOpenIdx(null); }}
-                      onBlur=${() => setCodeOpenIdx(null)}>
-                      <option value="">(task)</option>
-                      ${taskCodes.map((c) => html`<option key=${c.id} value=${c.name}>${c.name}</option>`)}
-                    </select>` : html`
-                    <button type="button" class="task-code-add" disabled=${finalized}
-                      onClick=${() => setCodeOpenIdx(i)}>+ code</button>`)}
-                </div>
+                ${taskCodeCell(t, i)}
                 <input type="number" min="0" step=${increment} value=${t.duration || ''}
                   placeholder="0.0" disabled=${finalized} class="mono" aria-label="Task hours"
                   onInput=${(e) => updateLineDuration(i, e.target.value)} />
@@ -886,10 +945,16 @@ export function EntryEditor({ spec, settings, onClose }) {
           <${ValidationList} findings=${findingsFor(validation, 'tasks')} compact=${true} />
         </div>` : html`
         <div class="ed-split-row">
-          <button type="button" class="btn ed-split" disabled=${finalized} onClick=${beginSplit}
-            title="Divide this entry into task-coded lines. A narrative already written in semicolon-separated clauses splits at them, keeping your wording exactly.">
-            <${Icon} name="clipboard" size=${14} /> Split into tasks
-          </button>
+          ${codeable || hasTaskCode ? html`
+            <div class="ed-row ed-row-code">
+              <span class="ed-row-label">Task code</span>
+              <div class="ed-row-value">${taskCodeCell(local.tasks[0] || blankLine(), 0)}</div>
+            </div>` : null}
+          ${codeable ? html`
+            <button type="button" class="btn ed-split" disabled=${finalized} onClick=${beginSplit}
+              title="Divide this entry into task-coded lines. A narrative already written in semicolon-separated clauses splits at them, keeping your wording exactly.">
+              <${Icon} name="clipboard" size=${14} /> Split into tasks
+            </button>` : null}
           <${ValidationList} findings=${findingsFor(validation, 'tasks')} compact=${true} />
         </div>`}
 
@@ -928,7 +993,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             focus trap, with full-width touch rows — not a portalled popover the
             keyboard cannot reach. Nothing here was deleted; all of it is one
             tap deep instead of on the face of the form. */''}
-      <div class="ed-more">
+      <div class="ed-more" ref=${moreRef}>
         <button type="button" class="ed-more-toggle" data-ed-more
           aria-expanded=${moreOpen ? 'true' : 'false'} aria-controls="ed-more-panel"
           onClick=${() => setMoreOpen((v) => !v)}>

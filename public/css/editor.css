@@ -1,110 +1,692 @@
-/* editor.css — entry editor: header grid, task lines/codes, AI narrative chrome, custom fields */
+/* ============================================================================
+   editor.css — the entry editor.
 
-/* ---------- allocation + AI ---------- */
-.alloc-chip {
-  font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px;
-  border: 1px solid var(--status-warning); color: var(--nonbillable);
-  background: var(--nonbillable-soft);
-}
-.alloc-chip.over { border-color: var(--status-critical); color: var(--status-critical); background: transparent; }
-input.total-input { font-weight: 700; }
+   WHAT THIS FILE IS ANSWERING (teardown §16, wave-1 review E7, wave-2 F1).
 
-/* ---------- task-line task-code affordance (chip when set, "+ code" when not) ---------- */
-.task-code-cell { display: flex; align-items: center; min-width: 0; }
-.task-code-chip {
-  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-  border: 1px solid var(--border); background: var(--surface-2); border-radius: 999px;
-  padding: 2px 6px 2px 10px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.task-code-chip button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--text-muted); display: inline-flex; }
-.task-code-chip button:hover { color: var(--status-critical); }
-.task-code-add {
-  border: 1px dashed var(--border); background: none; color: var(--text-muted);
-  border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap;
-}
-.task-code-add:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-.task-code-cell select { font-size: 12px; padding: 2px 4px; }
+   The dialog was measured at 390×844 with 18 controls in the order Date ·
+   Client/Matter · Total hours · Billable · Task lines · Narrative. The
+   narrative <textarea> — the sentence a client reads and pays for, and the
+   only reason anyone opens this dialog — sat at y=725, the fifteenth control,
+   underneath the pinned action bar, and did not appear in the shipped
+   screenshot at all. On the desktop it was a centred modal covering the day
+   it was editing.
 
-/* ---------- narrative AUTO toggle + AI dropdown + suggestion chips ---------- */
+   components/entryeditor.js reordered it (narrative → hours → matter → task
+   lines → date/billable → everything rare behind one disclosure) and then the
+   run that was writing this stylesheet was cut off, so the reordered form
+   rendered with browser defaults: a minus button stacked ABOVE the hours field
+   and a plus BELOW it, both 32×22.6 against a 44px floor, a Billable checkbox
+   painted over its own label, and no quick-add pills at all.
+
+   THE TWO REFERENCES, and which half of the problem each one answers:
+
+     refs-v2/harvest-new-time-entry.mobile.jpg — the SHAPE. Label-left /
+       value-right rows that open pickers rather than inline widgets; a
+       duration stepper with the ± flanking the figure; a floating quick-add
+       pill row; one full-width primary. Seven controls for the same job.
+       One thing is deliberately inverted from it: Harvest's note is optional
+       and last, our narrative is the reason the dialog exists, so it is first
+       and it holds the caret.
+
+     refs-v2/mercury-expense-entry-form.desktop.png — the RHYTHM. A label one
+       type step and one weight class below its control's text; --space-2
+       between a label and the thing it names; --gap-block between one group
+       and the next; nothing else competing for the eye. Every gap in this
+       file is one of those two numbers.
+
+   THE PANEL HAS TWO SHAPES AND ONE COMPONENT (the shared .ovl primitive):
+     ≤767px  a bottom sheet at a FIXED 92dvh, so the narrative opens at
+             y≈175 rather than wherever the content happens to end.
+     ≥768px  a right-hand side panel, so the day stays on screen while you
+             write. Reasoning in §1.
+
+   Only tokens.css may hold a raw value; everything here consumes var(--…).
+   ========================================================================== */
+
+/* ===========================================================================
+   1. THE PANEL
+
+   WHY A SIDE PANEL AND NOT AN INLINE ROW EXPANSION (the other option wave-2
+   F1 offered). Both keep the day visible, which is the actual requirement —
+   "writing entry 3's narrative while being able to see entries 1, 2, 4 and 5
+   is how a lawyer avoids double-billing the same call". The side panel wins
+   on three counts:
+
+     - The editor has six callers: the Today row, the day panel's entry cards,
+       the ledger, the calendar's selected-day panel, the `tk:open-entry` event
+       the float window fires, and quick capture. Five of them have no row to
+       expand. An inline expansion would need a second presentation for those,
+       which is precisely the "one dialog with a responsive position, never a
+       desktop modal and a mobile sheet that drift apart" rule the overlay
+       primitive exists to enforce.
+     - The Today row ALREADY expands in place, and must (owner constraint: a
+       row expands to reveal the narrative, task lines and secondary controls).
+       Making the editor a second in-row expansion gives one row two
+       expansions with overlapping content — the duplication the teardown
+       counted four times over.
+     - It keeps the focus trap, the scroll lock, the Escape stack and the
+       back-dismiss marker, all of which an inline expansion would have to
+       either re-implement or go without.
+
+   The panel is inset from the edges rather than flush, so its shadow — which
+   in dark is a hairline ring, the only thing separating it from the page —
+   is not clipped by the viewport.
+--------------------------------------------------------------------------- */
+
+/* Phone: a fixed-height sheet.
+
+   `max-height` alone let the sheet hug its content, so a short form opened
+   low: measured on the new-entry sheet at 390×844, the panel top sat at y=160
+   and the narrative field — the field the dialog exists for — began at y=268.
+   A fixed height pins the top edge at y≈68 and puts the narrative at y≈175
+   whatever the form currently holds, which also stops the sheet resizing
+   under the reader's thumb every time a pill row, a task line or a validation
+   message appears. */
+@media (max-width: 767px) {
+  .ovl-panel.ed-panel { height: var(--ovl-sheet-max-h); }
+  /* The body's first element here is a 44px row whose contents are already
+     optically centred in it (the "Narrative" label beside AUTO and Reuse), so
+     the shared 12px top padding double-spaces it — and those eight pixels are
+     the difference between the narrative field opening at y=202 and y=194. */
+  .ed-panel > .ovl-body { padding-top: var(--space-1); }
+}
+
+@media (min-width: 768px) {
+  .ovl-panel.ed-panel {
+    position: fixed;
+    top: var(--space-3); right: var(--space-3); bottom: var(--space-3);
+    left: auto;
+    width: 100%; max-width: var(--ovl-w-md);
+    max-height: none;
+    display: flex; flex-direction: column;
+    border-radius: var(--radius-lg);
+    /* The panel arrives WITH its scrim, not after it: same duration
+       (--dur-base) and same easing the .ovl backdrop uses. The inherited
+       --dur-slow left the panel still fading in after the page behind it had
+       finished dimming — visible in the screenshot harness, which photographs
+       roughly one scrim-length after the dialog opens and caught a
+       half-transparent panel every single run. */
+    animation-name: ed-panel-in;
+    animation-duration: var(--dur-base);
+  }
+  /* The body scrolls; the action row stays put against the panel's own bottom
+     edge. Same construction the phone sheet uses (overlays.css), including
+     the reservation: components/overlay.js measures the real row and writes
+     --ovl-actions-h onto the panel at every width, so a panel that grows a
+     Retry button reserves the extra line by itself. */
+  .ed-panel > .ovl-body {
+    flex: 1 1 auto; min-height: 0;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding-bottom: calc(var(--ovl-actions-h) + var(--gap-block));
+  }
+  .ed-panel > .ovl-body > .ovl-actions:last-child {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-raised);
+    margin: 0;
+    padding: var(--space-3) var(--space-5);
+    background: var(--surface-raised);
+    border-top: var(--border-w) solid var(--border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    transition: box-shadow var(--dur-fast) var(--ease-standard);
+  }
+  /* "There is more below" — overlay.js marks the body while content is still
+     sliding under the pinned row. */
+  .ed-panel > .ovl-body[data-scroll="more"] > .ovl-actions:last-child {
+    box-shadow: var(--shadow-lift);
+  }
+}
+
+@keyframes ed-panel-in {
+  from { opacity: 0; transform: translateX(var(--space-5)); }
+}
+
+/* ===========================================================================
+   2. THE FORM'S RHYTHM
+
+   One gap between a label and the control it names (--space-2), one gap
+   between groups (--gap-block), and no third number. The body is the stack,
+   so a group that renders nothing — ValidationList and SaveShortcutBar both
+   return null when they have nothing to say — costs no space at all.
+--------------------------------------------------------------------------- */
+
+.ed-panel > .ovl-body {
+  display: flex; flex-direction: column;
+  gap: var(--gap-block);
+}
+/* A SCROLL BOX MUST SCROLL, NOT SQUASH. The body is a fixed-height flex
+   column, so its children shrink by default the moment the form is taller than
+   the panel — and a flex item shrunk below its content does not clip, it
+   OVERFLOWS. Measured on the phone with the task lines open: the matter row
+   was pushed from 73px to its 44px min-height and its client-name line
+   ("Internal") painted straight over the "Task lines" heading beneath it. */
+.ed-panel > .ovl-body > * { flex: none; }
+/* A wrapper whose children all declined to render must not leave a gap
+   behind (the split row when there is nothing yet to split). */
+.ed-panel > .ovl-body > :empty { display: none; }
+
+/* The name of a section or a row. One type step and one weight class BELOW
+   the value it introduces, which is the whole of tokens.css §3(b): the figure
+   reads as the answer and the label as the question. */
+.ed-label,
+.ed-row-label {
+  margin: 0;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label); font-weight: var(--fw-semibold);
+  color: var(--text-secondary);
+}
+
+/* A label-left / value-right row — Harvest's Project, Task and Date rows.
+   The value is pushed to the right edge and takes whatever width is left, so
+   the labels stay a column of quiet words and the controls a column of boxes. */
+.ed-row {
+  display: flex; align-items: center;
+  gap: var(--gap-inline);
+  min-height: var(--control-h-md);
+  min-width: 0;
+}
+/* The label sits on the FIRST line of its value, not in the middle of it: the
+   matter row carries a second line (the client name) under its control, and
+   centring against the pair floated the word "Matter" into the gap between
+   them. */
+/* One label column, so Hours, Matter, Task code, Date and Billable put their
+   controls on a single left edge instead of five ragged ones — Mercury's
+   expense form is one column of labels above one column of fields, and this is
+   that alignment turned on its side. */
+.ed-row-label {
+  flex: 0 0 auto; min-width: var(--field-w-narrow);
+  display: flex; align-items: center;
+  min-height: var(--control-h-md);
+}
+.ed-row-control,
+.ed-row-value { flex: 1 1 auto; min-width: 0; margin-left: auto; }
+.ed-row-value { display: flex; flex-direction: column; gap: var(--space-1); }
+.ed-row:has(.ed-row-value > * + *) { align-items: flex-start; }
+
+/* ===========================================================================
+   3. THE NARRATIVE — first, focused, and the only full-width block
+--------------------------------------------------------------------------- */
+
+.ed-narrative { display: flex; flex-direction: column; gap: var(--space-2); }
+.ed-narrative-head {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  min-height: var(--control-h-sm);
+}
+.ed-narrative-head .spacer { flex: 1 1 auto; }
+
+.narrative-preview { position: relative; }
+.narrative-preview textarea {
+  min-height: var(--textarea-min-h);
+  max-width: var(--maxw-prose);
+}
+
+/* AUTO, drawn INSIDE the generated box it describes. Inline by default —
+   the close-out sweep renders the same badge in a row of text (closeout.js),
+   where an absolutely-positioned badge would fly to the panel's corner. */
+.auto-badge {
+  display: inline-flex; align-items: center;
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  letter-spacing: var(--ls-caption); font-weight: var(--fw-bold);
+  color: var(--accent-muted-strong); background: var(--accent-muted-soft);
+}
+.narrative-preview .auto-badge {
+  position: absolute; top: var(--space-2); right: var(--space-2);
+  z-index: var(--z-inline);
+}
+/* …so the generated text never runs under it. */
+.narrative-preview .auto-badge + textarea { padding-right: var(--space-9); }
+
+/* The AUTO switch itself: a state, not an action, so it takes the tier-2
+   muted accent when it is on (tokens.css §7a) and never the action blue. */
 .auto-toggle-chip {
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-muted);
-  border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: .02em;
+  flex: none;
+  border: var(--border-w) solid var(--border);
+  background: var(--surface-2); color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  padding: var(--space-0-5) var(--space-3);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-bold); letter-spacing: var(--ls-caption);
   cursor: pointer;
+  transition: var(--transition-control);
 }
-.auto-toggle-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
-.auto-toggle-chip:disabled { cursor: default; opacity: .6; }
-.editor-suggest-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.auto-toggle-chip.on {
+  border-color: var(--accent-muted);
+  background: var(--accent-muted-soft);
+  color: var(--accent-muted-strong);
+}
+.auto-toggle-chip:disabled { cursor: default; opacity: var(--state-disabled-opacity); }
+
+.ed-reuse { flex: none; }
+
+/* The phrasebook's own one-tap finish, sitting under the empty field it
+   fills. Same idea as the stop chips on the row, same ceiling of three. */
+.editor-suggest-chips {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+}
 .editor-suggest-chips button {
-  border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary);
-  border-radius: 999px; padding: 3px 10px; font-size: 12.5px; cursor: pointer;
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 1 auto; min-width: 0; max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-primary);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-control);
 }
-.editor-suggest-chips button:hover { border-color: var(--accent); background: var(--surface-1); }
+.editor-suggest-chips button:hover {
+  border-color: var(--border-strong); background: var(--state-hover);
+}
+
+/* ===========================================================================
+   4. HOURS — the stepper and Harvest's quick-add pills
+
+   Measured before this block: button.ed-step at 32×22.6, stacked ABOVE and
+   BELOW the field rather than flanking it, because a <button> with no .btn
+   class gets none of base.css's control sizing and .ed-stepper had no layout
+   at all.
+--------------------------------------------------------------------------- */
+
+.ed-hours { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.ed-stepper {
+  flex: 0 0 auto; margin-left: auto;
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.ed-step {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--control-h-md); height: var(--control-h-md);
+  padding: var(--space-0);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1); color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.ed-step:hover:not(:disabled) {
+  background: var(--state-hover); border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.ed-step:active:not(:disabled) { background: var(--state-pressed); }
+.ed-step:disabled {
+  background: var(--state-disabled-bg); color: var(--state-disabled-fg);
+  border-color: var(--state-disabled-border); cursor: not-allowed;
+}
+
+/* The figure. A number ranks by weight, size and tabular figures — never by
+   hue (tokens.css §7a, tier 3). */
+.ed-stepper .total-input {
+  flex: none; width: var(--field-w-narrow);
+  text-align: center;
+  font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+  font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+  color: var(--figure);
+}
+/* Chrome's own spin buttons are a 13px-wide hover-only duplicate of the ±
+   either side of them. */
+.ed-stepper .total-input::-webkit-outer-spin-button,
+.ed-stepper .total-input::-webkit-inner-spin-button {
+  appearance: none; -webkit-appearance: none; margin: var(--space-0);
+}
+.ed-stepper .total-input { appearance: textfield; -moz-appearance: textfield; }
+
+/* The quick-add row. Harvest renders it as a floating white bar of outlined
+   pills riding over the duration field; ours is the same bar as a shallow
+   well under the row it belongs to, right-aligned beneath the stepper. Tenths
+   rather than quarter-hours because the house rule rounds up to the next
+   tenth, so a tenth is the unit a lawyer thinks in. */
+.ed-pills {
+  display: flex; align-items: center; gap: var(--space-1);
+  margin-left: auto;
+  padding: var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+.ed-pill {
+  flex: 1 1 auto;
+  min-height: var(--control-h-sm);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1); color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-num-sm); line-height: var(--lh-num-sm);
+  font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; cursor: pointer;
+  transition: var(--transition-control);
+}
+.ed-pill:hover { border-color: var(--border-strong); background: var(--state-hover); }
+.ed-pill:active { background: var(--state-pressed); }
+
+/* ===========================================================================
+   5. MATTER — a value row that opens the picker
+--------------------------------------------------------------------------- */
+
+.cmpicker-row { min-width: 0; }
+
+/* The resting state: the matter reads as the row's VALUE with a chevron
+   saying it opens something — not as a button competing with the narrative
+   above it. */
+.cm-value {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  width: 100%; min-height: var(--control-h-md);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1); color: var(--text-primary);
+  font-family: inherit; font-size: var(--fs-body); line-height: var(--lh-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.cm-value:hover:not(:disabled) { border-color: var(--border-strong); background: var(--state-hover); }
+.cm-value:disabled { background: var(--state-disabled-bg); color: var(--state-disabled-fg); border-color: var(--state-disabled-border); cursor: not-allowed; }
+.cm-value svg { flex: none; color: var(--text-muted); }
+.cm-value-text {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: baseline; gap: var(--gap-inline);
+}
+.cm-value-name {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: var(--fw-medium);
+}
+.cm-value-num {
+  flex: none; color: var(--text-muted);
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
+  font-variant-numeric: tabular-nums;
+}
 .cm-client-label { display: block; }
 
-/* ---------- entry editor: header row ---------- */
-/* Date · Client/Matter · Total hours · Billable. align-items:start (never
-   :end) so the client name that appears UNDER the CM picker can't shove that
-   column's label and control up out of line with its neighbours. The Billable
-   cell carries a blank label so its checkbox starts on the control row too. */
-.entry-head-grid {
-  display: grid; grid-template-columns: 140px minmax(0, 1fr) 110px auto;
-  align-items: start; gap: 10px;
-}
-/* matches the fields' control height (15px/1.45 text + 7px padding + 1px
-   border) so the checkbox sits centred against the inputs beside it */
-.entry-head-grid .checkbox-row { min-height: 38px; }
-@media (max-width: 760px) {
-  /* phone: four columns won't fit ~380px. Re-lay them out as
-     [Date | Total hours] / [Client/Matter] / [Billable]. */
-  .entry-head-grid { grid-template-columns: 1fr 110px; }
-  .entry-head-grid > *:nth-child(1) { grid-area: 1 / 1; }
-  .entry-head-grid > *:nth-child(3) { grid-area: 1 / 2; }
-  .entry-head-grid > *:nth-child(2) { grid-area: 2 / 1 / auto / -1; }
-  .entry-head-grid > *:nth-child(4) { grid-area: 3 / 1 / auto / -1; }
-  .entry-head-grid .field-label[aria-hidden] { display: none; }
-  .entry-head-grid .checkbox-row { min-height: 0; }
-}
+/* While the listbox is down, the label steps onto its own line and the search
+   box takes the full width: a 270px value cell is not somewhere to search
+   from, and this is the app's most-used input. */
+.ed-row-matter.searching { flex-wrap: wrap; align-items: flex-start; }
+.ed-row-matter.searching > .ed-row-label { flex: 0 0 100%; }
+.ed-row-matter.searching > .ed-row-value { flex: 1 1 100%; margin-left: 0; }
 
-/* ---------- task lines ---------- */
-.task-lines { display: flex; flex-direction: column; gap: 8px; }
-.task-line { display: grid; grid-template-columns: minmax(90px, 130px) 86px 1fr auto; gap: 8px; align-items: center; }
+/* ===========================================================================
+   6. TASK LINES — collapsed behind one control until there are two of them
+--------------------------------------------------------------------------- */
+
+.ed-split-row { display: flex; flex-direction: column; gap: var(--gap-block); }
+.ed-split { align-self: flex-start; }
+/* The one-line entry's task code, as a value row like Date and Billable. */
+.ed-row-code .ed-row-value { align-items: flex-end; }
+.ed-row-code .task-code-cell { justify-content: flex-end; }
+
+.ed-tasks { display: flex; flex-direction: column; gap: var(--space-2); }
+.ed-tasks-head {
+  display: flex; align-items: baseline; gap: var(--gap-inline);
+  flex-wrap: wrap;
+}
+.ed-tasks-head .spacer { flex: 1 1 auto; }
+.ed-tasks-foot {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  flex-wrap: wrap;
+}
+.ed-tasks-foot .spacer { flex: 1 1 auto; }
+
+.task-lines { display: flex; flex-direction: column; gap: var(--space-2); }
+.task-line {
+  display: grid;
+  grid-template-columns: minmax(var(--field-w-narrow), auto) var(--field-w-narrow) 1fr auto;
+  gap: var(--space-2); align-items: center;
+}
 .task-line .reorder { display: flex; flex-direction: column; }
-.task-line .reorder button { border: 0; background: none; color: var(--text-muted); cursor: pointer; font-size: 10px; padding: 0 4px; line-height: 1.1; }
-.task-line .reorder button:hover { color: var(--accent); }
+.task-line .reorder button {
+  border: 0; background: none; color: var(--text-muted); cursor: pointer;
+  padding: var(--space-0) var(--space-1);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.task-line .reorder button:hover:not(:disabled) { color: var(--accent); }
+.task-line-actions { display: flex; align-items: center; gap: var(--space-1); }
 
-.saving-dot { font-size: 12px; color: var(--text-muted); }
-.narrative-preview { position: relative; }
-.auto-badge {
-  position: absolute; top: 6px; right: 8px; font-size: 10.5px; font-weight: 700;
-  color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px;
+/* The allocation chip — how much of the total is still unspoken for. Amber
+   while there is a remainder, red once the lines exceed the total. */
+.alloc-chip {
+  padding: var(--space-0-5) var(--space-3);
+  border-radius: var(--radius-pill);
+  border: var(--border-w) solid var(--attention);
+  color: var(--attention); background: var(--attention-soft);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  letter-spacing: var(--ls-caption); font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+.alloc-chip.over {
+  border-color: var(--valid-block-mark); color: var(--valid-block-fg);
+  background: var(--valid-block-bg);
 }
 
-/* Mobile reflow for .task-line (moved from the shell module's original
-   @media block so it still applies after the base rule above — see
-   css-audit.md's note on shell.css's 783–794 block). */
-@media (max-width: 760px) {
-  .task-line { grid-template-columns: 1fr 80px; grid-auto-rows: auto; }
+/* The task code: a chip once set, a quiet "+ code" affordance until then. */
+.task-code-cell { display: flex; align-items: center; min-width: 0; }
+.task-code-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1); max-width: 100%;
+  border: var(--border-w) solid var(--border); background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  padding: var(--space-0-5) var(--space-1) var(--space-0-5) var(--space-3);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  white-space: nowrap; overflow: hidden;
+}
+/* The code, not the chip, is what has to ellipsize — "Correspondence" in a
+   phone-width task line was being cut to "Correspondenc" with no mark. */
+.task-code-chip > span:first-child {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.task-code-chip button {
+  border: 0; background: none; padding: var(--space-0); cursor: pointer;
+  color: var(--text-muted); display: inline-flex;
+}
+.task-code-chip button:hover { color: var(--danger); }
+.task-code-add {
+  border: var(--border-w) dashed var(--border-strong); background: none;
+  color: var(--text-muted); border-radius: var(--radius-pill);
+  padding: var(--space-0-5) var(--space-3);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  cursor: pointer; white-space: nowrap;
+  transition: var(--transition-control);
+}
+.task-code-add:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.task-code-cell select { font-size: var(--fs-label); }
+
+/* ===========================================================================
+   7. DATE, BILLABLE, CUSTOM FIELDS
+--------------------------------------------------------------------------- */
+
+/* The whole row is the target for a label-and-box pair, so the label is the
+   thing you tap. base.css turns the box into a 44px target on a phone with a
+   negative inline margin that optically centres a 22px paint inside it; at
+   the end of a right-aligned row that margin would drag the box past the
+   panel's own padding — which is what painted the checkbox over the word
+   "Billable" in the wave-2 shot. */
+.ed-row-check { cursor: pointer; }
+.ed-row-check input[type="checkbox"] { margin: var(--space-0); margin-left: auto; }
+.ed-row-check:has(input:disabled) { cursor: not-allowed; }
+
+/* Client/matter fields the billing system requires (Phase, Task…). They stay
+   on the FACE of the form rather than behind "More": a required one blocks
+   finalize, and a field that can stop the day closing must not be hidden. */
+.custom-fields-row {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--ovl-w-sm), 1fr));
+  gap: var(--gap-stack);
 }
 
-/* Phone touch floor (≤767px, the shell's phone breakpoint). WAVE-0 FIX
-   (shell wave), to be absorbed by the editor's own wave: the reorder pair
-   measured 19×12.2 CSS px each and "+ code" was 20px tall — the last three
-   controls in the app under the 44px floor the BRIEF sets. The pair goes
-   side by side rather than stacked because two 44px rows of chevrons would
-   be taller than the task line they reorder. */
-@media (max-width: 767px) {
+/* ===========================================================================
+   8. "MORE" — everything rare, one tap deep
+
+   Nothing was deleted to get to ten controls. Finalize, unlock, delete, the
+   three AI actions and their undo, the even split, the AI provenance line and
+   the audit log all live here — inside the panel, inside the focus trap, with
+   full-width rows at the touch floor, rather than in a portalled 28px popover
+   the keyboard cannot reach.
+--------------------------------------------------------------------------- */
+
+.ed-more {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: var(--border-w) solid var(--border);
+}
+.ed-more-toggle {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  width: 100%; min-height: var(--control-h-md);
+  padding: var(--space-1) var(--space-2);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-semibold); letter-spacing: var(--ls-label);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.ed-more-toggle:hover { background: var(--state-hover); color: var(--text-primary); }
+.ed-more-toggle > span { flex: 1 1 auto; }
+.ed-more-toggle svg { flex: none; }
+
+.ed-more-panel { display: flex; flex-direction: column; gap: var(--space-1); }
+.ed-more-item {
+  display: flex; align-items: center; gap: var(--gap-inline);
+  width: 100%; min-height: var(--control-h-lg);
+  padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.ed-more-item:hover { background: var(--state-hover); }
+.ed-more-item:active { background: var(--state-pressed); }
+.ed-more-item svg { flex: none; color: var(--text-muted); }
+.ed-more-item.danger { color: var(--danger); }
+.ed-more-item.danger svg { color: var(--danger); }
+.ed-more-item:disabled { color: var(--state-disabled-fg); cursor: not-allowed; }
+
+.ed-more-group {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.ed-more-group-label {
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase; color: var(--text-muted);
+}
+.ed-more-buttons { display: flex; flex-wrap: wrap; gap: var(--gap-inline); }
+
+/* Provenance: who wrote this sentence, and from what. */
+.ed-prov { margin: 0; padding: var(--space-1) var(--space-3); }
+.ed-prov svg { vertical-align: var(--icon-nudge); }
+.ed-prov-brief { font-style: italic; }
+
+.ed-audit > summary {
+  display: flex; align-items: center;
+  min-height: var(--control-h-lg);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-body); cursor: pointer;
+  list-style-position: inside;
+}
+.ed-audit > summary:hover { background: var(--state-hover); }
+
+/* ===========================================================================
+   9. THE FINALIZE GATE
+
+   A refused finalize has to be READ, not hunted for: entryeditor.js renders
+   it as the panel's first block and scrolls the body back to it. The well is
+   neutral on purpose — each finding inside carries its own severity from
+   .validation-item, so the container must not claim a severity of its own
+   (the same gate serves "cannot finalize" and "finalize with warnings?").
+--------------------------------------------------------------------------- */
+
+.ed-gate {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-3);
+  border: var(--border-w) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+.ed-gate:focus-visible { outline: none; }
+.ed-gate > strong {
+  font-size: var(--fs-subheading); line-height: var(--lh-subheading);
+  letter-spacing: var(--ls-subheading); font-weight: var(--fw-subheading);
+}
+.ed-gate-actions { display: flex; flex-wrap: wrap; gap: var(--gap-inline); justify-content: flex-end; }
+
+/* ===========================================================================
+   10. THE ACTION ROW
+
+   `Done`, not `Save & close`: the form autosaves, so there was never a save
+   to commit — the button closes. The state of that autosave is the thing
+   beside it, and it must be legible at every scroll position, which is what
+   pinning the row is for.
+--------------------------------------------------------------------------- */
+
+.saving-dot {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-muted);
+}
+.saving-dot.state-error { color: var(--danger); }
+.saving-dot svg { flex: none; }
+
+/* ===========================================================================
+   11. THE PHONE — the 44px floor, on the controls this file invents
+
+   base.css enforces the floor on anything wearing .btn and on every form
+   control; the four below are bare <button>s of this editor's own, and the
+   wave-2 measurement caught all of them: .ed-step 32×22.6 (twice) and
+   .ed-more-toggle 76.4×22.6. Same rules under (pointer: coarse) at any width,
+   which is the pattern base.css sets.
+--------------------------------------------------------------------------- */
+
+@media (max-width: 767px), (pointer: coarse) {
+  .ed-step {
+    width: var(--control-h-touch); height: var(--control-h-touch);
+    min-width: var(--tap-min); min-height: var(--tap-min);
+  }
+  .ed-pill, .ed-more-toggle, .ed-more-item, .task-code-add, .cm-value,
+  .editor-suggest-chips button, .ed-audit > summary {
+    min-height: var(--control-h-touch);
+  }
+  .ed-row-label { min-height: var(--control-h-touch); }
+  /* Two lines, name over number — the same shape base.css gives the picker's
+     own rows on a phone. The matter NAME is what a lawyer reads to know which
+     matter this is; the number is a key you confirm afterwards, and letting it
+     share 260px was truncating the name to "Firm adminis…". */
+  .cm-value-text { flex-wrap: wrap; row-gap: var(--space-0); }
+  .cm-value-name { flex: 1 1 100%; }
+  .ed-pill, .task-code-add, .editor-suggest-chips button {
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  /* Two 44px rows of chevrons would be taller than the task line they
+     reorder, so the pair goes side by side. */
   .task-line .reorder { flex-direction: row; gap: var(--space-1); }
   .task-line .reorder button {
     min-width: var(--tap-min); min-height: var(--tap-min);
-    display: inline-flex; align-items: center; justify-content: center;
   }
-  .task-code-add { min-height: var(--control-h-touch); }
+  .task-code-chip button {
+    min-width: var(--tap-min); min-height: var(--tap-min);
+    align-items: center; justify-content: center;
+  }
+  .ed-row { min-height: var(--control-h-touch); }
 }
 
-/* Entry editor: custom client/matter fields (Phase, Task, …) — a compact
-   row between the header grid and the task lines. */
-.custom-fields-row {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px; margin: 10px 0 4px;
+@media (max-width: 767px) {
+  /* Four pills at 390px: equal shares of the row rather than four different
+     widths, so the thumb aims at one size. */
+  .ed-pills { width: 100%; }
+  .ed-pill { flex: 1 1 var(--space-0); padding-inline: var(--space-1); }
+  /* Three cells and a fragment do not fit 358px, so the line stacks: code and
+     hours share the first row, the fragment takes the second, and the line's
+     own reorder/remove controls sit at the end of a third — right-aligned,
+     under the hours figure they belong beside, rather than adrift on the left
+     where they read as the next line's leading controls. */
+  .task-line { grid-template-columns: 1fr auto; grid-auto-rows: auto; }
+  .task-line > :nth-child(3) { grid-column: 1 / -1; }
+  .task-line-actions { grid-column: 1 / -1; justify-content: flex-end; }
+  .custom-fields-row { grid-template-columns: 1fr; }
 }

@@ -1063,10 +1063,17 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
                     onOpenEntry=${() => r.focus && openEditor({ id: r.focus.id })}
                     onAssignMatter=${() => (r.focus ? openEditor({ id: r.focus.id }) : setEditing(r.timer))}
                     onEntryChanged=${onEntryChanged}
-                    menuOpen=${!!menu && menu.row === r}
+                    ${/* BY KEY, NOT BY OBJECT. Row objects are rebuilt from
+                          timers+entries on every render, so `menu.row === r`
+                          was false the moment the menu opened (opening it is a
+                          setState) — the ⋯ reported aria-expanded="false" while
+                          its own menu stood open, and the items were built from
+                          a stale snapshot of the row. `r.key` is stable
+                          (`t<id>` / `e<id>` / `m<id>`). */''}
+                    menuOpen=${!!menu && menu.rowKey === r.key}
                     onMenu=${(at) => {
                       if (r.timer && selected.size > 1 && selected.has(r.timer.id)) setMenu({ ...at, ids: [...selected] });
-                      else { clearSelection(); setMenu({ ...at, row: r }); }
+                      else { clearSelection(); setMenu({ ...at, rowKey: r.key }); }
                     }}
                     onDragStart=${() => { dragId.current = r.timer.id; setDraggingId(r.timer.id); }}
                     onDragEnd=${endDrag}
@@ -1088,11 +1095,19 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         </button>` : null}
     </div>
 
-    ${menu ? html`
-      <${Menu} anchor=${menu.anchor} x=${menu.x} y=${menu.y}
-        title=${menu.ids ? `${menu.ids.length} timers` : rowMenuTitle(menu.row)}
-        items=${menu.ids ? batchMenuItems(menu.ids) : rowMenuItems(menu.row)}
-        onClose=${() => setMenu(null)} />` : null}
+    ${/* The open menu is re-read from the CURRENT rows every render, so a timer
+          that starts, stops or files an entry while its menu is open rewrites
+          the menu instead of acting on the row as it was when it opened. If the
+          row is gone (filtered out, deleted) the menu goes with it. */''}
+    ${menu ? (() => {
+      const mrow = menu.ids ? null : allRows.find((x) => x.key === menu.rowKey);
+      if (!menu.ids && !mrow) return null;
+      return html`
+        <${Menu} anchor=${menu.anchor} x=${menu.x} y=${menu.y}
+          title=${menu.ids ? `${menu.ids.length} timers` : rowMenuTitle(mrow)}
+          items=${menu.ids ? batchMenuItems(menu.ids) : rowMenuItems(mrow)}
+          onClose=${() => setMenu(null)} />`;
+    })() : null}
 
     ${listMenu ? html`
       <${Menu} anchor=${listMenu.anchor} title="List options" items=${listMenuItems()}

@@ -117,6 +117,12 @@
   gap: var(--space-1); padding: var(--space-1) var(--space-2);
 }
 .ctx-inline select { width: auto; flex: 1 1 8rem; }
+/* A custom row keeps the menu's rhythm. Measured before this rule: the list's
+   Show/Group/Order segments came out 20px tall between 36px rows, which read as
+   a different component dropped into the menu rather than a row of it. */
+.ctx-inline .btn, .ctx-inline .seg button, .ctx-inline select {
+  min-height: var(--control-h-sm);
+}
 
 /* A tablet is a coarse pointer that can still be wide enough for the popover
    (an external keyboard on a large iPad), so the popover has to meet the floor
@@ -124,6 +130,12 @@
 @media (pointer: coarse) {
   .ctx-item { min-height: var(--tap-min); padding: var(--space-2); }
   .ctx-ico, .ctx-spacer { width: var(--icon-lg); }
+  /* …and so do the controls inside a custom row — the backdate chips and the
+     Show/Group/Order segments are the only route to those capabilities, so a
+     thumb has to be able to hit them wherever the popover is the shape. */
+  .ctx-inline .btn, .ctx-inline .seg button, .ctx-inline select {
+    min-height: var(--tap-min);
+  }
 }
 
 /* ---------- the same menu as a bottom sheet ----------
@@ -134,6 +146,16 @@
    `Delete entry` row is present on every row that has an entry, and disabled
    with its reason on a finalized one). */
 .tk-menu-sheet .sheet-menu { display: flex; flex-direction: column; }
+/* THE ROW IS THE WHOLE WIDTH OF THE SHEET, IN A GROUP AS WELL AS OUT OF ONE.
+   `.sheet-item` (views.css) is `width: auto`, and a <button> with auto width
+   shrinks to its text; it only filled the sheet because it was a flex child of
+   `.sheet-menu`, which stretched it. Grouping the menu put a `.sheet-group`
+   <div> in between and the stretch stopped: measured at 390px, the row menu's
+   rows came out 162, 256, 371, 193, 179, 154, 136 and 143px wide. Two real
+   consequences — a thumb landing to the right of a short label like "Copy to
+   today" hit nothing, and the 1px rule between rows ended wherever each label
+   did. The group carries the same column so its rows stretch the same way. */
+.tk-menu-sheet .sheet-group { display: flex; flex-direction: column; }
 .tk-menu-sheet .sheet-item { min-height: var(--control-h-xl); }
 .tk-menu-sheet .sheet-label { min-width: 0; }
 .tk-menu-sheet .sheet-item:disabled { opacity: var(--state-disabled-opacity); cursor: default; }
@@ -360,30 +382,226 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
    dismiss control: the only affordance is the hint text 'Enter files it'"). */
 .qc-hint { margin-top: var(--space-2); }
 
-/* ---------- close-out (one-sweep card stack) ----------
-   The card, the scrim and the phone sheet come from .ovl (shell.css). */
-.closeout-dots { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
-.closeout-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
-.closeout-dot.on { background: var(--accent); }
-.closeout-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.closeout-head strong { font-size: 16px; }
-.closeout-hours { font-size: 20px; font-weight: 650; }
+/* ---------- close the day — a review LIST, not a card carousel ----------
+   The panel, the scrim and the phone sheet come from .ovl (shell.css); only
+   the review's own anatomy lives here.
+
+   The dot pagination and the one-card-at-a-time head are gone with the
+   carousel (teardown §18: "you cannot tell at a glance which of the four
+   drafts still need work, and you cannot skip ahead to the one you know is
+   wrong. For 4 drafts a carousel is fine; for 12 it is a trap"). What replaces
+   them is a list in three bands — what still needs words, what is staying a
+   draft, and what is already Ready — so the day's shape is readable before the
+   lawyer commits to anything, and the count in the group head is the honest
+   version of "card 3 of 5".
+
+   Density is the point. Every band is sized so the primary stays in reach: an
+   item is a two-line box, not a card, and the Ready band collapses to one row
+   per entry. */
 .closeout-card textarea { width: 100%; }
-/* The sweep's reassurance line. It used to be a DESKTOP-ONLY key legend
-   ("Esc quits — nothing is lost either way") sitting under the buttons, which
-   meant the one sentence that makes quitting safe to press was invisible on
-   the phone, where quitting is hardest to attempt. All four outcomes are
-   labelled buttons now (Quit · Skip · Edit · Accept, each with its own key cap
-   on desktop), so this is prose rather than an interaction model, and it reads
-   at every width, above the row it is talking about. */
-.closeout-note { margin: var(--space-3) 0 0; }
-.closeout-warn-title { margin: 0 0 8px; font-size: 15px; }
-.closeout-warnlist { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
-.closeout-warnitem {
-  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--surface-2);
+
+/* THE DAY'S SHAPE, in one line, above everything that asks for a decision. */
+.co-shape {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-4); padding-bottom: var(--space-3);
+  border-bottom: var(--border-w) solid var(--border-subtle);
 }
-.closeout-warnitem .validation-list { margin: 6px 0; }
-.closeout-warnitem .btn { margin-top: 4px; }
+.co-shape-hours {
+  font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+  font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+  color: var(--figure);
+}
+/* The sentence takes its own line rather than being cut in half by a wrap. */
+.co-shape .muted { flex: 1 1 100%; }
+
+.co-group { margin: 0 0 var(--space-5); }
+.co-group:last-of-type { margin-bottom: 0; }
+.co-group-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-bottom: var(--space-2);
+}
+/* A band label, not a heading: the dialog's own title already says what this
+   is, so the bands are set in the same micro caps the shortcut sheet uses for
+   its groups. */
+.co-group-title {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  margin: 0;
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase; color: var(--text-muted);
+}
+.co-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--space-5); padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-secondary);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-caption); letter-spacing: 0;
+}
+
+.co-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* AN ITEM THAT STILL NEEDS WORDS. Its own bounding box, because it is a thing
+   to be finished rather than a line to be read. */
+.co-item {
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-1); padding: var(--space-3);
+}
+/* WHERE THE WALK IS. A rail rather than a border colour, because the field
+   inside already paints its own focus ring and two accent edges 12px apart
+   read as one fat one. */
+.co-item:focus-within { box-shadow: inset var(--space-0-5) 0 0 var(--accent); }
+.co-item-head { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: var(--space-2); }
+.co-item-head strong {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--fs-subheading); line-height: var(--lh-subheading);
+  font-weight: var(--fw-subheading); letter-spacing: var(--ls-subheading);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.co-item-hours {
+  flex: none;
+  font-size: var(--fs-num-sm); line-height: var(--lh-num-sm);
+  font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
+  color: var(--figure-secondary);
+}
+/* Two lines, not the form-page default of six. A pre-filled suggestion is
+   read and confirmed, not composed, and every row of a list of them costs the
+   primary its place on the screen. It still clears the touch floor twice
+   over. */
+.co-item .ghost-wrap { display: block; }
+.co-item textarea {
+  min-height: calc(2 * var(--lh-body) + 2 * var(--pad-control-y) + 2 * var(--border-w));
+}
+.co-item-acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* A QUIET ROW — one line per entry, for the two bands that are being reported
+   rather than worked: Ready, and Staying a draft. */
+/* Both quiet bands sit in the same kind of box as the items above them — the
+   Ready band gets its box from .co-ready (the disclosure is inside it), so
+   this is the one for a band with a plain heading. */
+.co-list-quiet { gap: 0; }
+.co-group:not(.co-ready) .co-list-quiet {
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+}
+.co-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center; column-gap: var(--space-3); row-gap: var(--space-0-5);
+  padding: var(--space-2) 0;
+}
+.co-row + .co-row { border-top: var(--border-w) solid var(--border-subtle); }
+/* The row's one control belongs on the row's first line, beside the figure —
+   auto-placement would drop it below the narrative that spans the width. */
+.co-row > .btn { grid-column: 3; grid-row: 1; }
+.co-row-name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-body); font-weight: var(--fw-medium);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+}
+.co-row-hours {
+  font-size: var(--fs-num-sm); line-height: var(--lh-num-sm);
+  font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
+  color: var(--figure-secondary);
+}
+/* The narrative is the evidence that this one is genuinely done, so it is
+   shown rather than implied — one line of it, under the name. */
+.co-row-narr {
+  grid-column: 1 / -1;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-secondary);
+}
+
+/* READY — a band that is collapsible because it is the one band with nothing
+   to do in it. The disclosure is the band's own header, so it is a full-width
+   row rather than a chevron you have to hit. */
+.co-ready { border: var(--border-w) solid var(--border); border-radius: var(--radius-md); }
+.co-ready .co-list { padding: 0 var(--space-3) var(--space-2); }
+.co-disclosure {
+  display: flex; align-items: center; gap: var(--space-2);
+  width: 100%; min-height: var(--control-h-md);
+  padding: var(--space-2) var(--space-3);
+  background: none; border: 0; border-radius: var(--radius-md);
+  color: var(--text-secondary); text-align: left; cursor: pointer;
+}
+.co-disclosure:hover { background: var(--state-hover); }
+.co-disclosure .co-group-title { flex: 1 1 auto; }
+
+/* The reassurance line. It used to be a DESKTOP-ONLY key legend ("Esc quits —
+   nothing is lost either way") sitting under the buttons, which meant the one
+   sentence that makes quitting safe to press was invisible on the phone, where
+   quitting is hardest to attempt. It is prose rather than an interaction model
+   now, it reads at every width, and it sits ABOVE the action row — on a phone
+   that row is lifted out of the scrolling body and pinned to the sheet, so the
+   last child before it is the last line guaranteed to be read. */
+.closeout-note { margin: var(--space-3) 0 0; }
+.closeout-hours {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-num-lg); line-height: var(--lh-num-lg);
+  font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg);
+}
+.closeout-warn-title { margin: 0 0 var(--space-2); font-size: var(--fs-subheading); }
+.closeout-warnlist { display: flex; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-3); }
+.closeout-warnitem {
+  border: var(--border-w) solid var(--border); border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3); background: var(--surface-2);
+}
+.closeout-warnitem .validation-list { margin: var(--space-1) 0; }
+.closeout-warnitem .btn { margin-top: var(--space-1); }
+
+/* THE TOUCH FLOOR inside this dialog. base.css gives every `.btn` a real 44px
+   box on a coarse pointer; the disclosure is not a .btn — it is a band header
+   that happens to be pressable — so it says so itself rather than borrowing a
+   button class it does not want the styling of. Measured before this rule:
+   107.6×22.6 (`uishots --strict`, closeout/mobile). */
+@media (pointer: coarse), (max-width: 767px) {
+  .co-disclosure { min-height: var(--control-h-touch); }
+}
+
+/* ---------- the review list on a wide screen ----------
+   Two changes, both about the same thing: a LIST is as long as the day was,
+   and the primary must not sail off the bottom of the screen because the
+   lawyer had six drafts instead of two.
+
+   1. An item's two secondary actions ride beside its heading instead of under
+      its field. There is room at 560px and it takes a row out of every item.
+   2. The panel is capped at the viewport and scrolls its own body, with the
+      action row anchored to the panel — the phone sheet's anatomy, applied at
+      desktop width, using the same --ovl-actions-h that components/overlay.js
+      already measures at every width. Before this the panel simply grew and
+      "Finalize & export" went below the fold of the scrim's own scroller. */
+@media (min-width: 768px) {
+  .co-item {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--space-3);
+  }
+  .co-item-head { grid-column: 1; grid-row: 1; }
+  .co-item-acts { grid-column: 2; grid-row: 1; margin-top: 0; align-self: start; }
+  .co-item .ghost-wrap { grid-column: 1 / -1; grid-row: 2; }
+
+  .closeout-card {
+    display: flex; flex-direction: column;
+    max-height: calc(100dvh - var(--space-10) - var(--space-6));
+  }
+  .closeout-card > .ovl-head { flex: none; }
+  .closeout-card > .ovl-body {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+    padding-bottom: calc(var(--ovl-actions-h) + var(--space-4));
+  }
+  .closeout-card > .ovl-body > .ovl-actions:last-child {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-raised); margin: 0;
+    padding: var(--space-4) var(--space-5);
+    background: var(--surface-raised);
+    border-top: var(--border-w) solid var(--border);
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    transition: box-shadow var(--dur-fast) var(--ease-standard);
+  }
+  .closeout-card > .ovl-body[data-scroll="more"] > .ovl-actions:last-child {
+    box-shadow: var(--shadow-lift);
+  }
+}
 
 /* ---------- motion (spec §7: VERY subtle; confirms, never decorates) ---------- */
 @media (prefers-reduced-motion: no-preference) {

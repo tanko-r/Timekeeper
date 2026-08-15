@@ -2,7 +2,6 @@
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
 import { Overlay } from '/js/components/overlay.js';
-import { Menu } from '/js/components/menu.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
@@ -174,18 +173,14 @@ export function Modal({ title, onClose, children, wide, initialFocus }) {
     <//>`;
 }
 
-// THE APP'S MENU, kept here only as an alias.
-//
-// This used to BE a menu — a 28px-row popover with no keyboard model and no
-// phone shape, one of the three the wave-1 review found coexisting (D6). The
-// one menu lives in components/menu.js now; this signature survives so the
-// entry editor's AI dropdown, which is owned by another builder this wave,
-// keeps working unchanged and gets the popover-or-sheet split, the roving
-// focus, the type-ahead and the 44px rows for free. New callers should import
-// `Menu` directly.
-export function ContextMenu({ x, y, items, onClose, title = 'Actions' }) {
-  return html`<${Menu} x=${x} y=${y} items=${items} title=${title} onClose=${onClose} />`;
-}
+// THE APP'S MENU IS NOT HERE. `ContextMenu` used to be: a 28px-row popover with
+// no keyboard model and no phone shape, one of the three menus the wave-1
+// review found coexisting (D6). It became a one-line alias while its call sites
+// were converted, and then it had none — the entry editor, the last caller it
+// was kept for, answered its own question with an inline `.ed-more` disclosure
+// rather than a menu. The one menu is `Menu` in components/menu.js; import it
+// from there, and `menuTriggerProps` with it so the trigger carries
+// aria-haspopup and aria-expanded.
 
 // Even split helper mirroring the server's tenth allocation.
 export function splitTenthsEvenly(total, n) {

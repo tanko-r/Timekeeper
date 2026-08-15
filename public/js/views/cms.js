@@ -53,7 +53,10 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
   const [editing, setEditing] = useState(null); // 'new' | cm
   const [fieldsFor, setFieldsFor] = useState(null); // { owner: {client_id}|{matter_id}, title }
   const [importing, setImporting] = useState(false);
-  const [menu, setMenu] = useState(null); // { anchor, cm } | { anchor, group } | { anchor, list }
+  // { anchor, cmId } | { anchor, groupKey } | { anchor, list } — the SUBJECT is
+  // an id, never the object, so it survives the re-render that opening the menu
+  // causes (see openMenu below).
+  const [menu, setMenu] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
   const { loading, data, error, reload } = useAsync(
@@ -75,6 +78,11 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
     const key = cm.client_id ?? `none-${cm.id}`;
     if (!byClient.has(key)) {
       byClient.set(key, {
+        // `key` so the open overflow can be identified by something that
+        // survives a re-render: these group objects are rebuilt from `rows` on
+        // every pass, so comparing them by object identity told the client ⋯
+        // its own menu was shut.
+        key,
         client_id: cm.client_id, client_number: cm.client_number,
         client_name: cm.client_name, task_billing: cm.client_task_billing ?? 1,
         matters: [],
@@ -178,17 +186,24 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
   ];
 
   // The trigger itself is what the menu anchors to and what focus goes back to
-  // when it closes, so it is what gets stored — not a pair of coordinates.
+  // when it closes, so it is what gets stored — not a pair of coordinates. The
+  // SUBJECT is stored as an id, and re-read from the current data below, so a
+  // matter archived from its own menu leaves a menu that agrees with the row.
   const openMenu = (ev, payload) => setMenu({ anchor: ev.currentTarget, ...payload });
 
+  const menuCm = menu && menu.cmId != null ? rows.find((c) => c.id === menu.cmId) : null;
+  const menuGroup = menu && menu.groupKey != null
+    ? clientGroups.find((g) => g.key === menu.groupKey) : null;
+  const menuLive = !!menu && (menu.list ? true : !!(menuCm || menuGroup));
+
   // A sheet covers the row you tapped, so it has to name its subject.
-  const menuTitle = !menu ? ''
-    : menu.cm ? (menu.cm.short_name || menu.cm.cm_number)
-      : menu.group ? (clientLabel(menu.group) || `Client ${menu.group.client_number}`)
+  const menuTitle = !menuLive ? ''
+    : menuCm ? (menuCm.short_name || menuCm.cm_number)
+      : menuGroup ? (clientLabel(menuGroup) || `Client ${menuGroup.client_number}`)
         : 'Matter list';
-  const menuItems = !menu ? []
-    : menu.cm ? matterMenuItems(menu.cm)
-      : menu.group ? clientMenuItems(menu.group)
+  const menuItems = !menuLive ? []
+    : menuCm ? matterMenuItems(menuCm)
+      : menuGroup ? clientMenuItems(menuGroup)
         : listMenuItems();
 
   const matterCount = rows.length;
@@ -278,9 +293,9 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
                             </button>
                             <button class="btn btn-icon btn-ghost btn-sm"
                               title="More actions for this client"
-                              ...${menuTriggerProps(!!menu && menu.group === g)}
+                              ...${menuTriggerProps(!!menu && menu.groupKey === g.key)}
                               aria-label=${`More actions for client ${clientLabel(g) || g.client_number}`}
-                              onClick=${(ev) => openMenu(ev, { group: g })}>
+                              onClick=${(ev) => openMenu(ev, { groupKey: g.key })}>
                               <${Icon} name="moreV" size=${16} />
                             </button>
                           </span>` : null}
@@ -313,9 +328,9 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
                       <td class="cm-actions">
                         <button class="btn btn-icon btn-ghost btn-sm"
                           title="More actions for this matter"
-                          ...${menuTriggerProps(!!menu && menu.cm === cm)}
+                          ...${menuTriggerProps(!!menu && menu.cmId === cm.id)}
                           aria-label=${`More actions for ${cm.short_name || cm.cm_number}`}
-                          onClick=${(ev) => openMenu(ev, { cm })}>
+                          onClick=${(ev) => openMenu(ev, { cmId: cm.id })}>
                           <${Icon} name="moreV" size=${16} />
                         </button>
                       </td>
@@ -326,7 +341,7 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
         </div>`}
     </section>
 
-    ${menu ? html`
+    ${menuLive ? html`
       <${Menu} anchor=${menu.anchor} title=${menuTitle} items=${menuItems}
         onClose=${() => setMenu(null)} />` : null}
 

@@ -518,10 +518,14 @@ export function EntryList({
         ${/* The trigger stores the ELEMENT, not a pair of coordinates: it is
               what the popover hangs off, what edge-collision measures against,
               and what focus returns to when the menu closes. */''}
+        ${/* Keyed, not object-identified: `cardsFor` rebuilds these rows on
+              every render, so `menu.card === c` went false the instant the menu
+              opened and the ⋯ reported aria-expanded="false" underneath its own
+              open menu. `c.key` is `t<timer id>` / `e<entry id>`. */''}
         <button class="btn btn-ghost btn-sm entry-more timer-more" title="Row menu"
           aria-label=${`Row menu — ${name || 'this entry'}`}
-          ...${menuTriggerProps(!!menu && menu.card === c)}
-          onClick=${(ev) => setMenu({ anchor: ev.currentTarget, card: c })}>
+          ...${menuTriggerProps(!!menu && menu.key === c.key)}
+          onClick=${(ev) => setMenu({ anchor: ev.currentTarget, key: c.key })}>
           <${Icon} name="more" size=${16} /></button>
 
         <div class="work-body">${body}</div>
@@ -534,8 +538,17 @@ export function EntryList({
       onConfirm=${() => del(deleting)}
       onClose=${() => setDeleting(null)} />` : null;
 
-  const rowMenu = menu ? html`
-    <${Menu} anchor=${menu.anchor} title=${rowMenuTitle(menu.card)} items=${cardMenuItems(menu.card)}
+  // The open menu is re-read from the CURRENT rows, so an entry finalized or
+  // given a narrative while its menu is open rewrites the menu instead of
+  // acting on the row as it was when it opened. If the row is gone, so is the
+  // menu.
+  const openCard = menu
+    ? (showDate
+      ? dayGroups.flatMap((g) => cardsFor(g.entries, g.date))
+      : cardsFor(entries, entries[0].date)).find((c) => c.key === menu.key)
+    : null;
+  const rowMenu = openCard ? html`
+    <${Menu} anchor=${menu.anchor} title=${rowMenuTitle(openCard)} items=${cardMenuItems(openCard)}
       onClose=${() => setMenu(null)} />` : null;
 
   if (!showDate) {

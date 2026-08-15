@@ -1,7 +1,12 @@
 import { api } from '/js/api.js';
-import { html, useState, useEffect, useRef, createPortal, fmtHours, emitToast, Icon } from '/js/ui.js';
+import {
+  html, useState, useEffect, useRef, useCallback, createPortal, fmtHours, emitToast, Icon,
+} from '/js/ui.js';
 import { useDismissLayer, overlayOpen } from '/js/components/overlay.js';
 import { NarrativeHistory } from '/js/components/narrativehistory.js';
+import { GhostInput } from '/js/components/ghosttext.js';
+import { useShortcuts } from '/js/components/shortcuts.js';
+import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { formatSuggestion } from '/js/lib/narrativesync.js';
 
@@ -31,6 +36,17 @@ import { formatSuggestion } from '/js/lib/narrativesync.js';
 //      The floating panel survives only as the fallback for when the row is
 //      not on screen (filtered out, or a stop fired from another surface) —
 //      the offer must never be unreachable.
+//
+// …and the fourth, from the wave-1 review (D10): "The stop-chip empty state
+// contradicts itself. With no history the surface reads 'Nothing on file for
+// this matter yet — write the narrative on the row' while occupying the row
+// and offering no field; you must Dismiss it first to reach 'Write narrative'.
+// My E2 asked for a focused narrative field beneath the chips; there is none."
+// So there is one now: whenever this entry still needs words, the field is
+// part of the offer — under the chips when there are chips, and instead of the
+// (removed) instruction when there are none. It carries the same ghost-text
+// completion and shortcut expansion as every other narrative field in the app,
+// and Save commits through exactly the path a chip does, Undo included.
 //
 // Every path is a real control: chips are buttons (44px on touch, per
 // base.css's touch tier), Dismiss is a labelled button and not just an Esc
@@ -69,7 +85,11 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   const [chips, setChips] = useState(null);  // null = loading
   const [busy, setBusy] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [typed, setTyped] = useState('');    // the field under the chips
+  const [writing, setWriting] = useState(false);
   const wide = useWideViewport();
+  const shortcuts = useShortcuts();
+  const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
 
   const doneRef = useRef(false);   // one commit per stop, whatever fires first
   const rootRef = useRef(null);    // the element the dismissal stack ranks
@@ -148,9 +168,27 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
   // stack is for.
   useDismissLayer(true, () => finish(false), rootRef);
 
-  // ---- the bare stop: nothing to pick, nothing to warn about ----
-  const nothingToPick = !offerChips || (chips !== null && chips.length === 0);
-  const bare = nothingToPick && !result.relinked;
+  // ---- the field: always on a matter with no phrasebook, on request otherwise ----
+  const noHistory = offerChips && chips !== null && chips.length === 0;
+  const showField = offerChips && chips !== null && (writing || noHistory);
+  // Focus follows the ASK. A field the lawyer opened himself takes the caret;
+  // one that merely appeared with the offer does not, because stealing focus
+  // into a textarea after a stop would eat the next `t`, `c` or `q` he types
+  // and, on a phone, throw the soft keyboard over the row he just filed.
+  useEffect(() => {
+    if (!writing) return;
+    const root = rootRef.current;
+    const el = root && root.querySelector('.stop-chips-write textarea');
+    if (el) el.focus();
+  }, [writing]);
+
+  // ---- the bare stop: nothing to pick, nothing to WRITE, nothing to warn ----
+  //
+  // An entry that still needs a narrative always has something to do here now
+  // — the field is part of the offer — so only a pure confirmation retires
+  // itself: a stop on an entry that already says what the work was (chipped
+  // earlier, typed on the row, AUTO from task lines).
+  const bare = !offerChips && !result.relinked;
   const clearDismiss = () => { clearTimeout(dismissRef.current); dismissRef.current = null; };
   const armDismiss = () => {
     clearDismiss();
@@ -285,11 +323,45 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
             </button>`)}
         </div>` : null}
 
-      ${offerChips && chips && chips.length === 0 ? html`
-        <p class="muted small stop-chips-note">
-          Nothing on file for this matter yet — write the narrative on the row,
-          or leave it as a draft for close-out.
-        </p>` : null}
+      ${/* THE FIELD. Not a fallback and not a second thought: it is where a
+            narrative nobody has written before comes from, and on a matter
+            with no phrasebook it is the ONLY thing this offer can usefully be
+            — so there it stands in place of the instruction that used to point
+            at a control this surface was covering.
+
+            With chips on offer it starts as one line ("Write your own"), which
+            costs the same single tap the field would have cost to focus and
+            keeps the offer the size of the decision it is asking for. Either
+            way Save commits down exactly the path a chip does — same PATCH,
+            same toast, same Undo — and leaving it alone still leaves a clean
+            draft for close-out. */''}
+      ${showField ? html`
+        <div class="stop-chips-write" style=${WRITE}>
+          ${noHistory ? html`
+            <p class="muted small stop-chips-note" style=${{ margin: 0 }}>
+              Nothing on file for this matter yet — say what you did:
+            </p>` : null}
+          <${GhostInput} multiline rows=${2} value=${typed}
+            suggestions=${chips.map((c) => c.text)} expand=${expand}
+            aria-label="Narrative for this entry"
+            placeholder="What did you do?"
+            style=${WRITE_FIELD}
+            onChange=${setTyped} />
+          <div class="stop-chips-write-act" style=${WRITE_ACT}>
+            <button type="button" class="btn btn-sm btn-primary"
+              disabled=${busy || !typed.trim()}
+              onClick=${() => pick({ text: typed.trim(), ai: false })}>
+              <${Icon} name="check" size=${14} /> Save
+            </button>
+          </div>
+        </div>` : null}
+
+      ${offerChips && chips && chips.length > 0 && !writing ? html`
+        <div style=${WRITE}>
+          <button type="button" class="btn btn-sm" onClick=${() => setWriting(true)}>
+            <${Icon} name="edit" size=${14} /> Write your own
+          </button>
+        </div>` : null}
 
       <div class="stop-chips-foot" style=${FOOT}>
         <button type="button" class="btn btn-sm"
@@ -323,6 +395,17 @@ export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }
 
 const TRUNCATE = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const FOOT = { flexWrap: 'wrap', gap: 'var(--space-2)', justifyContent: 'flex-start' };
+// Written here rather than in overlays.css for the same reason SLOT_CSS is:
+// this wave hands the close-out rules of that file to this agent and the rest
+// of it to another, so the offer's own layout travels with the component.
+// Every value is a token — nothing raw enters the DOM.
+const WRITE = { display: 'flex', flexDirection: 'column', gap: 'var(--space-2)', margin: 'var(--space-1) 0 var(--space-2)' };
+const WRITE_FIELD = {
+  // two lines of body text plus the shared field padding — a narrative is a
+  // sentence, and this sits inside a list row
+  minHeight: 'calc(2 * var(--lh-body) + 2 * var(--pad-control-y) + 2 * var(--border-w))',
+};
+const WRITE_ACT = { display: 'flex', justifyContent: 'flex-end' };
 
 // ---------------------------------------------------------------------------
 // The row slot.

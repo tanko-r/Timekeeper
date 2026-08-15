@@ -52,6 +52,11 @@
 //   { hr: true }                                             a rule
 //   { section: 'Label' }                                     a labelled group
 //   { custom: () => vnode }                                  a row of controls
+//
+// `kind` is an optional tag rendered as `data-kind`. It marks rows that are a
+// LIST rather than a verb — today only the per-entry picks on a matter row —
+// so that a fence counting "how many actions does this menu carry" can tell a
+// menu that has grown from a matter that was billed four times.
 // ============================================================================
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
@@ -123,12 +128,14 @@ function normalise(items) {
 // custom rows, and a keyboard user who could not reach them would have lost a
 // capability the popover used to give away by accident (Tab used to walk into
 // them because nothing closed the menu).
-const NAV = [
-  '.ctx-item:not([disabled])',
-  '.ctx-custom button:not([disabled])',
-  '.ctx-custom select:not([disabled])',
-  '.ctx-custom input:not([disabled])',
+const nav = (item, custom) => [
+  `${item}:not([disabled])`,
+  `${custom} button:not([disabled])`,
+  `${custom} select:not([disabled])`,
+  `${custom} input:not([disabled])`,
 ].join(',');
+const NAV_POPOVER = nav('.ctx-item', '.ctx-custom');
+const NAV_SHEET = nav('.sheet-item', '.sheet-custom');
 
 const isTextish = (el) => {
   if (!el) return false;
@@ -138,12 +145,72 @@ const isTextish = (el) => {
 };
 
 // ---------------------------------------------------------------------------
+// ONE KEYBOARD MODEL, SHARED BY BOTH SHAPES.
+//
+// It used to live inside the popover, which left the phone sheet declaring
+// `role="menu"` over `role="menuitem"` rows that answered to no arrow key at
+// all — an ARIA contract the component did not keep, and a real loss on the
+// tablets and folding phones that get the sheet with a keyboard attached. The
+// WAI-ARIA menu-button pattern is the same on both: ↓/↑ rove and wrap, Home and
+// End jump, letters type-ahead with a 700ms buffer.
+//
+// Two deliberate differences, both from what the shape IS:
+//   Tab   closes the popover (APG; Primer and Polaris agree) because a popover
+//         is not modal and focus must be allowed to walk on. In the sheet Tab
+//         cycles inside the shared overlay's focus trap, which is what a modal
+//         bottom sheet owes a keyboard user, so the sheet does not take it.
+//   Esc   the popover rides the shared dismissal stack; the sheet's Escape is
+//         the overlay primitive's own.
+//
+// EVERY key the menu understands is stopped here. The app's global shortcut
+// handler (app.js) fences itself on `overlayOpen()`, which sees the sheet —
+// it is a real `.ovl-panel` — but cannot see the popover. Without this, `t`
+// typed into an open Day-actions popover started a timer behind it and left
+// the menu standing.
+// ---------------------------------------------------------------------------
+function makeMenuKeys({ navSel, itemClass, onTab }) {
+  const typed = { buf: '', at: 0 };
+  return (e) => {
+    const el = e.currentTarget;
+    if (!el) return;
+    const rows = [...el.querySelectorAll(navSel)];
+    if (rows.length === 0) return;
+    const i = rows.indexOf(document.activeElement);
+    const go = (n) => { e.preventDefault(); e.stopPropagation(); rows[n].focus(); };
+    // A <select> owns its own arrow keys — stepping the menu's focus off it
+    // would make the Only filter unusable with a keyboard.
+    const onField = isTextish(e.target);
+    if (e.key === 'ArrowDown' && !onField) return go(i < 0 ? 0 : (i + 1) % rows.length);
+    if (e.key === 'ArrowUp' && !onField) return go(i <= 0 ? rows.length - 1 : i - 1);
+    if (e.key === 'Home') return go(0);
+    if (e.key === 'End') return go(rows.length - 1);
+    if (e.key === 'Tab' && onTab) { e.preventDefault(); e.stopPropagation(); onTab(); return; }
+    if (onField) return;
+    if (e.key.length !== 1 || e.altKey || e.ctrlKey || e.metaKey) return;
+    // TYPE-AHEAD. Letters jump to the next item whose label starts with what
+    // has been typed; the buffer expires after 700ms, so "de" finds "Delete
+    // entry" and a later "d" starts again. A printable key is the menu's
+    // whatever it matches — it never reaches the page underneath.
+    e.preventDefault();
+    e.stopPropagation();
+    const now = Date.now();
+    typed.buf = (now - typed.at < 700 ? typed.buf : '') + e.key.toLowerCase();
+    typed.at = now;
+    const labelled = rows.filter((r) => r.classList.contains(itemClass));
+    const from = labelled.indexOf(document.activeElement);
+    const search = [...labelled.slice(from + 1), ...labelled.slice(0, from + 1)];
+    const hit = search.find((r) => (r.dataset.label || '').startsWith(typed.buf));
+    if (hit) hit.focus();
+  };
+}
+
+// ---------------------------------------------------------------------------
 // The ≥1024px anchored popover.
 // ---------------------------------------------------------------------------
 function MenuPopover({ blocks, anchor, x, y, title, onClose }) {
   const ref = useRef(null);
   const [pos, setPos] = useState(null);
-  const typed = useRef({ buf: '', at: 0 });
+  const keys = useRef(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
@@ -202,7 +269,7 @@ function MenuPopover({ blocks, anchor, x, y, title, onClose }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
-    const first = el.querySelector(NAV);
+    const first = el.querySelector(NAV_POPOVER);
     (first || el).focus({ preventScroll: true });
     return () => {
       if (anchor && anchor.isConnected && typeof anchor.focus === 'function') {
@@ -223,37 +290,16 @@ function MenuPopover({ blocks, anchor, x, y, title, onClose }) {
     };
   }, []);
 
-  const onKeyDown = (e) => {
-    const el = ref.current;
-    if (!el) return;
-    const rows = [...el.querySelectorAll(NAV)];
-    if (rows.length === 0) return;
-    const i = rows.indexOf(document.activeElement);
-    const go = (n) => { e.preventDefault(); rows[n].focus(); };
-    // A <select> owns its own arrow keys — stepping the menu's focus off it
-    // would make the Only filter unusable with a keyboard.
-    const onField = isTextish(e.target);
-    if (e.key === 'ArrowDown' && !onField) return go(i < 0 ? 0 : (i + 1) % rows.length);
-    if (e.key === 'ArrowUp' && !onField) return go(i <= 0 ? rows.length - 1 : i - 1);
-    if (e.key === 'Home') return go(0);
-    if (e.key === 'End') return go(rows.length - 1);
-    // Tab out of a menu closes it (WAI-ARIA APG, Primer, Polaris all agree) —
-    // it must never be left standing while focus walks the page behind it.
-    if (e.key === 'Tab') { e.preventDefault(); closeRef.current(); return; }
-    // TYPE-AHEAD. Letters jump to the next item whose label starts with what
-    // has been typed; the buffer expires after 700ms, so "de" finds "Delete
-    // entry" and a later "d" starts again.
-    if (onField) return;
-    if (e.key.length !== 1 || e.altKey || e.ctrlKey || e.metaKey) return;
-    const now = Date.now();
-    typed.current.buf = (now - typed.current.at < 700 ? typed.current.buf : '') + e.key.toLowerCase();
-    typed.current.at = now;
-    const labelled = rows.filter((r) => r.classList.contains('ctx-item'));
-    const from = labelled.indexOf(document.activeElement);
-    const search = [...labelled.slice(from + 1), ...labelled.slice(0, from + 1)];
-    const hit = search.find((r) => (r.dataset.label || '').startsWith(typed.current.buf));
-    if (hit) { e.preventDefault(); hit.focus(); }
-  };
+  // Tab out of a popover closes it (WAI-ARIA APG, Primer, Polaris all agree) —
+  // it must never be left standing while focus walks the page behind it.
+  if (!keys.current) {
+    keys.current = makeMenuKeys({
+      navSel: NAV_POPOVER,
+      itemClass: 'ctx-item',
+      onTab: () => closeRef.current(),
+    });
+  }
+  const onKeyDown = keys.current;
 
   const p = pos || guess.current;
   let key = 0;
@@ -273,6 +319,7 @@ function MenuPopover({ blocks, anchor, x, y, title, onClose }) {
             <button key=${key} type="button" role="menuitem" tabIndex=${-1}
               class=${'ctx-item' + (item.danger ? ' danger' : '')}
               data-label=${String(item.label || '').toLowerCase()}
+              data-kind=${item.kind || undefined}
               disabled=${item.disabled} title=${item.title || undefined}
               onClick=${() => { closeRef.current(); item.onClick(); }}>
               ${item.icon
@@ -292,15 +339,37 @@ function MenuPopover({ blocks, anchor, x, y, title, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// The <1024px bottom sheet. Everything except the rows comes from the shared
-// overlay primitive — including the return of focus to the trigger on Escape.
+// The <1024px bottom sheet. Everything except the rows and their keyboard model
+// comes from the shared overlay primitive — the grip, the scrim, the focus
+// trap, the scroll lock, Escape, hardware Back, the safe-area inset, and the
+// return of focus to whatever opened it.
 // ---------------------------------------------------------------------------
-function MenuSheet({ blocks, title, onClose }) {
+function MenuSheet({ blocks, anchor, title, onClose }) {
   let key = 0;
+  const keys = useRef(null);
+  if (!keys.current) keys.current = makeMenuKeys({ navSel: NAV_SHEET, itemClass: 'sheet-item' });
+
+  // WHO FOCUS GOES BACK TO, decided rather than inherited. The overlay restores
+  // focus to whatever was focused when it opened, read during its first render
+  // — and a pointer does not reliably leave focus on the button it pressed
+  // (Safari never does; a synthetic click never does), so Escape could hand a
+  // keyboard user back to <body> instead of the ⋯ they came from. Claiming it
+  // for the trigger here is the only moment early enough: this component
+  // renders before the Overlay it returns.
+  const claimed = useRef(false);
+  if (!claimed.current) {
+    claimed.current = true;
+    if (anchor && anchor.isConnected && typeof anchor.focus === 'function') {
+      anchor.focus({ preventScroll: true });
+    }
+  }
+
   return html`
     <${Overlay} title=${title || 'Actions'} onClose=${() => onClose()} size="sm"
+      initialFocus=".sheet-item:not([disabled])"
       className="menu-sheet tk-menu-sheet">
-      <div class="sheet-menu" role="menu" aria-label=${title || 'Actions'}>
+      <div class="sheet-menu" role="menu" aria-label=${title || 'Actions'}
+        onKeyDown=${keys.current}>
         ${blocks.map((b, bi) => {
           const labelId = b.label ? `tkms-${bi}-label` : undefined;
           const body = b.rows.map((item) => {
@@ -312,7 +381,9 @@ function MenuSheet({ blocks, title, onClose }) {
             return html`
               <button key=${key} type="button" role="menuitem"
                 class=${'sheet-item' + (item.danger ? ' danger' : '')}
-                disabled=${item.disabled}
+                data-label=${String(item.label || '').toLowerCase()}
+                data-kind=${item.kind || undefined}
+                disabled=${item.disabled} title=${item.title || undefined}
                 onClick=${() => { onClose(); item.onClick(); }}>
                 ${item.icon
                   ? html`<${Icon} name=${item.icon} size=${18} />`
@@ -338,7 +409,9 @@ export function Menu({ anchor = null, x = 0, y = 0, items, title, onClose }) {
   const popover = useMenuPopover();
   const blocks = normalise(items);
   if (blocks.length === 0) return null;
-  if (!popover) return html`<${MenuSheet} blocks=${blocks} title=${title} onClose=${onClose} />`;
+  if (!popover) {
+    return html`<${MenuSheet} blocks=${blocks} anchor=${anchor} title=${title} onClose=${onClose} />`;
+  }
   return html`
     <${MenuPopover} blocks=${blocks} anchor=${anchor} x=${x} y=${y}
       title=${title} onClose=${onClose} />`;
@@ -429,6 +502,10 @@ export function rowMenuItems(row, actions) {
       items.push({
         label: `Open ${fmt(row.liveTotal ? row.liveTotal(e) : e.total)}h${e.status === 'draft' ? '' : ` · ${e.status}`} — ${snippet || 'no narrative yet'}`,
         icon: 'eye',
+        // A LIST, NOT A VERB. One row per entry the matter carries today is the
+        // only place the merged row shows its parts, so it stays — but it is
+        // the one part of this menu whose length is data, and it says so.
+        kind: 'entry',
         onClick: () => a.openEntry(e),
       });
     }
@@ -475,7 +552,17 @@ export function rowMenuItems(row, actions) {
       onClick: () => a.deleteEntry(focus),
     });
   }
-  return items;
+
+  // A LONE GROUP NEEDS NO NAME. The same menu carries three groups on a Today
+  // row that has a timer and one on a ledger row that never will, and a single
+  // "ENTRY" caption over the whole menu separates nothing — it just repeats the
+  // sheet's own title in smaller type. Primer's ActionList and Polaris's
+  // ActionList both drop a single group heading for that reason. Counting the
+  // groups that will actually carry rows (rather than the markers pushed above)
+  // is what keeps this honest on a finalized row, where the Timer group is
+  // empty and would otherwise still be counted.
+  const named = normalise(items).filter((b) => b.label).length;
+  return named > 1 ? items : items.filter((it) => !it.section);
 }
 
 // The name a row menu answers to. The sheet covers the row it acts on, so the

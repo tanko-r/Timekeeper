@@ -70,6 +70,30 @@ const clickText = async (selector, text) => {
   }, selector, text);
   await page.mouse.click(box.x, box.y);
 };
+// The entry editor's RARE actions — Finalize, Delete, Unlock, the AI trio and
+// their undo, the even split, the audit log — moved off the face of the form
+// into one "More" disclosure inside the panel (teardown §16, wave-2 F1: the
+// dialog is allowed ten controls before that disclosure, and it had eighteen).
+// Nothing was removed; each is one tap deeper, inside the focus trap, on a
+// full-width row at the touch floor. These helpers drive them where they live.
+const openEditorMore = async () => {
+  await waitFor('.modal-wide [data-ed-more]');
+  const already = await page.$eval('.modal-wide [data-ed-more]',
+    (el) => el.getAttribute('aria-expanded') === 'true');
+  if (!already) await page.click('.modal-wide [data-ed-more]');
+  await waitFor('.modal-wide .ed-more-panel');
+};
+const editorMore = async (text) => {
+  await openEditorMore();
+  await clickText('.modal-wide .ed-more-item', text);
+};
+// One undivided task line collapses to its task code alone, because its hours
+// ARE the entry total already on screen (teardown §16: "a one-line entry
+// should show hours and nothing else"). This opens the real line editor.
+const splitIntoTasks = async () => {
+  await clickText('.modal-wide button', 'Split into tasks');
+  await waitFor('.modal-wide .task-line');
+};
 // The timer BOARD's header (three grouping modes, a ten-tab strip, A-Z, New
 // group, Import, search) collapsed into one "⋯" menu on the merged list
 // (teardown E1). Nothing was removed — these helpers drive the same
@@ -224,13 +248,15 @@ await step('entry: total + task line + narrative autosave, allocation chip', asy
     total.dispatchEvent(new Event('input', { bubbles: true }));
   });
   // task code is hidden behind a "+ code" affordance by default (no <select>
-  // until it's clicked) — click it, choose a code, and it collapses to a chip
-  if (await page.$('.modal-wide .task-line select')) throw new Error('task-code <select> must be hidden by default');
+  // until it's clicked) — click it, choose a code, and it collapses to a chip.
+  // On an undivided entry that affordance is the collapsed task-code ROW; the
+  // markup is the same either way (entryeditor.js renders one taskCodeCell).
+  if (await page.$('.modal-wide .task-code-cell select')) throw new Error('task-code <select> must be hidden by default');
   await page.click('.modal-wide .task-code-add');
-  await waitFor('.modal-wide .task-line select');
+  await waitFor('.modal-wide .task-code-cell select');
   await page.evaluate(() => {
     const modal = document.querySelector('.modal-wide');
-    const select = modal.querySelector('.task-line select');
+    const select = modal.querySelector('.task-code-cell select');
     select.value = 'Review';
     select.dispatchEvent(new Event('change', { bubbles: true }));
   });
@@ -239,21 +265,32 @@ await step('entry: total + task line + narrative autosave, allocation chip', asy
   await page.waitForFunction(
     () => document.querySelector('.saving-dot')?.textContent.includes('Saved'),
     { timeout: 6000 });
-  // second line defaults to the remainder → allocation stays clean
-  await clickText('.modal-wide button', 'Add task line');
+  // "Split into tasks" divides an undivided entry. This narrative has no
+  // semicolons to split at, so it opens the line editor with a second line —
+  // whose hours default to the remainder, keeping the allocation clean.
+  await splitIntoTasks();
   await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
   const lineVal = await page.$eval('.modal-wide .task-line:nth-of-type(2) input[type="number"]',
     (el) => el.value);
   if (Number(lineVal) !== 0) throw new Error(`remainder default wrong: ${lineVal}`);
-  await page.evaluate(() => { // remove it again
-    [...document.querySelectorAll('.modal-wide .task-line')][1]
-      .querySelector('button[title="Remove line"]').click();
-  });
+  // …and "Add task line" still adds one on top of that
+  await clickText('.modal-wide button', 'Add task line');
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 3);
+  const removeLine = async (i) => {
+    await page.evaluate((idx) => {
+      [...document.querySelectorAll('.modal-wide .task-line')][idx]
+        .querySelector('button[title="Remove line"]').click();
+    }, i);
+    await sleep(150);
+  };
+  await removeLine(2); // remove them again, one render apart
+  await removeLine(1);
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 1);
   await shot('editor');
 });
 
-await step('finalize entry from editor', async () => {
-  await clickText('.modal-wide button', 'Finalize');
+await step('finalize entry from editor (via the More disclosure)', async () => {
+  await editorMore('Finalize');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
@@ -316,7 +353,7 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
 });
 
 await step('backdated start (10m ago) → stop → inline chips; picking one FINISHES the entry', async () => {
-  await page.click('.timer-row button[title="Timer menu"]');
+  await page.click('.timer-row button[title="Row menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-inline button', '10m');
   await page.waitForFunction(() => document.querySelector('.timer-row.running'), { timeout: 4000 });
@@ -514,7 +551,7 @@ await step('quick timer: stop files a matterless entry → assign from the entry
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Acme');
   await sleep(600); // autosave associates the entry in place
-  await clickText('.modal-wide button', 'Save & close');
+  await clickText('.modal-wide button', 'Done');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 
   // association reached the entry AND the timer followed it (server glue)
@@ -582,7 +619,7 @@ await step('ghost-text: phrasebook completion in the entry editor, Tab accepts',
   await shot('ghost-text');
   // the editor autosaved an entry while we typed — delete it to leave the day clean
   await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
-  await clickText('.modal-wide button', 'Delete');
+  await editorMore('Delete entry');
   await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
@@ -634,7 +671,7 @@ await step('Reuse: pick past narratives for this matter and insert them', async 
 
   // leave the day as we found it
   await page.waitForFunction(() => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
-  await clickText('.modal-wide button', 'Delete');
+  await editorMore('Delete entry');
   await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   for (const e of [first, second]) await fetch(`${base}/api/entries/${e.id}`, { method: 'DELETE' });
@@ -668,7 +705,7 @@ await step('shortcuts: save-from-selection, inline expansion, settings list', as
   await page.type('.modal-wide .narrative-preview textarea', 'review IA ', { delay: 20 });
   const val = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
   if (val !== 'review Interconnect Agreement ') throw new Error(`expansion failed: "${val}"`);
-  await clickText('.modal-wide button', 'Delete');
+  await editorMore('Delete entry');
   await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   // settings shows the minimal list (no management screen beyond list/delete)
@@ -683,7 +720,12 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await clickText('.cmpicker-item .name', 'Acme');
-  await waitFor('.modal-wide .task-line');
+  // An undivided entry shows its task code and nothing else of the line, so
+  // reaching the line editor is one deliberate press — which, with no
+  // semicolons in the (empty) narrative to split at, opens it with the two
+  // lines this scenario needs.
+  await splitIntoTasks();
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
 
   // client label visible (Acme's client was deliberately left unnamed → renders as the 6-digit number)
   await page.waitForFunction(() =>
@@ -701,9 +743,7 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
     hours.dispatchEvent(new Event('input', { bubbles: true }));
   });
 
-  // second substantive line → AUTO becomes available (≥2 substantive lines)
-  await clickText('.modal-wide button', 'Add task line');
-  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
+  // fill the second line too → AUTO becomes available (≥2 substantive lines)
   await page.evaluate(() => {
     const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
     const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
@@ -764,7 +804,7 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
   // durability (Task 4): close the editor (flushes narrative_manual=1 on the
   // task-touching save that already went out) and reopen the SAME entry from
   // the dashboard list — the manual text must survive, and AUTO must stay off.
-  await clickText('.modal-wide button', 'Save & close');
+  await clickText('.modal-wide button', 'Done');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   await page.waitForFunction(() =>
     [...document.querySelectorAll('.today-list .work-row')].some((c) => c.textContent.includes('Review lease terms')),
@@ -793,7 +833,7 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
     throw new Error(`manual text did not survive close/reopen: "${reopenedText}"`);
   }
 
-  await clickText('.modal-wide button', 'Delete');
+  await editorMore('Delete entry');
   await clickText('.modal:not(.modal-wide) button', 'Delete');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
@@ -877,7 +917,7 @@ await step('groups: create from the list menu, assign from the row menu, isolate
   // — duplicate, group, reorder, pin, zero, delete — moved into the Edit-timer
   // dialog the menu still opens in one row (wave-2). The group select lives
   // there beside the timer's name and matter, where it always belonged.
-  await page.click('.timer-row button[title="Timer menu"]');
+  await page.click('.timer-row button[title="Row menu"]');
   await clickText('.ctx-menu .ctx-item', 'Edit timer');
   await waitFor('.modal select');
   await page.evaluate(() => {
@@ -1240,7 +1280,7 @@ await step('drag: an open inline edit suspends it; hovering a row opens a drop s
   // Edit-timer dialog now (wave-2: the row menu was seventeen items on a
   // phone), one row deep from the same ⋯, as real controls rather than 28px
   // popover rows.
-  await page.click('.today-list .timer-row button[title="Timer menu"]');
+  await page.click('.today-list .timer-row button[title="Row menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-item', 'Edit timer');
   await waitFor('.modal .timer-lifecycle');
@@ -1333,8 +1373,14 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
   const single = await page.$eval('.ctx-menu', (el) => el.textContent);
   if (single.includes('timers selected')) throw new Error(`lone card opened the BATCH menu: ${single}`);
   if (!single.includes('Edit timer')) throw new Error(`single menu missing: ${single}`);
-  const rowItems = await page.$$eval('.ctx-menu .ctx-item, .ctx-menu .ctx-custom', (els) => els.length);
-  if (rowItems > 8) throw new Error(`the row menu is back over eight items (${rowItems}) — teardown §5 named this object as the app's tell`);
+  // The fence counts the menu's VERBS. `data-kind="entry"` rows are the day's
+  // own entries on this matter listed one per row — the only place the merged
+  // row shows its parts — so their count is the day's data, not the menu's
+  // design, and a matter billed four times must not read as a menu that grew
+  // back. Every action row is still counted, which is what §5 was about.
+  const rowItems = await page.$$eval(
+    '.ctx-menu .ctx-item:not([data-kind="entry"]), .ctx-menu .ctx-custom', (els) => els.length);
+  if (rowItems > 8) throw new Error(`the row menu is back over eight action items (${rowItems}) — teardown §5 named this object as the app's tell`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
 });
@@ -1459,10 +1505,10 @@ await step('custom fields: define on client, entry enforces + carries value', as
   await page.type('.modal-wide textarea', 'Reviewed the phase-coded workstream in detail today.');
   await page.waitForFunction(
     () => document.querySelector('.saving-dot')?.textContent.includes('Saved'), { timeout: 6000 });
-  await clickText('.modal-wide button', 'Finalize');
+  await editorMore('Finalize');
   await page.waitForFunction(() => document.body.textContent.includes('"Phase" is required'), { timeout: 4000 });
   await page.select('.custom-fields-row select', 'P100');
-  await clickText('.modal-wide button', 'Finalize');
+  await editorMore('Finalize');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
@@ -1512,7 +1558,7 @@ await step('export view: row actions edit and finalize a not-finalized entry', a
   await waitFor('.modal-wide');
   await page.waitForFunction(() => document.body.textContent.includes('export action wiring'));
   await shot('export-row-edit');
-  await clickText('.modal-wide button', 'Save & close');
+  await clickText('.modal-wide button', 'Done');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 
   await page.evaluate(() => {
@@ -1845,7 +1891,26 @@ await step('alt+drag feedback: select region → note box → TODO entry filed',
   if (!todo.includes(`feedback/${shots[0]}`)) throw new Error('TODO entry does not reference the saved screenshot');
 });
 
-await step('one-sweep close-out: card stack finalizes & exports the day (c)', async () => {
+// CLOSE THE DAY. The capability under test is unchanged — `c` sweeps the day's
+// drafts, finalizes them and exports the CSV in one pass — but the shape it is
+// asserted through is the review LIST that replaced the card carousel
+// (teardown §18, wave-1 review F2). What changed in the assertions, and why:
+//
+//   phase   'sweep' → 'review'. There is no card stack to walk, so there is no
+//           per-card phase and no `.closeout-dot` pagination to count; the
+//           whole day is on screen at once and the panel carries the shape as
+//           data-need / data-ready.
+//   'summary' is gone. It existed only to show a count between the last card
+//           and the commit; the list shows that count the entire time.
+//   the end  a day with nothing left over closes with a snackbar instead of a
+//           terminal dialog — the last fixed interaction in the flow, and a
+//           dialog whose only control is "Done" is not a decision. The panel
+//           still stands, and still says what and why, whenever something
+//           could NOT be finalized, so both endings are accepted here.
+//
+// Everything the old step proved, this step still proves: the fence, that the
+// seeded draft ends up finalized, and that it ends up exported.
+await step('one-sweep close-out: the review list finalizes & exports the day (c)', async () => {
   const cms = await (await fetch(`${base}/api/cms`)).json();
   const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];
   const seeded = await (await fetch(`${base}/api/entries`, {
@@ -1862,7 +1927,10 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   await page.evaluate(() => { document.activeElement?.blur(); });
   await pressGlobal('c');
   await waitFor('.closeout-card');
-  // the just-seeded draft is the newest (highest id) → first card in the sweep
+  await page.waitForFunction(() => document.querySelector('.closeout-card')?.dataset.phase === 'review',
+    { timeout: 6000 });
+  // the just-seeded draft is on the list — it already has a narrative, so it
+  // is in the Ready band rather than costing a card
   await page.waitForFunction((name) => document.querySelector('.closeout-card')?.textContent.includes(name),
     { timeout: 4000 }, acme.short_name);
 
@@ -1876,28 +1944,64 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   if (await page.$('.modal')) throw new Error('global `n` leaked under the close-out overlay');
   if (!(await page.$('.closeout-card'))) throw new Error('close-out vanished after the fence check');
 
-  // sweep through every draft card (Enter accepts and advances) until the summary
-  for (let i = 0; i < 20; i++) {
-    const phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
-    if (phase !== 'sweep') break;
-    const before = await page.$$eval('.closeout-dot.on', (els) => els.length);
-    await page.keyboard.press('Enter');
-    await page.waitForFunction((prevOn) => {
-      const backdrop = document.querySelector('.closeout-card');
-      if (!backdrop || backdrop.dataset.phase !== 'sweep') return true;
-      return document.querySelectorAll('.closeout-dot.on').length > prevOn;
-    }, { timeout: 4000 }, before);
+  // A LIST, NOT A CAROUSEL. Every draft that still needs words is on screen at
+  // once (one .co-item each), the ones that are already written are counted in
+  // the Ready band instead of being walked through, and the dot pagination —
+  // which could only ever say "card 3 of 5" — is gone.
+  const shape = await page.$eval('.closeout-card', (el) => ({
+    need: Number(el.dataset.need),
+    ready: Number(el.dataset.ready),
+    items: el.querySelectorAll('.co-item').length,
+    dots: el.querySelectorAll('.closeout-dot').length,
+  }));
+  await shot('closeout-review');
+  if (shape.ready < 1) {
+    throw new Error(`the seeded draft has a narrative and should be Ready, not a card: ${JSON.stringify(shape)}`);
   }
-  const afterSweep = await page.$eval('.closeout-card', (el) => el.dataset.phase);
-  if (afterSweep !== 'summary') throw new Error(`expected the summary card after sweeping, got phase="${afterSweep}"`);
+  if (shape.items !== shape.need) {
+    throw new Error(`every draft needing words must be on screen: ${JSON.stringify(shape)}`);
+  }
+  if (shape.dots > 0) throw new Error('the carousel pagination is back');
 
+  // EDIT NO LONGER DESTROYS THE SWEEP. It used to call onClose(true), so
+  // correcting one entry cost the whole pass and Escape left you on Today with
+  // no review at all. The editor opens OVER it (the overlay stack is LIFO) and
+  // the review is still standing, still in `review`, when the editor closes.
+  if (shape.need > 0) {
+    await clickText('.closeout-card .co-item button', 'Edit');
+    await waitFor('.ovl-panel.modal', 8000);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.ovl-panel.modal'), { timeout: 6000 });
+    await sleep(400);
+    const survived = await page.$eval('.closeout-card', (el) => el.dataset.phase).catch(() => null);
+    if (survived !== 'review') throw new Error(`Edit destroyed the review (phase=${survived})`);
+  }
+
+  // ACCEPT ALL — the ordinary day where every pre-filled suggestion is right.
+  // The rows it writes leave the "needs a narrative" band, which is the proof
+  // that it wrote them.
+  const hasAcceptAll = await page.evaluate(() => [...document.querySelectorAll('.closeout-card button')]
+    .some((b) => b.textContent.includes('Accept all')));
+  if (hasAcceptAll) {
+    await clickText('.closeout-card button', 'Accept all');
+    await page.waitForFunction((n) => Number(document.querySelector('.closeout-card')?.dataset.need) < n,
+      { timeout: 8000 }, shape.need);
+  }
+
+  // One control commits the whole day: it writes anything still standing in a
+  // field, finalizes, and downloads the CSV.
   await clickText('.closeout-card button', 'Finalize & export');
-  await page.waitForFunction(() => {
-    const p = document.querySelector('.closeout-card')?.dataset.phase;
-    return p === 'closed' || p === 'warn' || p === 'blocked';
-  }, { timeout: 6000 });
+  // Two legitimate endings: the panel reports what could not be finalized, or
+  // — with nothing left to decide — it closes itself behind a snackbar.
+  const settle = async (warnOk) => (await page.waitForFunction((ok) => {
+    const p = document.querySelector('.closeout-card');
+    if (!p) return 'gone';
+    const ph = p.dataset.phase;
+    if (ph === 'warn') return ok ? 'warn' : false;
+    return ph === 'closed' || ph === 'blocked' ? ph : false;
+  }, { timeout: 10000 }, warnOk)).jsonValue();
 
-  let phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
+  let phase = await settle(true);
   if (phase === 'warn') {
     // the harness's entries must be clean to reach here on a warning, not a
     // hard block — assert the warning card, then accept and finalize anyway.
@@ -1905,16 +2009,16 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
       .some((b) => b.textContent.includes('Accept warnings & finalize')));
     if (!hasAccept) throw new Error('warn phase reached without an "Accept warnings & finalize" button (hard block?)');
     await clickText('.closeout-card button', 'Accept warnings & finalize');
-    await page.waitForFunction(() => {
-      const p = document.querySelector('.closeout-card')?.dataset.phase;
-      return p === 'closed' || p === 'blocked';
-    }, { timeout: 6000 });
-    phase = await page.$eval('.closeout-card', (el) => el.dataset.phase);
+    phase = await settle(false);
   }
-  if (phase !== 'closed') throw new Error(`expected the closed card, got phase="${phase}"`);
+  if (phase === 'blocked') throw new Error('nothing finalized, so nothing was exported');
+  // Either way the lawyer is told the day closed — in the panel that explains
+  // the leftovers, or in the snackbar when there are none.
   await page.waitForFunction(() => document.body.textContent.includes('Day closed'), { timeout: 4000 });
-  await shot('closeout-closed');
-  await clickText('.closeout-card button', 'Done');
+  if (phase === 'closed') {
+    await shot('closeout-closed');
+    await clickText('.closeout-card button', 'Done');
+  }
   await page.waitForFunction(() => !document.querySelector('.closeout-card'), { timeout: 4000 });
 
   const after = await (await fetch(`${base}/api/entries/${seeded.id}`)).json();

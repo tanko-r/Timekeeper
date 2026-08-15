@@ -58,8 +58,35 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 // A draft is "ready" when it already says what the work was — chipped from the
 // stop offer, typed on the row, written in the editor, or built from task
 // lines (AUTO). Ready drafts cost nothing at close-out.
-const isReady = (d) => (
-  d.narrative_auto ? !!String(d.narrative || '').trim() : !!String(d.narrative || '').trim());
+const isReady = (d) => String(d.narrative || '').trim() !== '';
+
+// The line above the buttons. Wave-1 review, D12: the old one read "1 draft
+// still need attention." — ungrammatical, and it never said what the primary
+// was about to do with the text sitting in the fields. Plurals are written
+// out rather than assembled from `s` fragments, because "2 will stay drafts —
+// nothing is lost, and IT will be here tomorrow" is the same defect one clause
+// further along.
+// The day's shape in half a line: how much of it is already done. It replaces
+// the dot pagination, which could only say "card 3 of 5" — a position in a
+// stack, never how much work was left.
+function shapeOf(nNeed, nReady) {
+  if (nNeed === 0) return 'every one already says what the work was';
+  const need = `${nNeed} still ${nNeed === 1 ? 'needs' : 'need'} a narrative`;
+  return nReady > 0 ? `${nReady} ready · ${need}` : need;
+}
+
+function noteFor({ nNeed, parked, willSave, willStay, drafts }) {
+  if (nNeed === 0 && parked === 0) {
+    return `Every draft already says what the work was. Finalize & export locks ${drafts === 1 ? 'it' : `all ${drafts}`} and downloads the day as a CSV.`;
+  }
+  const parts = [];
+  if (willSave === 1) parts.push('Finalize & export saves the narrative above, locks the day and downloads the CSV.');
+  else if (willSave > 1) parts.push(`Finalize & export saves all ${willSave} narratives above, locks the day and downloads the CSV.`);
+  if (willStay === 1) parts.push('One entry will stay a draft — nothing is lost, and it will be here tomorrow.');
+  else if (willStay > 1) parts.push(`${willStay} entries will stay drafts — nothing is lost, and they will be here tomorrow.`);
+  if (parts.length === 0) parts.push('Nothing is lost either way — a draft left alone stays a draft.');
+  return parts.join(' ');
+}
 
 export function CloseOut({ onClose, openEditor }) {
   const [drafts, setDrafts] = useState(null); // null = loading; frozen at open
@@ -303,7 +330,7 @@ export function CloseOut({ onClose, openEditor }) {
       // export has downloaded and the day behind the scrim is finalized; a
       // modal whose only control is "Done" was the last fixed interaction in
       // the whole flow and it bought the lawyer nothing.
-      emitToast(`Day closed — ${fmtHours(fresh.today.total)}h finalized and exported as CSV`);
+      emitToast(`Day closed — ${fmtHours(fresh.today.total)}h finalized and downloaded as CSV`);
       onClose(true);
       return;
     }
@@ -423,9 +450,7 @@ export function CloseOut({ onClose, openEditor }) {
         <p class="co-shape">
           <strong>${drafts.length} draft${drafts.length === 1 ? '' : 's'}</strong>
           <span class="co-shape-hours mono">${fmtHours(totalOf(drafts))}h</span>
-          <span class="muted">${nNeed === 0
-            ? 'every one already has a narrative'
-            : `${nReady} ready · ${nNeed} still need${nNeed === 1 ? 's' : ''} a narrative`}</span>
+          <span class="muted">${shapeOf(nNeed, nReady)}</span>
         </p>
 
         ${nNeed > 0 ? html`
@@ -485,7 +510,7 @@ export function CloseOut({ onClose, openEditor }) {
               done, and it is confirmed once, with everything else, by the
               primary below. */''}
         ${nReady > 0 ? html`
-          <section class=${'co-group co-ready' + (readyOpen ? '' : ' co-shut')}>
+          <section class="co-group co-ready">
             <button class="co-disclosure" aria-expanded=${readyOpen ? 'true' : 'false'}
               onClick=${() => setReadyOpen((v) => !v)}>
               <${Icon} name=${readyOpen ? 'chevronDown' : 'chevronRight'} size=${16} />
@@ -513,12 +538,14 @@ export function CloseOut({ onClose, openEditor }) {
         ${/* The reassurance goes ABOVE the buttons, not after them: it is what
               makes the primary safe to press, and on a phone the action row is
               lifted out of the scrolling body and pinned to the sheet, so only
-              the last child before it is guaranteed to be read. */''}
-        <p class="closeout-note muted small">
-          ${willStay > 0
-            ? `${willStay} will stay ${willStay === 1 ? 'a draft' : 'drafts'} — nothing is lost, and it will be here tomorrow.`
-            : 'Nothing is lost either way — a draft left alone stays a draft.'}
-        </p>
+              the last child before it is guaranteed to be read.
+
+              It also says what the primary is about to DO, because the primary
+              does two things that are not on its label: it writes every
+              suggestion still sitting in a field (they are the lawyer's answer
+              — he read them and left them there), and it leaves anything blank
+              as a draft. */''}
+        <p class="closeout-note muted small">${noteFor({ nNeed, parked: parked.length, willSave, willStay, drafts: drafts.length })}</p>
 
         <div class="ovl-actions">
           <button class="btn" onClick=${() => onClose(changedRef.current)}>
@@ -586,8 +613,9 @@ export function CloseOut({ onClose, openEditor }) {
     title = phase === 'closed' ? 'Day closed' : 'Nothing exported yet';
     body = html`
       <${React.Fragment}>
+        ${/* The title already says "Day closed"; this is the figure. */''}
         ${phase === 'closed' ? html`
-          <p class="closeout-hours mono">Day closed — ${fmtHours(info.total)}h · exported</p>` : null}
+          <p class="closeout-hours mono">${fmtHours(info.total)}h finalized · CSV downloaded</p>` : null}
         <p>
           ${phase === 'closed'
             ? `Everything else is finalized and in the CSV. ${n} ${n === 1 ? 'draft could' : 'drafts could'} not be finalized:`
@@ -604,8 +632,9 @@ export function CloseOut({ onClose, openEditor }) {
             </div>`)}
         </div>
         <p class="muted small">
-          They stay as drafts on ${date}. Nothing was lost, and closing the day
-          again once they are fixed exports just them.
+          ${n === 1
+            ? `It stays a draft on ${date}. Nothing was lost, and closing the day again once it is fixed exports just that one.`
+            : `They stay as drafts on ${date}. Nothing was lost, and closing the day again once they are fixed exports just them.`}
         </p>
         <div class="ovl-actions">
           <button class="btn btn-primary" onClick=${() => onClose(true)}>Done</button>
@@ -619,7 +648,7 @@ export function CloseOut({ onClose, openEditor }) {
   return html`
     <${Overlay} title=${title} onClose=${() => onClose(changedRef.current)}
       className=${'closeout-card' + (phase === 'closed' ? ' closeout-closed' : '')}
-      panelAttrs=${{ 'data-phase': phase }}
+      panelAttrs=${{ 'data-phase': phase, 'data-need': needs.length, 'data-ready': ready.length }}
       initialFocus=".co-item textarea">
       ${body}
     <//>`;
