@@ -47,34 +47,66 @@
    in shell.css; only this last piece is here, because the row belongs to each
    dialog's own content and shell.css cannot see where a dialog ends.
 
-   Why it is needed, measured rather than assumed: scripts/overlay-fences.mjs
-   opens every dialog at 390×844 and checks that a ≥44×44 control is actually
-   ON SCREEN, not merely present. Before this, the entry editor for an existing
-   entry reported 4 of its 8 real controls on screen — "Save & close",
-   "Finalize" and "Delete" sat below the fold inside the body's own scroll box,
-   so the one action a phone user opens the sheet to perform had to be hunted
-   for. Every other dialog was short enough to hide the defect.
+   Why it is pinned at all, measured rather than assumed:
+   scripts/overlay-fences.mjs opens every dialog at 390×844 and checks that a
+   ≥44×44 control is actually ON SCREEN, not merely present. Before it, the
+   entry editor for an existing entry reported 4 of its 8 real controls on
+   screen — "Save & close", "Finalize" and "Delete" sat below the fold inside
+   the body's own scroll box.
 
-   Sticky rather than a flex footer: the row is authored inside each dialog's
-   children, so there is no DOM seam to hang a real footer on without rewriting
-   nine components. The negative bottom margin cancels the body's bottom
-   padding, which is what stops the row jumping as the body reaches its end;
-   the row then carries the safe-area inset in its own padding, so the buttons
-   never sit under a home indicator. `.row-end` is matched alongside
-   `.ovl-actions` because several dialogs still use the generic utility class
-   for the same row (their e2e selectors bind to it), and a phone user should
-   not be able to tell which one a given dialog picked. */
+   WHAT THIS BLOCK NOW FIXES, and it is the other half of the same problem.
+   The pinned row was `position: sticky` with a negative bottom margin, and the
+   body reserved nothing for it. Measured on the existing-entry sheet at
+   390×844: body 705px tall with 20px of bottom padding, action row 125px tall
+   floating over the last 145px of the scrollport, and "Narrative is empty." —
+   the reason Finalize had just refused — rendered in the 20px sliver BELOW the
+   floating row, 17px tall, cut off by the sheet edge, reachable only by
+   scrolling the full 145px with nothing on screen to say there was anything
+   there. A lawyer taps Finalize on a phone, it refuses, and the reason is
+   off-screen.
+
+   Two changes, both of which have to happen together:
+     1. The row leaves the flow. `position: absolute` against .ovl-panel (which
+        is already `position: relative`) rather than sticky, so it no longer
+        contributes to the scrollport's height and can no longer sit ABOVE a
+        strip of live content. An absolutely positioned box whose containing
+        block is outside the scroll container is not clipped by it, which is
+        what lets it hang over the body's own overflow.
+     2. The body reserves exactly the row's height plus one gap
+        (--ovl-actions-h, MEASURED per dialog by components/overlay.js — a
+        dialog with no action row reserves 0). Content therefore ends a full
+        16px clear of the buttons at maximum scroll, and every element of every
+        dialog is reachable.
+
+   Only a row that is the LAST child of the body is pinned: an .ovl-actions in
+   the middle of a dialog's content (the close-out warning phase has one per
+   blocked entry) belongs where it was authored and is left in normal flow.
+   `.row-end` is matched alongside `.ovl-actions` because several dialogs still
+   use the generic utility class for the same row (their e2e selectors bind to
+   it), and a phone user should not be able to tell which one a given dialog
+   picked. */
 @media (max-width: 767px) {
-  .ovl-body > .ovl-actions,
-  .ovl-body > .row-end {
-    position: sticky; bottom: 0; z-index: var(--z-raised);
-    margin-left: calc(var(--space-4) * -1);
-    margin-right: calc(var(--space-4) * -1);
-    margin-bottom: calc((var(--space-5) + var(--shell-safe-b)) * -1);
+  .ovl-body, .ovl-head + .ovl-body {
+    padding-bottom: calc(var(--ovl-actions-h) + var(--space-4));
+  }
+  .ovl-body > .ovl-actions:last-child,
+  .ovl-body > .row-end:last-child {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    z-index: var(--z-raised);
+    margin: 0;
     padding: var(--space-3) var(--space-4) calc(var(--space-3) + var(--shell-safe-b));
     background: var(--surface-raised);
     border-top: var(--border-w) solid var(--border);
+    transition: box-shadow var(--dur-fast) var(--ease-standard);
   }
+  /* "There is more below." components/overlay.js marks the body `more` while
+     it is scrollable and not yet at the end, so the pinned row casts a shadow
+     upward exactly while there is content sliding under it and drops it the
+     moment the reader reaches the bottom. Without this the sheet gives no clue
+     at all that anything follows — which is half of what made the clipped
+     "Narrative is empty." message so easy to miss. */
+  .ovl-body[data-scroll="more"] > .ovl-actions:last-child,
+  .ovl-body[data-scroll="more"] > .row-end:last-child { box-shadow: var(--shadow-lift); }
   /* A desktop layout device: it exists to push the committing action to the
      right of a wide row. In a stacked sheet row it would eat a whole line. */
   .ovl-body > .ovl-actions > .spacer,
@@ -201,13 +233,14 @@ button.qc-chip.on { border-color: var(--accent); background: var(--accent-soft);
 .closeout-head strong { font-size: 16px; }
 .closeout-hours { font-size: 20px; font-weight: 650; }
 .closeout-card textarea { width: 100%; }
-/* The key legend is a DESKTOP hint now, and only a hint: Accept, Edit and Skip
-   are real buttons in .ovl-actions above it (each carrying its own key cap),
-   and Quit is the ✕ in the sheet header. Before this, the four <kbd> chips
-   were the whole interaction model — "a phone user can open the dialog and
-   type, then cannot accept, skip, or even dismiss it". */
-.closeout-keys { display: flex; justify-content: flex-end; gap: 4px; margin: var(--space-2) 0 0; }
-@media (max-width: 767px) { .closeout-keys { display: none; } }
+/* The sweep's reassurance line. It used to be a DESKTOP-ONLY key legend
+   ("Esc quits — nothing is lost either way") sitting under the buttons, which
+   meant the one sentence that makes quitting safe to press was invisible on
+   the phone, where quitting is hardest to attempt. All four outcomes are
+   labelled buttons now (Quit · Skip · Edit · Accept, each with its own key cap
+   on desktop), so this is prose rather than an interaction model, and it reads
+   at every width, above the row it is talking about. */
+.closeout-note { margin: var(--space-3) 0 0; }
 .closeout-warn-title { margin: 0 0 8px; font-size: 15px; }
 .closeout-warnlist { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 .closeout-warnitem {

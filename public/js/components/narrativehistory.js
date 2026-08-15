@@ -12,7 +12,20 @@ import { joinNarratives } from '/js/lib/narrativejoin.js';
 // week's call plus yesterday's review — so rows are checkboxes and the chosen
 // ones join into one clause list, in the order they were picked, exactly as a
 // multi-line entry's narrative reads.
-export function NarrativeHistory({ cmId, cmLabel, onInsert, onClose }) {
+//
+// WAVE-1: this dialog now has a second caller. When none of the stop chips'
+// 2–3 one-tap suggestions fit, "More from this matter" opens the whole
+// phrasebook here rather than sending the lawyer through the entry editor to
+// find it — so the deep path costs one tap from the row, at any width, and
+// the same list serves the editor's `Reuse` button unchanged.
+//
+// `insertLabel` names the commit for that caller ("Use it" reads better than
+// "Insert" when the text goes straight onto the entry), and `announce=false`
+// lets it stay quiet because the stop chips raise their own toast — the one
+// carrying **Undo**, since applying a narrative over an entry overwrites.
+export function NarrativeHistory({
+  cmId, cmLabel, onInsert, onClose, insertLabel = 'Insert', announce = true,
+}) {
   const [rows, setRows] = useState(null);
   const [picked, setPicked] = useState([]); // entry ids, in pick order
   const [error, setError] = useState(null);
@@ -36,7 +49,9 @@ export function NarrativeHistory({ cmId, cmLabel, onInsert, onClose }) {
   function insert() {
     if (!preview) return;
     onInsert(preview);
-    emitToast(`Narrative from ${chosen.length} ${chosen.length === 1 ? 'entry' : 'entries'} inserted`);
+    if (announce) {
+      emitToast(`Narrative from ${chosen.length} ${chosen.length === 1 ? 'entry' : 'entries'} inserted`);
+    }
     onClose();
   }
 
@@ -77,7 +92,7 @@ export function NarrativeHistory({ cmId, cmLabel, onInsert, onClose }) {
       <div class="row-end">
         <button type="button" class="btn" onClick=${onClose}>Cancel</button>
         <button type="button" class="btn btn-primary" disabled=${!preview} onClick=${insert}>
-          <${Icon} name="check" size=${16} /> Insert${chosen.length > 1 ? ` ${chosen.length}` : ''}
+          <${Icon} name="check" size=${16} /> ${insertLabel}${chosen.length > 1 ? ` ${chosen.length}` : ''}
         </button>
       </div>
     <//>`;

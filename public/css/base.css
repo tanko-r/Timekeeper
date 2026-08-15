@@ -268,16 +268,32 @@ a:active { color: var(--accent-active); }
 }
 .btn:hover { background: var(--state-hover); border-color: var(--border-strong); }
 .btn:active { background: var(--state-pressed); }
-/* Opacity rather than a flat fill, because one rule has to switch off four
-   variants at once (secondary, primary, tonal, danger) and each has its own
-   fill and foreground. The value is a token so no module invents its own; it
-   was raised from a hardcoded 0.45 because in dark a 0.45 wash left the
-   button's border indistinguishable from the page. */
+/* DISABLED IS A FILL, NOT AN OPACITY — and this is a dark-theme correctness
+   bug, not a taste call.
+   It used to read `opacity: var(--state-disabled-opacity)` over whatever fill
+   the variant already had, on the reasoning that one rule then switches off
+   four variants at once. Measured on quick capture in DARK: the disabled
+   "File it" composited to rgb(71,97,137) — half of the dark accent #6c9ff2
+   over the raised panel — a solid mid-blue, while the ENABLED "Cancel" beside
+   it was rgb(28,28,26) with a grey border. The brightest, most colourful
+   object in the dialog was the one control the user could not press. In LIGHT
+   the identical rule read correctly, because opacity moves a colour toward the
+   backdrop and the backdrop is white in one theme and near-black in the other:
+   "faded" means darker in light and LIGHTER in dark. A dead control has to
+   sink in both, so it takes the inert well the disabled form field already
+   uses (tokens.css §7b) and drops the variant's fill entirely.
+   Painted luminance, dark: dead 0.004 · enabled secondary 0.012 · panel 0.017.
+   Painted luminance, light: dead 0.797 · enabled secondary 1.000.
+   In both themes the dead control is now the quietest thing on the surface. */
 .btn:disabled, .btn[aria-disabled="true"] {
-  opacity: var(--state-disabled-opacity); cursor: default; box-shadow: none;
+  --btn-fg: var(--state-disabled-fg);
+  background: var(--state-disabled-bg);
+  border-color: var(--state-disabled-border);
+  color: var(--btn-fg);
+  cursor: default; box-shadow: none;
 }
 .btn:disabled:hover, .btn[aria-disabled="true"]:hover {
-  background: var(--surface-1); border-color: var(--border-input);
+  background: var(--state-disabled-bg); border-color: var(--state-disabled-border);
 }
 
 .btn-primary {
@@ -287,8 +303,9 @@ a:active { color: var(--accent-active); }
 }
 .btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn-primary:active { background: var(--accent-active); border-color: var(--accent-active); }
+.btn-primary:disabled, .btn-primary[aria-disabled="true"],
 .btn-primary:disabled:hover, .btn-primary[aria-disabled="true"]:hover {
-  background: var(--accent); border-color: var(--accent);
+  background: var(--state-disabled-bg); border-color: var(--state-disabled-border);
 }
 
 .btn-danger {
@@ -297,8 +314,9 @@ a:active { color: var(--accent-active); }
   font-weight: var(--fw-semibold);
 }
 .btn-danger:hover { background: var(--danger-hover); border-color: var(--danger-hover); }
+.btn-danger:disabled, .btn-danger[aria-disabled="true"],
 .btn-danger:disabled:hover, .btn-danger[aria-disabled="true"]:hover {
-  background: var(--danger); border-color: var(--danger);
+  background: var(--state-disabled-bg); border-color: var(--state-disabled-border);
 }
 
 /* Tonal: the emphasis step between primary and secondary — and it is a RAISED
@@ -321,8 +339,12 @@ a:active { color: var(--accent-active); }
 }
 .btn-tonal:hover { background: var(--state-hover); border-color: var(--border-strong); }
 .btn-tonal:active { background: var(--state-pressed); box-shadow: var(--shadow-1); }
+/* The tonal variant's whole emphasis is a raised surface plus a shadow, so a
+   dead one has to lose the shadow too or it still reads as "important". */
+.btn-tonal:disabled, .btn-tonal[aria-disabled="true"],
 .btn-tonal:disabled:hover, .btn-tonal[aria-disabled="true"]:hover {
-  background: var(--surface-2); border-color: var(--border-strong);
+  background: var(--state-disabled-bg); border-color: var(--state-disabled-border);
+  box-shadow: none;
 }
 
 .btn-ghost {
@@ -334,6 +356,10 @@ a:active { color: var(--accent-active); }
   background: var(--state-hover); border-color: transparent;
 }
 .btn-ghost:active { background: var(--state-pressed); }
+/* A ghost button is a glyph in a toolbar or a row, not a box: giving a dead
+   one a grey slab would make the OFF state heavier than the on one. It keeps
+   its transparency and says "off" in the foreground alone. */
+.btn-ghost:disabled, .btn-ghost[aria-disabled="true"],
 .btn-ghost:disabled:hover, .btn-ghost[aria-disabled="true"]:hover {
   background: none; border-color: transparent;
 }
@@ -460,7 +486,12 @@ input[type="checkbox"], input[type="radio"] {
   width: var(--checkbox-size); height: var(--checkbox-size);
   margin: 0; flex: none; cursor: pointer;
 }
-input[type="checkbox"]:disabled, input[type="radio"]:disabled { cursor: not-allowed; opacity: 0.5; }
+/* A checkbox is a GLYPH, not a box with a fill of its own to swap, so this is
+   the one control left where "off" is still an opacity — tokenised, per
+   tokens.css §7b, so it is not a bare number in a module. */
+input[type="checkbox"]:disabled, input[type="radio"]:disabled {
+  cursor: not-allowed; opacity: var(--state-disabled-opacity);
+}
 
 .field { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .field-label {
@@ -823,11 +854,17 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
    Colour is not the only channel: the bar at the leading edge carries the
    same information with no colour vision at all — the same shape cue the
    sidebar's active row uses. */
-.cmpicker-item.hover {
+/* Keyed off the ARIA state as well as the private class so the two cannot
+   drift: the picker is a real ARIA 1.2 combobox now (cmpicker.js), and the
+   option the input's aria-activedescendant points at is also the option that
+   carries aria-selected. */
+.cmpicker-item.hover,
+.cmpicker-item[aria-selected="true"] {
   background: var(--option-active);
   color: var(--text-primary);
 }
-.cmpicker-item.hover::before {
+.cmpicker-item.hover::before,
+.cmpicker-item[aria-selected="true"]::before {
   content: ''; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1);
   width: var(--state-mark-w);
   border-radius: var(--radius-pill);
@@ -836,7 +873,9 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
 /* Meta text on the active row: the muted grey is tuned for the menu surface,
    not for the highlight, where it drops to 3.1:1. One step up restores it
    (5.34:1 light, 4.93:1 dark). */
-.cmpicker-item.hover .client, .cmpicker-item.hover .num { color: var(--text-secondary); }
+.cmpicker-item.hover .client, .cmpicker-item.hover .num,
+.cmpicker-item[aria-selected="true"] .client,
+.cmpicker-item[aria-selected="true"] .num { color: var(--text-secondary); }
 
 /* THE SETTLED CHOICE — an option that IS the current value, as opposed to the
    one the cursor is on. Keyed off the ARIA attribute rather than a private
@@ -844,12 +883,12 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
    and the accessibility state cannot drift apart. Quieter than
    --option-active (tier 2 mark, not tier 1) because "this is already
    selected" is information, not an action. */
-[role="option"][aria-selected="true"], .is-selected {
+[role="option"][aria-selected="true"]:not(.cmpicker-item), .is-selected {
   position: relative;
   background: var(--state-selected);
   color: var(--state-selected-fg);
 }
-[role="option"][aria-selected="true"]::before, .is-selected::before {
+[role="option"][aria-selected="true"]:not(.cmpicker-item)::before, .is-selected::before {
   content: ''; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1);
   width: var(--state-mark-w);
   border-radius: var(--radius-pill);

@@ -3,15 +3,26 @@
    and the stacking contract between the shell's fixed bars and anything else
    that pins itself to the bottom of the viewport.
 
+   FOUR DESTINATIONS, ONE ACTION. The shell used to offer seven places to go
+   and three things to do (Add todo, Run /todo, Float timer — a developer's
+   tools in a lawyer's navigation, one thumb-reach from Settings). The teardown
+   cut it to Today · Calendar · Entries · Settings, with quick capture as the
+   only action; Day and Stats are surfaces inside Calendar, Export is a surface
+   inside Entries, Clients & Matters and the three old actions are inside
+   Settings. Nothing was deleted — see the route table in app.js, which keeps
+   every retired URL working by canonicalising it into its new home.
+
    THREE BREAKPOINTS, and only these three in this file:
 
-     phone    ≤  767px   no side nav at all. Five-slot bottom navigation bar
-                         (Today · Calendar · Search · Export · More) plus a
-                         modal bottom sheet for the overflow destinations and
-                         every action. Material 3 caps a navigation bar at 3–5
-                         destinations and Apple HIG caps a tab bar at 5 before
-                         a "More" tab; seven sidebar rows cannot go in a bar,
-                         so four go in and three move to the sheet.
+     phone    ≤  767px   no side nav at all. Five-slot bottom navigation bar:
+                         the four destinations with quick capture in the
+                         middle (Material 3's BottomAppBar-plus-FAB shape).
+                         Material 3 caps a navigation bar at 3–5 destinations
+                         and Apple HIG at 5 before a "More" tab — four fit, so
+                         there is no More sheet any more, and the slot it used
+                         to occupy went to the thing done twenty times a day
+                         instead of the once-a-day download that used to sit
+                         there.
 
      tablet   768–1023   navigation rail: icon above a one-word label, 76px
                          wide, persistent. This is Material 3's documented
@@ -20,9 +31,9 @@
                          for ".TIM export") and render as a chip strip at the
                          top of the page — see .pagenav.
 
-     desktop  ≥ 1024px   persistent 200px sidebar, split into two labelled
-                         groups: destinations you can BE at, and actions that
-                         DO something. Those were mixed into one list before.
+     desktop  ≥ 1024px   persistent 200px sidebar: the capture control, then
+                         the four destinations. The old ACTIONS group is gone
+                         from the navigation entirely.
 
    State that survives colour-blindness: every active nav item carries three
    simultaneous cues — a filled pill, a weight step (medium → semibold), and a
@@ -86,6 +97,55 @@
 }
 .sidebar .brand svg { flex: none; color: var(--accent); }
 .sidebar .brand-word span { color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+   Quick capture's control — the ONE action in the shell.
+
+   The teardown's worst placement finding: `setQuickCapture(true)` was called
+   from exactly one place in the whole app, `e.key === 'q'`. No button, in any
+   surface, at any width — so on the installed Android PWA the app's fastest
+   feature did not exist. It is the first thing under the brand now, and the
+   centre of the phone's bottom bar.
+
+   Shaped like the input it opens, which is the convention every palette-driven
+   app uses (Attio, Linear, Slack, GitHub): a field-shaped button carrying its
+   own shortcut, so the key is taught by the control rather than by a help
+   sheet. It is a button, not an input, because the palette IS the input —
+   two text fields for one job would be a lie about where typing goes.
+--------------------------------------------------------------------------- */
+
+.qc-trigger {
+  /* Tight gutters on purpose: the sidebar is 200px, and the prompt has to fit
+     beside its icon and its key cap without ellipsis at that width. */
+  display: flex; align-items: center; gap: var(--gap-tight);
+  width: 100%; min-height: var(--control-h-lg);
+  margin-bottom: var(--space-4);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--surface-0); color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-regular); letter-spacing: var(--ls-label);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.qc-trigger svg { flex: none; color: var(--accent); }
+.qc-trigger-label {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.qc-trigger-kbd { flex: none; }
+.qc-trigger:hover {
+  background: var(--surface-1); border-color: var(--border-strong);
+  color: var(--text-secondary);
+}
+.qc-trigger:active { background: var(--surface-2); }
+.qc-trigger:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+  box-shadow: var(--focus-halo);
+}
 
 /* A group is a set of nav rows under one eyebrow label. The rule the brief
    asks for lives here: destinations in one group, actions in another, with a
@@ -244,10 +304,22 @@
    three-words-to-a-line buttons:
      1. below 1024px, .spacer becomes a zero-height full-width flex break, so
         the title keeps its own line and the actions start a fresh one;
-     2. below 768px, the buttons AFTER that break grow to fill their line —
-        never squeezed, never clipped, and a lone primary action ends up full
-        width. The day arrows sit before the break and stay square at the 44px
-        touch minimum.
+     2. below 768px, the ONE primary action takes a full-width row; secondary
+        actions share the row above it at their natural width. The day arrows
+        sit before the break and stay square at the 44px touch minimum.
+
+   HOW MANY CONTROLS A HEADER MAY CARRY (teardown §2). It counted the
+   dashboard's four — `< date >`, Finalize day, Export, New entry — and found
+   two of them to be strict subsets of "Close the day" six feet below, with the
+   two worse ones holding the prominent slot, and the word "Export" naming two
+   different file formats depending on which of the four buttons you pressed.
+   The rule this component now states, and which the screens themselves have to
+   keep, is: a page header carries at most ONE primary action, plus secondary
+   actions that are not duplicates of something already on the screen —
+   anything else belongs in .page-head-menu, the overflow. That is why rule 2
+   above changed: making every secondary action full-width on a phone is what
+   turned a header into a stack of competing slabs, and only the primary earns
+   that treatment now.
 --------------------------------------------------------------------------- */
 
 .page-head {
@@ -263,6 +335,12 @@
   gap: var(--gap-inline);
   margin-left: auto;
 }
+/* The header's overflow. A screen with more than one secondary action puts the
+   rest behind this — one labelled trigger, the same "one primary plus an
+   overflow" shape Primer's ActionList, Polaris's ResourceItem and Carbon's
+   DataTable all converge on for a row, applied to a page. */
+.page-head-menu { flex: none; }
+
 /* Its own line, always: `order` puts it after the actions even though the
    markup keeps it next to the title, where it reads. */
 .page-head-tools {
@@ -359,16 +437,31 @@
 .botnav-item.active { color: var(--text-primary); font-weight: var(--fw-semibold); }
 .botnav-item.active .botnav-ind { background: var(--accent-soft); color: var(--accent-strong); }
 
-/* The More sheet. The sheet shape, the grabber, the scrim, tap-to-dismiss,
-   Escape, the focus trap and the inert background all come from the shared
-   .ovl primitive below — this only says what goes INSIDE it. */
-.navsheet .nav-group + .nav-group { margin-top: var(--space-3); padding-top: var(--space-3); }
-.navsheet .navlink {
+/* The centre slot is the app's one action, not a destination: it never carries
+   an active state, and it is the only filled thing in the bar, so the eye
+   finds it without reading a word. Material 3's BottomAppBar-with-a-FAB, kept
+   inside the bar's own row rather than floating above it — a floating FAB
+   would sit over the last card of a scrolling list, which on this screen is
+   the entry the reader is most likely to be working on. */
+.botnav-capture .botnav-ind {
+  background: var(--accent); color: var(--text-on-accent);
+  box-shadow: var(--shadow-1);
+}
+.botnav-capture:hover .botnav-ind { background: var(--accent-hover); }
+.botnav-capture:active .botnav-ind { background: var(--accent-active); }
+.botnav-capture .botnav-label { color: var(--text-primary); font-weight: var(--fw-semibold); }
+
+/* Settings → Tools: the three actions that left the navigation. They are the
+   same .navlink rows they were in the sidebar, so the armed/agent-live states
+   of "Run /todo" come along unchanged — but inside a card, on a phone, they
+   have to meet the touch floor the sidebar never had to. */
+.tools-list { display: flex; flex-direction: column; gap: var(--space-0-5); }
+.tools-list .navlink {
   min-height: var(--tap-min);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
 }
-.navsheet .navlink svg { width: var(--icon-lg); height: var(--icon-lg); }
+.tools-list .navlink svg { width: var(--icon-lg); height: var(--icon-lg); }
 
 /* ---------------------------------------------------------------------------
    Page-level sub-navigation (< 1024px): the Settings categories, as a chip
@@ -547,6 +640,19 @@
    button now, and only where a keyboard exists. */
 .ovl-kbd { margin-left: var(--space-1); }
 
+/* The shortcut sheet's group headings. Seventeen bindings in one flat table
+   mixed global keys with timer-grid chords; Slack, GitHub and Linear all group
+   a shortcut sheet by task area (component.gallery §7), so app.js renders one
+   <tbody> per group and this is its heading row. */
+.kbd-help .kbd-group th {
+  padding: var(--space-4) 0 var(--space-1);
+  text-align: left;
+  font-size: var(--fs-micro); line-height: var(--lh-micro);
+  font-weight: var(--fw-micro); letter-spacing: var(--ls-micro);
+  text-transform: uppercase; color: var(--text-muted);
+}
+.kbd-help tbody:first-child .kbd-group th { padding-top: 0; }
+
 @media (max-width: 767px) {
   /* Bottom sheet: full width, flush with the bottom edge, corners rounded at
      the top only (Material 3's modal bottom sheet). */
@@ -594,6 +700,16 @@
   }
   .sidebar .brand { justify-content: center; padding: var(--space-1) 0 var(--space-4); }
   .sidebar .brand-word { display: none; }
+
+  /* 76px holds an icon and nothing else; the capture control keeps its
+     tooltip and its keyboard shortcut, and loses its words. */
+  .qc-trigger {
+    justify-content: center;
+    min-height: var(--tap-min);
+    padding: var(--space-1);
+    margin-bottom: var(--space-3);
+  }
+  .qc-trigger-label, .qc-trigger-kbd { display: none; }
 
   .nav-label { display: none; }
   .navlink {
@@ -687,6 +803,14 @@
      5. modals and sheets cover everything, as they should
    .main reserves the height of the bar so the last card is never trapped
    under it.
+
+   And from the TOP edge down, when a timer is running:
+     1. the device's top safe-area inset (padding inside the bar)
+     2. the running-timer bar            z-index --z-nav   (95)
+   It is at the top precisely BECAUSE of the list above: two bars already spend
+   121px — 14% of a 390×844 phone — on the bottom edge, and a third would be
+   indefensible. .main reserves its height too, through .tk-running in
+   runbar.css. See that file for the whole contract.
    ========================================================================= */
 
 @media (max-width: 767px) {
@@ -731,10 +855,13 @@
   .page-head > .spacer ~ .btn:not(.btn-sm) { flex: 1 1 auto; }
 
   /* The actions group owns its own full-width band, secondary actions share
-     the first row of it, and the ONE primary action takes the row under them
-     end to end — the same shape a bottom sheet's .ovl-actions uses, and where
-     a thumb expects the committing button to be. */
+     the first row of it at their own width, and the ONE primary action takes
+     the row under them end to end — the same shape a bottom sheet's
+     .ovl-actions uses, and where a thumb expects the committing button to be.
+     (Secondary actions used to stretch too, which is how three header buttons
+     became three full-width slabs stacked above the day's work — see the note
+     on how many controls a header may carry, above.) */
   .page-head-actions { flex: 1 1 100%; }
-  .page-head-actions > .btn { flex: 1 1 auto; }
+  .page-head-actions > .btn { flex: 0 1 auto; }
   .page-head-actions > .btn-primary { flex: 1 1 100%; }
 }

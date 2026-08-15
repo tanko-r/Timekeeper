@@ -1,1 +1,383 @@
-/* ledger — filled in by wave 1. Tokens only: no raw values in this file. */
+/* ============================================================================
+   ledger.css — the Entries ledger, and Export as a mode of it.
+
+   Owned by views/search.js (the ledger + the shared row renderer) and
+   views/exportview.js (the export filters + the download actions). It replaces
+   two screens that were the same list twice: a "Search" page whose real job
+   was "every entry ever recorded, in bulk", and an "Export" page that was that
+   same list plus two columns and three buttons.
+
+   Three findings from docs/ui/teardown.md §10 and §12 are answered here, and
+   each one is measured, not felt:
+
+     1. "The desktop <table> is 839px wide inside a 356px scroller. The
+        checkbox column — the least useful thing on a phone — is preserved at
+        full width, while Hours is entirely off-screen and Narrative is cut
+        mid-word." Below 768px there is no sideways scroller at all: base.css's
+        .table-cards turns every row into a card, and the rules at the bottom
+        of this file say what THIS table's columns mean when they stack.
+
+     2. "A bulk-select checkbox column with no persistent action bar. The bar
+        appears only after a selection and is position: sticky; top: 8px — it
+        will collide with the page head." It is offset by --runbar-total now,
+        per the contract in runbar.css, which is the same reason it can never
+        hide under the running-timer bar either.
+
+     3. "Fifteen controls to move one row… above a table with ONE row in it."
+        The ledger's six always-expanded filters are one search box, one
+        "Filters" disclosure and a chip per filter you actually applied.
+
+   Every value below is a token or a composition of tokens, except content-
+   relative column widths (ch / rem / %), which the design system deliberately
+   does not tokenise — see .blankslate-desc's 44ch and .daystat-weekbar's 8rem.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. THE HEAD — one figure of the moment
+   Mercury's big-number/small-decimal treatment (reference-analysis §1/§4),
+   used ONCE on this screen: how much time the current filter selects. The
+   count beside it is a caption, a full size step and weight class below it,
+   which is what makes the figure read as the answer.
+--------------------------------------------------------------------------- */
+.ledger-figures {
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+.ledger-figure { display: inline-flex; align-items: baseline; gap: var(--space-1); }
+.ledger-figure-num {
+  font-size: var(--fs-num-hero); line-height: var(--lh-num-hero);
+  font-weight: var(--fw-num-hero); letter-spacing: var(--ls-num-hero);
+  font-variant-numeric: tabular-nums; color: var(--figure);
+}
+.ledger-figure-dec {
+  font-size: calc(1em * var(--num-fraction-scale));
+  font-weight: var(--fw-num-lg); color: var(--figure-secondary);
+}
+.ledger-figure-unit {
+  font-size: var(--fs-num-lg); font-weight: var(--fw-num-lg); color: var(--figure-secondary);
+}
+.ledger-figure-cap {
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-caption); letter-spacing: var(--ls-caption);
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   2. TOOLBAR — the search box is permanent; everything else is one tap away
+
+   Attio, Linear and Notion all answer "six filters, always expanded, above the
+   fold, on a screen whose default answer is everything" the same way: keep the
+   query field, hide the rest behind a disclosure, and show what is actually
+   applied as removable chips.
+--------------------------------------------------------------------------- */
+.ledger-toolbar {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  margin-bottom: var(--gap-stack);
+}
+.ledger-search-wrap {
+  position: relative;
+  flex: 1 1 18rem; min-width: 0;
+  display: flex; align-items: center;
+}
+.ledger-search-icon {
+  position: absolute; left: var(--space-3);
+  color: var(--text-muted); pointer-events: none;
+}
+/* The attribute is in the selector because base.css sizes every field through
+   `input[type="search"]` — a more specific selector than a bare class, so a
+   class alone lost and the magnifier sat on top of the placeholder. */
+input[type="search"].ledger-search {
+  width: 100%;
+  padding-left: calc(var(--space-3) * 2 + var(--icon-md));
+}
+.ledger-filter-btn, .ledger-select-btn { flex: none; }
+.ledger-filter-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--space-5); height: var(--space-5);
+  margin-left: var(--space-1);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  /* TIER 2 (tokens.css §7a): a count of applied filters is a property of the
+     view, not something to press — the button around it is the control. */
+  background: var(--accent-muted-soft); color: var(--accent-muted-strong);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+}
+/* The checkbox column is always on at desktop width, so the toggle that turns
+   it on is a phone control and nothing else. */
+@media (min-width: 768px) {
+  .ledger-select-btn { display: none; }
+}
+
+/* Applied filters. Each chip IS its own remove control — one target, one job,
+   which is what makes it work with a thumb. */
+.ledger-chips {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--gap-stack);
+}
+.ledger-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2); color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-label);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.ledger-chip svg { color: var(--text-muted); flex: none; }
+.ledger-chip:hover {
+  border-color: var(--danger); color: var(--danger); background: var(--surface-1);
+}
+.ledger-chip:hover svg { color: var(--danger); }
+
+/* The disclosure panel. One labelled field per filter, in a grid that reflows
+   rather than a row of bare selects with no names on them. */
+.ledger-filters { margin-bottom: var(--gap-block); }
+.ledger-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--gap-stack);
+}
+.ledger-filter-grid > .range-field { gap: var(--space-1); }
+.ledger-filter-range { margin-top: var(--gap-stack); }
+
+/* ---------------------------------------------------------------------------
+   3. EXPORT'S OWN FILTERS
+--------------------------------------------------------------------------- */
+.ledger-field-row {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  margin-bottom: var(--space-2);
+}
+.ledger-seg { margin-left: 0; }
+.ledger-filter-note, .ledger-drafts-note { margin: 0 0 var(--gap-stack); }
+.ledger-drafts-note { flex: 1 1 100%; margin-bottom: 0; }
+.ledger-formats { margin: var(--gap-stack) 0 0; max-width: var(--maxw-prose); }
+.ledger-formats strong { color: var(--text-primary); font-weight: var(--fw-semibold); }
+.ledger-warn-draft { margin: var(--space-2) 0 0; color: var(--attention); }
+.ledger-warn-blocked { margin: var(--space-2) 0 0; color: var(--danger); }
+
+/* ---------------------------------------------------------------------------
+   4. SELECTION BAR — the batch zone, and its offset contract
+
+   Carbon and Polaris both keep the batch-action zone in the header region and
+   swap it in place; Carbon also exits selection mode through an explicit
+   control rather than leaving the user in a mode with no door. Both are here.
+   The offset is the one runbar.css publishes, so a bar pinned to the top can
+   never hide under the running-timer bar the moment a timer starts.
+--------------------------------------------------------------------------- */
+.ledger-bulk {
+  position: sticky; top: calc(var(--runbar-total) + var(--space-2));
+  z-index: var(--z-sticky);
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2) var(--gap-inline);
+  margin-bottom: var(--gap-stack);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+.ledger-bulk-count { font-size: var(--fs-label); font-variant-numeric: tabular-nums; }
+.ledger-bulk-actions {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+}
+.ledger-bulk-done { margin-left: auto; }
+
+/* ---------------------------------------------------------------------------
+   5. THE ROW — desktop columns
+   Sentence-case headers (base.css already sets that), hairline dividers, and
+   a figure column that reads as a figure through weight and tabular digits
+   rather than through colour (tokens.css §7a, tier 3).
+--------------------------------------------------------------------------- */
+.ledger-wrap { padding: 0; }
+.ledger-table { table-layout: auto; }
+.ledger-table td[data-col="date"] { white-space: nowrap; color: var(--text-secondary); }
+/* COLUMN WIDTHS ARE A TABLE'S BUSINESS, AND ON A PHONE THERE IS NO TABLE.
+   Every width below is scoped, because a `td` that is `display: block` inside
+   a flex card still honours `width: 1%` — measured at 390px, the status cell
+   was 3px wide and its chips spilled straight through the export stamp beside
+   them. Narrative is the one elastic column: it soaks up whatever the fixed
+   ones leave, so the trailing "⋯" hugs the right edge instead of floating in a
+   column that grew by accident. */
+@media (min-width: 768px) {
+  .ledger-table th[data-col="select"], .ledger-table td[data-col="select"] { width: var(--space-9); }
+  .ledger-table th[data-col="date"], .ledger-table td[data-col="date"] { width: 11ch; }
+  .ledger-table th[data-col="cm"] { width: 22%; }
+  .ledger-table th[data-col="narrative"] { width: 100%; }
+  /* Narrow to its content and never wrapped: with the chips allowed to wrap,
+     the one row carrying two of them ("non-billable" + "draft") was a line
+     taller than every other row, and a ledger you scan by eye should have one
+     row height. Narrative is elastic, so the width this takes costs nothing. */
+  .ledger-table th[data-col="status"], .ledger-table td[data-col="status"] { width: 1%; }
+  .ledger-table td[data-col="status"] .ledger-chipset { flex-wrap: nowrap; }
+  .ledger-table th[data-col="hours"], .ledger-table td[data-col="hours"] { width: 7ch; }
+  .ledger-table th[data-col="exported"], .ledger-table td[data-col="exported"] { width: 16ch; }
+  .ledger-table th[data-col="actions"], .ledger-table td[data-col="actions"] {
+    width: var(--space-9); text-align: right;
+  }
+}
+.ledger-table th[data-col="hours"], .ledger-table td[data-col="hours"] { text-align: right; }
+
+/* The actions column's header names the column for a screen reader without
+   putting a word above a single glyph button. */
+.ledger-th-hidden {
+  position: absolute;
+  width: var(--space-px); height: var(--space-px);
+  margin: calc(var(--space-px) * -1);
+  padding: 0; border: 0;
+  overflow: hidden; white-space: nowrap;
+  clip-path: inset(50%);
+}
+
+.ledger-hours {
+  font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+  font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+  font-variant-numeric: tabular-nums; color: var(--figure); white-space: nowrap;
+}
+.ledger-chipset { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); }
+.ledger-cm-number { display: block; }
+.ledger-nomatter { display: block; margin-bottom: var(--space-1); }
+
+/* Sent / edited-since. Neither is an action, so neither takes tier 1. */
+.ledger-sent { color: var(--accent-muted); white-space: nowrap; }
+.ledger-stale { color: var(--attention); font-weight: var(--fw-medium); }
+
+/* The matter name IS the row's open affordance — the same control, the same
+   dotted underline and the same promise as .entry-open on the dashboard, so a
+   row means the same thing on both screens. */
+.ledger-open {
+  border: 0; background: none; padding: var(--space-0-5) var(--space-1);
+  margin-left: calc(-1 * var(--space-1));
+  font: inherit; font-weight: var(--fw-semibold); color: var(--text-primary);
+  text-align: left; cursor: pointer; border-radius: var(--radius-xs);
+  text-decoration: underline; text-decoration-style: dotted;
+  text-decoration-color: var(--border-strong); text-underline-offset: 3px;
+}
+.ledger-open:hover { background: var(--surface-2); text-decoration-color: var(--accent); }
+
+.ledger-empty { padding: 0; }
+
+/* The narrative is what you are searching FOR, so it can no longer be a
+   nowrap ellipsis whose only reveal is a pointer-only `title`. Three lines on
+   a desktop (enough to see the hit in context, few enough to keep the ledger
+   scannable); the whole thing on a phone, where the row is a card and
+   vertical space is the cheap axis. */
+.ledger-table .narrative { margin: 0; }
+@media (min-width: 768px) {
+  .ledger-table .narrative-editable { display: flex; align-items: flex-start; gap: var(--space-1); }
+  .ledger-table .narrative-pencil { flex: none; margin-left: 0; }
+  /* `p.narrative`, not `.narrative`: the editable control carries BOTH classes
+     (`class="narrative narrative-editable"`), so a bare `.narrative` here beat
+     the flex rule above on source order and turned the button back into a
+     block — which is what put its pencil on a line of its own. */
+  .ledger-table .narrative-text, .ledger-table p.narrative {
+    flex: 1 1 auto; min-width: 0;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   6. THE ROW — phone (≤767px)
+
+   base.css's .table-cards does the generic half (header row gone, each row a
+   flex card, cells become blocks, the sideways scroller stands down). This is
+   the half only this table can know: what its eight columns mean, and
+   therefore how they read on three lines.
+
+     line 1   client/matter · number                   → hours, right
+     line 2   the narrative, at the full measure
+     line 3   date · status chips · export stamp       → ⋯, right
+
+   Identity first, then what it says, then what it is: the matter is what a
+   lawyer scans for and the hours are what he checks, so those two share the
+   top line; the date is metadata and rides with the chips.
+
+   Ordering is keyed on data-col rather than :nth-child because the header
+   checkbox column is conditional: with nth-child, hiding one cell silently
+   re-ordered every column after it.
+--------------------------------------------------------------------------- */
+@media (max-width: 767px) {
+  /* Selecting is a MODE on a phone. Out of it, a row card does not spend a
+     quarter of its width on a control used once a month; in it, every row
+     grows a 44px checkbox and the bar above carries Select all — which is the
+     only reason bulk editing has a touch path at all, since .table-cards
+     (correctly) drops the header row that used to hold select-all. */
+  .ledger-table:not(.selecting) td[data-col="select"] { display: none; }
+
+  .ledger-table td[data-col="select"] { order: 0; flex: none; }
+  /* flex-basis 0, not auto: with `auto` the cell's base size is the full
+     "Firm administration · 999000-000001" string, which does not fit beside
+     the hours and so wrapped the card into four lines instead of three. */
+  .ledger-table td[data-col="cm"] { order: 1; flex: 1 1 0; min-width: 0; }
+  /* The matter number rides after the name and wraps AS A UNIT: a client/matter
+     number broken across two lines ("999000-" / "000001") is the one string on
+     this screen a lawyer copies by eye into a billing system. */
+  .ledger-table td[data-col="cm"] .ledger-cm-number { display: inline; white-space: nowrap; }
+  .ledger-table td[data-col="cm"] .ledger-cm-number::before {
+    content: '·'; margin: 0 var(--space-1); color: var(--text-muted);
+  }
+  .ledger-table td[data-col="hours"] { order: 2; flex: none; margin-left: auto; }
+
+  .ledger-table td[data-col="narrative"] { order: 3; flex: 1 1 100%; }
+
+  .ledger-table td[data-col="date"] {
+    order: 4; flex: none; align-self: center;
+    font-size: var(--fs-label); line-height: var(--lh-label); color: var(--text-muted);
+  }
+  .ledger-table td[data-col="status"] { order: 5; flex: 0 1 auto; align-self: center; }
+  .ledger-table td[data-col="exported"] { order: 6; flex: 0 1 auto; align-self: center; }
+  .ledger-table td[data-col="actions"] {
+    order: 7; flex: none; margin-left: auto; align-self: center;
+  }
+  /* The column header that carried the unit is gone, so the figure carries it. */
+  .ledger-table td[data-col="hours"]::after { content: 'h'; }
+
+  /* Touch floors for the controls this file introduces. base.css covers .btn,
+     inputs, selects and .seg from the design system; these are the three
+     text-styled controls that own their own box here. */
+  .ledger-open, .ledger-chip { min-height: var(--tap-min); display: inline-flex; align-items: center; }
+
+  /* Four batch actions in one wrapping row became four different row widths.
+     Two columns, equal width, in the order they read — the same answer
+     shell.css gives the range presets. */
+  .ledger-bulk-actions {
+    order: 1;                       /* after Done, so Done rides the count line */
+    flex: 1 1 100%;
+    display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2);
+  }
+  .ledger-bulk-actions > .btn { width: 100%; }
+  .ledger-bulk-all { flex: 1 1 auto; }
+  .ledger-bulk-count { margin-right: auto; }
+  .ledger-bulk-done { margin-left: 0; }
+
+  /* Four segments at 390px are four ~87px columns, and "Not finalized" needs
+     two lines in one of them. Two rows of two keeps every label on one line
+     and every target at the touch floor. */
+  .ledger-seg {
+    display: grid; grid-template-columns: 1fr 1fr;
+    width: 100%; flex: 1 1 100%;
+  }
+  .ledger-seg > button { border-left: 0; }
+  .ledger-seg > button:nth-child(2n) { border-left: var(--border-w) solid var(--border); }
+  .ledger-seg > button:nth-child(n + 3) { border-top: var(--border-w) solid var(--border); }
+
+  .ledger-toolbar { gap: var(--space-2); }
+  .ledger-search-wrap { flex: 1 1 100%; }
+  .ledger-filter-btn, .ledger-select-btn { flex: 1 1 auto; }
+
+  /* WHAT YOU ARE ABOUT TO DOWNLOAD, BEFORE THE BUTTON THAT DOWNLOADS IT.
+     .page-head-tools always takes its own line (order: 1), which on a desktop
+     puts the figure neatly under the title — but on a phone, where the actions
+     already own a full-width band, it landed the count BELOW the Download
+     button. The two swap here and nowhere else. */
+  .ledger-head .ledger-figures { order: 0; }
+  .ledger-head .page-head-actions { order: 1; }
+}

@@ -1,25 +1,42 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  fmtDateFull, addDays, emitToast, Confirm, Icon,
+  fmtDateFull, addDays, todayStr, emitToast, Confirm, ContextMenu, Icon,
 } from '/js/ui.js';
-import { TimerGrid } from '/js/components/timergrid.js';
+import { TodayList } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
-import { EntryList } from '/js/components/entrylist.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
 import { CloseOut } from '/js/components/closeout.js';
 import { SummaryModal } from '/js/components/summary.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
 import { nav } from '/js/app.js';
 
+// Monday of the ISO week containing `dateStr`.
+function mondayOf(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d, 12);
+  dt.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+  return todayStr(dt);
+}
+
 export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const { loading, data, error, reload } = useAsync(() => api.get('/api/dashboard'), [refreshKey]);
   const [warnGate, setWarnGate] = useState(null);
   const [closeOut, setCloseOut] = useState(false);
   const [summary, setSummary] = useState(null);
-  // Timestamp of the dashboard payload — the footer adds wall-clock time since
-  // this moment to the (fetch-frozen) running-timer seconds.
-  const fetchedAt = useMemo(() => Date.now(), [data]);
+  const [dayMenu, setDayMenu] = useState(null);
+
+  // WEEK TO DATE (teardown D6: "the number a lawyer actually manages — am I on
+  // pace this week — appears nowhere on the screen he lives on"). One extra
+  // read of the existing /api/stats range endpoint; no API change.
+  const weekRange = useMemo(() => {
+    const today = todayStr();
+    return { from: mondayOf(today), to: today };
+  }, [refreshKey]);
+  const week = useAsync(
+    () => api.get(`/api/stats?from=${weekRange.from}&to=${weekRange.to}`).catch(() => null),
+    [weekRange.from, weekRange.to, refreshKey]);
+
   useEffect(() => {
     const onCloseDay = () => setCloseOut(true);
     window.addEventListener('tk:close-day', onCloseDay);
@@ -27,8 +44,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   }, []);
 
   // Today read back as prose — everything filed, drafts included, since this
-  // is for recall rather than for billing. Shared by the footer button and
-  // the `s` shortcut, so it lives above the early returns.
+  // is for recall rather than for billing. Shared by the day menu and the
+  // `s` shortcut, so it lives above the early returns.
   const showSummary = useCallback(() => {
     if (!data) return;
     setSummary(buildDaySummary(data.entries, {
@@ -44,7 +61,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
 
   // Re-pull today's totals + running timers when the tab/PWA wakes, so the
   // footer clock and filed total are current on resume (mobile pauses timers
-  // while backgrounded). See TimerGrid for the same pattern.
+  // while backgrounded). See TodayList for the same pattern.
   useEffect(() => {
     const onWake = () => { if (document.visibilityState === 'visible') reload(); };
     document.addEventListener('visibilitychange', onWake);
@@ -72,20 +89,19 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   if (loading && !data) return html`<${Spinner} />`;
   const d = data;
 
-  // entries whose timer is running right now get the pulsing "running" chip.
-  // (Running quick timers used to render as ghost rows here — their entry is
-  // a REAL matterless entry in the list now, 2026-07-13.)
-  const runningEntryIds = new Set((d.timers || [])
-    .filter((t) => t.running && t.linked_entry_id).map((t) => t.linked_entry_id));
-
   const alerts = d.alerts;
-  const hasAlerts = alerts.invalidDrafts.length > 0 || alerts.unfinalized.count > 0
-    || alerts.reverted.count > 0 || alerts.unexported.count > 0;
+  // Per-entry defects are inline states on their own rows now (teardown §3);
+  // what stays up here is the count plus a jump to the first one.
+  const needNarrative = alerts.invalidDrafts.filter((a) => a.codes.includes('narrative_empty'));
+  const needMatter = alerts.invalidDrafts.filter((a) => a.codes.includes('no_matter'));
+  const otherInvalid = alerts.invalidDrafts.filter(
+    (a) => !a.codes.includes('narrative_empty') && !a.codes.includes('no_matter'));
 
   // Each stalled bucket opens the Export page already filtered to itself, from
   // the oldest entry in it — the range is what makes the entries visible, so
   // guessing it would be the one way this click-through could lie.
   const attentionLink = (kind, b) => `#/export/${kind}/${b.oldest}`;
+  const jumpToEntry = (id) => window.dispatchEvent(new CustomEvent('tk:focus-entry', { detail: { id } }));
 
   // Two-step finalize: warnings must be seen before they're acknowledged.
   async function finalizeToday(ack = false) {
@@ -103,7 +119,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       return;
     }
     if (hard > 0) {
-      emitToast(`${r.finalized.length} finalized — ${hard} blocked (missing narrative?). Open them from the banner.`, { error: true });
+      emitToast(`${r.finalized.length} finalized — ${hard} blocked (missing narrative?). Close the day walks you through them.`, { error: true });
     } else if (r.finalized.length > 0) {
       emitToast(`Finalized ${r.finalized.length} ${r.finalized.length === 1 ? 'entry' : 'entries'}`);
     } else if (!ack) {
@@ -112,83 +128,131 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     bumpRefresh();
   }
 
-  async function exportToday() {
+  async function exportTodayCsv() {
     const r = await api.post('/api/export', { from: d.date, to: d.date });
     if (r.count === 0) {
       emitToast('No finalized entries today — finalize first (or use the Export page for drafts).');
       return;
     }
     downloadText(`timekeeper-${d.date}.csv`, r.csv);
-    emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`);
+    emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'} as CSV`);
     bumpRefresh();
   }
 
+  // The rare day-level actions. Close the day (the footer's one key) does
+  // review + finalize + export in one guided pass; these are the escape
+  // hatches for the exceptional case, and each names the file it makes.
+  const dayMenuItems = [
+    { label: 'New entry…', icon: 'plus', onClick: () => openEditor({ template: {} }) },
+    { label: 'Day summary as text…', icon: 'clipboard', onClick: showSummary },
+    { hr: true },
+    { label: 'Finalize today without exporting', icon: 'lock', onClick: () => finalizeToday() },
+    { label: 'Download today as CSV', icon: 'export', onClick: exportTodayCsv },
+  ];
+
+  const weekTarget = (d.today.target || 0) * 5;
+  const weekData = week.data && typeof week.data.totalHours === 'number'
+    ? { billable: week.data.billableHours, total: week.data.totalHours, target: weekTarget }
+    : null;
+
+  const hasStale = alerts.unfinalized.count > 0 || alerts.reverted.count > 0;
+  const quietItems = [
+    needNarrative.length > 0 ? {
+      key: 'narr',
+      label: `${needNarrative.length} ${needNarrative.length === 1 ? 'entry needs' : 'entries need'} a narrative`,
+      title: 'Jump to the first one and start typing',
+      onClick: () => jumpToEntry(needNarrative[0].id),
+    } : null,
+    needMatter.length > 0 ? {
+      key: 'matter',
+      label: `${needMatter.length} without a matter`,
+      title: 'Open the first one and assign its client/matter',
+      onClick: () => openEditor({ id: needMatter[0].id }),
+    } : null,
+    otherInvalid.length > 0 ? {
+      key: 'valid',
+      label: `${otherInvalid.length} with validation findings`,
+      title: otherInvalid[0].codes.join(', '),
+      onClick: () => openEditor({ id: otherInvalid[0].id }),
+    } : null,
+    alerts.unexported.count > 0 ? {
+      key: 'unexported',
+      label: `${alerts.unexported.count} finalized, not yet exported · ${fmtHours(alerts.unexported.hours)}h`,
+      title: `Oldest ${alerts.unexported.oldest} — finalized but never sent`,
+      onClick: () => nav(attentionLink('unexported', alerts.unexported)),
+    } : null,
+  ].filter(Boolean);
+
   return html`
     <div class="dashboard-view">
-    <div class="page-head">
-      <button class="btn" title="Previous day ([) — past days keep everything recorded on them"
+    <div class="page-head day-head">
+      <button class="btn btn-icon" title="Previous day ([) — past days keep everything recorded on them"
+        aria-label="Previous day"
         onClick=${() => nav(`#/day/${addDays(d.date, -1)}`)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${fmtDateLong(d.date)}</h1>
-      <button class="btn" title="Next day (])"
+      <button class="btn btn-icon" title="Next day (])" aria-label="Next day"
         onClick=${() => nav(`#/day/${addDays(d.date, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
+      ${/* The day's rare actions — new entry, summary, finalize, export — sit
+            next to the day they act on, one tap deep. Finalize day and Export
+            used to be two visually prominent header buttons that were both
+            strict subsets of Close the day (teardown §2). */''}
+      <button class="btn btn-icon day-menu-btn" title="Day actions — new entry, summary, finalize, export"
+        aria-label="Day actions"
+        onClick=${(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          setDayMenu({ x: Math.max(8, r.left - 40), y: r.bottom + 4 });
+        }}><${Icon} name="more" size=${16} /></button>
       <div class="spacer"></div>
-      ${/* One page-header shape across the app (shell.css): secondary actions
-            then exactly one primary, same three words as the day view. */''}
+      ${/* ONE primary, and it is the app's most frequent verb — on a phone it
+            is the first control on the screen, where the first thing that
+            could start a timer used to sit 978px down. */''}
       <div class="page-head-actions">
-        <button class="btn" onClick=${() => finalizeToday()}><${Icon} name="lock" size=${16} /> Finalize day</button>
-        <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export</button>
-        <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
-          <${Icon} name="plus" size=${16} /> New entry<kbd class="btn-kbd">n</kbd></button>
+        <button class="btn btn-primary day-quick" title="Quick start — a timer running now; assign the matter after the call"
+          onClick=${() => window.dispatchEvent(new CustomEvent('tk:quick-timer'))}>
+          <${Icon} name="play" size=${16} /> Quick start</button>
       </div>
     </div>
 
-    ${hasAlerts ? html`
-      <div class="alert-banner" style=${{ marginBottom: '14px' }}>
-        <div class="row">
-          <strong><${Icon} name="alert" size=${16} /> Needs attention:</strong>
-          ${alerts.invalidDrafts.map((a) => html`
-            <button key=${a.id} class="alert-pill" title=${a.codes.join(', ')}
-              onClick=${() => openEditor({ id: a.id })}>
-              ${a.short_name ?? 'No matter yet'} — ${a.codes.includes('no_matter') ? 'assign a matter'
-                : a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
-            </button>`)}
-          ${alerts.unfinalized.count > 0 ? html`
-            <button class="alert-pill" title=${`Oldest ${alerts.unfinalized.oldest} — time recorded on a day that is already over`}
-              onClick=${() => nav(attentionLink('unfinalized', alerts.unfinalized))}>
-              ${alerts.unfinalized.count} ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} on earlier
-              days not finalized · ${fmtHours(alerts.unfinalized.hours)}h
-            </button>` : null}
-          ${alerts.reverted.count > 0 ? html`
-            <button class="alert-pill" title=${'Finalized once and unlocked since — it still reads as done everywhere else'}
-              onClick=${() => nav(attentionLink('unfinalized', alerts.reverted))}>
-              ${alerts.reverted.count} unlocked after finalizing · ${fmtHours(alerts.reverted.hours)}h
-            </button>` : null}
-          ${alerts.unexported.count > 0 ? html`
-            <button class="alert-pill" title=${`Oldest ${alerts.unexported.oldest} — finalized but never sent`}
-              onClick=${() => nav(attentionLink('unexported', alerts.unexported))}>
-              ${alerts.unexported.count} finalized ${alerts.unexported.count === 1 ? 'entry' : 'entries'} not
-              yet exported · ${fmtHours(alerts.unexported.hours)}h
-            </button>` : null}
-        </div>
+    ${/* The day's numbers, in the ONE place they live now: the meter card, the
+          footer percentage and the entry-list header all said this. */''}
+    <${TargetMeter} billable=${d.today.billable} nonbillable=${d.today.nonbillable}
+      target=${d.today.target} total=${d.today.total} week=${weekData} />
+
+    ${hasStale || quietItems.length > 0 ? html`
+      <div class="attn">
+        ${alerts.unfinalized.count > 0 ? html`
+          <div class="attn-stale" role="status">
+            <${Icon} name="alert" size=${18} />
+            <div class="attn-stale-text">
+              <strong>${`${alerts.unfinalized.count} ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} on earlier days ${alerts.unfinalized.count === 1 ? 'is' : 'are'} not finalized`}</strong>
+              <span class="muted small">${`${fmtHours(alerts.unfinalized.hours)}h · oldest ${alerts.unfinalized.oldest} — time recorded on a day that is already over`}</span>
+            </div>
+            <button class="btn btn-sm attn-action"
+              onClick=${() => nav(attentionLink('unfinalized', alerts.unfinalized))}>Review</button>
+          </div>` : null}
+        ${alerts.reverted.count > 0 ? html`
+          <div class="attn-stale" role="status">
+            <${Icon} name="unlock" size=${18} />
+            <div class="attn-stale-text">
+              <strong>${`${alerts.reverted.count} unlocked after finalizing`}</strong>
+              <span class="muted small">${`${fmtHours(alerts.reverted.hours)}h — still reads as done everywhere else`}</span>
+            </div>
+            <button class="btn btn-sm attn-action"
+              onClick=${() => nav(attentionLink('unfinalized', alerts.reverted))}>Review</button>
+          </div>` : null}
+        ${quietItems.length > 0 ? html`
+          <p class="attn-line">
+            ${quietItems.map((it) => html`
+              <button key=${it.key} class="attn-link" title=${it.title} onClick=${it.onClick}>${it.label}</button>`)}
+          </p>` : null}
       </div>` : null}
 
-    <div class="card">
-      <h2>Today</h2>
-      <${TargetMeter} billable=${d.today.billable} nonbillable=${d.today.nonbillable} target=${d.today.target} />
-    </div>
+    <${TodayList} settings=${settings} entries=${d.entries} onEntryChanged=${bumpRefresh}
+      openEditor=${openEditor} />
 
-    <div class="panel">
-      <${TimerGrid} settings=${settings} onEntryChanged=${bumpRefresh} openEditor=${openEditor} />
-    </div>
-
-    <div class="panel">
-      <div class="section-title">
-        <h2>Today’s entries</h2>
-        <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
-      </div>
-      <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
-        settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} fetchedAt=${fetchedAt} />
-    </div>
+    ${dayMenu ? html`
+      <${ContextMenu} x=${dayMenu.x} y=${dayMenu.y} items=${dayMenuItems}
+        onClose=${() => setDayMenu(null)} />` : null}
 
     ${warnGate ? html`
       <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"
@@ -197,8 +261,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         onClose=${() => setWarnGate(null)} />` : null}
     </div>
 
-    <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt}
-      onCloseDay=${() => setCloseOut(true)} onSummary=${showSummary} />
+    <${TodayFooter} today=${d.today} onCloseDay=${() => setCloseOut(true)} />
 
     ${summary ? html`
       <${SummaryModal} text=${summary} title=${`Summary — ${fmtDateFull(d.date)}`}

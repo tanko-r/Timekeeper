@@ -38,7 +38,7 @@ import { Icon } from '/js/icons.js';
 const React = window.React;
 const html = htm.bind(React.createElement);
 const { createPortal } = window.ReactDOM;
-const { useEffect, useRef } = React;
+const { useEffect, useLayoutEffect, useRef } = React;
 
 // The open DIALOG layers, oldest first — each { panel }. Module state on
 // purpose: the background lock is a document-level fact, not a per-component
@@ -65,6 +65,33 @@ const stack = [];
 // above it and stays out of the way.
 const transients = [];
 
+// …WITH ONE MORE RULE, because the layer stack alone made Escape unpredictable
+// in the opposite direction.
+//
+// The entry editor opens with the client/matter picker autofocused, so its
+// listbox is already down before the user has done anything at all. Measured on
+// a fresh `n` at both widths: press 1 closed the listbox, press 2 closed the
+// dialog. Two presses to dismiss a dialog you have not touched is not a layer
+// stack doing its job — it is a layer the user never opened charging them a
+// keystroke to close. (The reverse case, from the same critic, is what the
+// stack exists for: a listbox the user DID open must not take the dialog with
+// it.)
+//
+// So a transient carries `engaged`, and only an engaged layer outranks the
+// dialog it lives in:
+//
+//   - a layer that registers while its dialog is still untouched came up WITH
+//     the dialog (autofocus, initialFocus, a picker that mounts when a fetch
+//     lands) and starts unengaged: Escape passes straight through it to the
+//     dialog, which closes in one press.
+//   - a layer that registers after the user has typed, tapped or clicked
+//     inside the dialog was opened deliberately, and is engaged from birth.
+//   - any layer becomes engaged the moment the user types or points inside it.
+//
+// Outside a dialog nothing changes: a popover on a plain page always answers
+// Escape, engaged or not, because there is nothing behind it to answer instead.
+const IGNORED_KEYS = new Set(['Escape', 'Tab', 'Shift', 'Control', 'Alt', 'Meta']);
+
 function escapeTarget() {
   const topDialog = stack[stack.length - 1] || null;
   for (let i = transients.length - 1; i >= 0; i -= 1) {
@@ -72,7 +99,11 @@ function escapeTarget() {
     const el = layer.elRef && layer.elRef.current;
     if (!el || !el.isConnected) continue;
     const host = el.closest('.ovl-panel');
-    if (topDialog ? host === topDialog.panel : !host) return layer;
+    if (topDialog ? host !== topDialog.panel : !!host) continue;
+    // A layer that came up with the dialog and has not been touched since does
+    // not stand between the user and the dialog's own Escape.
+    if (topDialog && !layer.engaged) continue;
+    return layer;
   }
   return topDialog;
 }
@@ -91,17 +122,37 @@ export function useDismissLayer(open, onDismiss, elRef) {
   ref.current = onDismiss;
   useEffect(() => {
     if (!open) return undefined;
-    const layer = { elRef };
+    // Which dialog, if any, is this layer inside? React runs a child's effects
+    // before its parent's, so a picker that mounts WITH its dialog registers
+    // before the dialog has pushed itself onto `stack` — that alone would tell
+    // us it came up with the dialog. `touched` covers the other case, where the
+    // dialog rendered a spinner first and the picker only appeared once the
+    // fetch landed: by then the dialog is on the stack, but the user still has
+    // not interacted with it.
+    const el = elRef && elRef.current;
+    const host = el && el.closest ? el.closest('.ovl-panel') : null;
+    const dialog = host ? stack.find((t) => t.panel === host) : null;
+    const layer = { elRef, engaged: !!dialog && !!dialog.touched };
     transients.push(layer);
+
+    const engage = (e) => {
+      if (e.type === 'keydown' && IGNORED_KEYS.has(e.key)) return;
+      const root = layer.elRef && layer.elRef.current;
+      if (root && e.target instanceof Node && root.contains(e.target)) layer.engaged = true;
+    };
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
-      if (escapeTarget() !== layer) return; // something is above us
+      if (escapeTarget() !== layer) return; // something is above us, or we are transparent
       e.preventDefault();
       e.stopPropagation();
       ref.current();
     };
+    document.addEventListener('keydown', engage, true);
+    document.addEventListener('pointerdown', engage, true);
     document.addEventListener('keydown', onKey, true);
     return () => {
+      document.removeEventListener('keydown', engage, true);
+      document.removeEventListener('pointerdown', engage, true);
       document.removeEventListener('keydown', onKey, true);
       const i = transients.indexOf(layer);
       if (i > -1) transients.splice(i, 1);
@@ -271,9 +322,19 @@ export function Overlay({
     // this panel, restoring to it would be meaningless.
     const captured = openerRef.current;
     const opener = captured && !panel.contains(captured) ? captured : null;
-    const token = { panel };
+    // `touched` = the user has typed or pointed inside this dialog at least
+    // once. useDismissLayer reads it to tell a layer the user OPENED from a
+    // layer that merely came up with the dialog (see the dismissal stack).
+    const token = { panel, touched: false };
     stack.push(token);
     if (stack.length === 1) lockBackground();
+
+    const touch = (e) => {
+      if (e.type === 'keydown' && IGNORED_KEYS.has(e.key)) return;
+      if (e.target instanceof Node && panel.contains(e.target)) token.touched = true;
+    };
+    document.addEventListener('keydown', touch, true);
+    document.addEventListener('pointerdown', touch, true);
 
     // Initial focus. If a child already claimed it (React's autoFocus runs
     // during commit, before this effect) leave it alone — the client/matter
@@ -336,6 +397,8 @@ export function Overlay({
 
     return () => {
       document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('keydown', touch, true);
+      document.removeEventListener('pointerdown', touch, true);
       const i = stack.indexOf(token);
       if (i > -1) stack.splice(i, 1);
       if (stack.length === 0) unlockBackground();
@@ -346,6 +409,87 @@ export function Overlay({
       }
     };
   }, []); // eslint-disable-line
+
+  // HOW MUCH ROOM THE PINNED ACTION ROW NEEDS, measured rather than guessed.
+  //
+  // On a phone the dialog's last action row is lifted out of the scrolling body
+  // and anchored to the panel (overlays.css), so the body has to reserve its
+  // height or the last element of the dialog renders under the buttons. The
+  // height is not a constant: quick capture stacks two rows, a confirm stacks
+  // two shorter ones, the shortcuts sheet has no action row at all, and any of
+  // them can grow a line when a label wraps. Measured on the existing-entry
+  // editor before this existed: a 125px action row over a body that reserved
+  // 20px, which put "Narrative is empty." — the reason Finalize had just
+  // refused — in a 17px sliver at the screen edge.
+  //
+  // A ResizeObserver keeps --ovl-actions-h honest as the row grows and shrinks
+  // (a validation row appearing, a label wrapping, the viewport rotating). With
+  // no pinned row the reservation collapses to the device's own bottom inset,
+  // so a short dialog does not carry 124px of empty space.
+  const PINNED = '.ovl-body > .ovl-actions:last-child, .ovl-body > .row-end:last-child';
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return undefined;
+    // No pinned row: reserve the ordinary bottom step plus the device's inset,
+    // so a sheet with no buttons keeps the same air under its last line that it
+    // had before the reservation existed.
+    const NONE = 'calc(var(--space-1) + env(safe-area-inset-bottom, 0px))';
+    // Both writers below are idempotent on purpose: a ResizeObserver whose
+    // callback keeps dirtying style is how a page ends up logging
+    // "ResizeObserver loop completed with undelivered notifications", and the
+    // screenshot harness counts a console error as a failed shot.
+    const apply = () => {
+      const row = panel.querySelector(PINNED);
+      const h = row ? Math.ceil(row.getBoundingClientRect().height) : 0;
+      const next = h > 0 ? `${h}px` : NONE;
+      if (panel.style.getPropertyValue('--ovl-actions-h') !== next) {
+        panel.style.setProperty('--ovl-actions-h', next);
+      }
+    };
+    // …and the other half of the same finding: "with nothing signalling there
+    // is more below". The body says whether it is scrollable and whether the
+    // reader has reached the end, and overlays.css lifts the pinned row while
+    // content is still sliding under it.
+    const body = panel.querySelector('.ovl-body');
+    const mark = () => {
+      if (!body) return;
+      const scrollable = body.scrollHeight > body.clientHeight + 2;
+      const more = body.scrollHeight - body.clientHeight - body.scrollTop > 2;
+      const next = scrollable ? (more ? 'more' : 'end') : 'none';
+      if (body.getAttribute('data-scroll') !== next) body.setAttribute('data-scroll', next);
+    };
+    apply();
+    mark();
+    if (body) body.addEventListener('scroll', mark, { passive: true });
+    if (typeof ResizeObserver === 'undefined') {
+      return () => { if (body) body.removeEventListener('scroll', mark); };
+    }
+    const both = () => { apply(); mark(); };
+    const ro = new ResizeObserver(both);
+    const row = panel.querySelector(PINNED);
+    if (row) ro.observe(row);
+    ro.observe(panel);
+    if (body) ro.observe(body);
+    return () => {
+      ro.disconnect();
+      if (body) body.removeEventListener('scroll', mark);
+    };
+  });
+
+  // KEY CAPS ARE DECORATION, and a screen reader must not read them.
+  // `<kbd class="ovl-kbd">Enter</kbd>` rides inside its own button so a desktop
+  // user can see the shortcut without the hint replacing the control. It is
+  // hidden at phone width by CSS, but on a desktop it lands inside the button's
+  // accessible name — measured: "Accept Enter", "Cancel Esc", "File it Enter".
+  // The primitive marks every one of them aria-hidden, so no dialog has to
+  // remember to (and quick capture, the close-out sweep and anything added
+  // later all get it for free). Set as a plain attribute rather than a prop
+  // because the markup belongs to each dialog's own children.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    for (const k of panel.querySelectorAll('.ovl-kbd')) k.setAttribute('aria-hidden', 'true');
+  });
 
   // LATE CONTENT. A dialog that has to fetch its subject renders a spinner
   // first — the entry editor is up on screen a full network round trip before

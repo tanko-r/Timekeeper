@@ -96,8 +96,10 @@ const SCREENS = [
     // in the pre-overhaul baseline. Nobody had looked at this dialog for two
     // waves. No catch now: a dialog that fails to open fails the shot.
     async act(page) {
-      await page.waitForSelector('.entry-card button[title="Edit"]', { timeout: 5000 });
-      await page.evaluate(() => document.querySelector('.entry-card button[title="Edit"]').click());
+      // The pencil is gone (teardown E8 — one primary action plus an
+      // overflow); the matter name is the row's open affordance now.
+      await page.waitForSelector('.entry-card .entry-open', { timeout: 5000 });
+      await page.evaluate(() => document.querySelector('.entry-card .entry-open').click());
       await page.waitForSelector('.ovl-panel', { timeout: 5000 });
       await sleep(400);
     },

@@ -275,6 +275,29 @@
   --ovl-w-lg: 860px;
   --ovl-sheet-max-h: 92dvh;
 
+  /* HOW MUCH ROOM A SHEET'S PINNED ACTION ROW TAKES.
+     On a phone every dialog's .ovl-actions is pinned over the scrolling body,
+     so the body has to reserve that much space at its bottom or the last
+     element of the dialog renders underneath the buttons. Measured on the
+     existing-entry editor at 390×844 before this token existed: the body
+     carried a flat 20px of bottom padding while the action row occupied the
+     bottom 125px of the same box (body bottom 844, actions 699–824), so
+     "Narrative is empty." — the reason Finalize had just refused — landed as a
+     17px sliver at the screen edge with nothing to say there was more below.
+
+     This is only the FALLBACK. components/overlay.js measures the real row
+     (two stacked button rows on a phone, one on a desktop, none at all in a
+     dialog that draws no action row) with a ResizeObserver and writes the
+     measured value onto the panel, so a dialog never reserves the wrong
+     amount. The number here is what a two-row phone bar comes to: a 44px
+     secondary row, an 8px gap, a 48px committing action, 12px of padding top
+     and bottom, and the device's own bottom inset under all of it. The measured
+     value written by overlay.js includes the inset too, so the two agree. */
+  --ovl-actions-h: calc(
+    var(--control-h-touch) + var(--space-2) + var(--control-h-xl)
+    + var(--space-3) * 2 + env(safe-area-inset-bottom, 0px)
+  );
+
   /* -------------------------------------------------------------------------
      6. RADII
      The audit found 12 distinct radii, with 6/7/8px all in heavy use for
@@ -451,6 +474,33 @@
   --figure-secondary: var(--text-secondary);
   --figure-quiet: var(--text-muted);
 
+  /* THE WORDMARK IS NOT AN ACTION.
+     Census on the rendered desktop dashboard, above the fold: the FULL-chroma
+     accent was painting three unrelated things at once — the wordmark's second
+     word ("keeper", as text), the one call to action ("New entry", as a fill)
+     and the day-footer meter (as a fill). Tier 1 is supposed to mean "act on
+     this"; a logotype cannot be acted on and a meter cannot be pressed, so two
+     of the three were spending the action colour on things that do nothing.
+
+     A wordmark still wants two tones — that is what makes it read as a mark
+     rather than a heading — so it gets a PAIR, both neutral. The shell applies
+     them; nothing else may. */
+  --brand-mark: var(--text-primary);        /* the glyph and the first word */
+  --brand-mark-quiet: var(--text-muted);    /* the second word: structure, no hue */
+
+  /* THE DATA INK — meters, bars, chart series, sparklines.
+     Its own value rather than an alias of --accent-muted, because a meter is a
+     LARGE filled area and a chip is a small one: at the same colour a bar 120px
+     wide shouts where a badge whispers. This is the quietest step of the blue
+     family — same hue, roughly half the chroma of --accent-muted — and it is
+     the only thing a progress or target meter may be painted in.
+       as a fill against --meter-track (--surface-3):  light 3.84:1  dark 4.70:1
+       (WCAG 1.4.11 asks 3:1 for a meaningful graphic; both clear it)
+     If you are about to write `background: var(--accent)` on a bar, this is
+     the token you actually wanted. */
+  --data-fill: #5d6b80;
+  --data-fill-soft: var(--accent-muted-soft);
+
   /* semantic: billable is the TIER 2 muted accent (a property of a record,
      not an action); non-billable is neutral on purpose. --billable is an
      alias so the two can never drift apart — do NOT redeclare it in the dark
@@ -515,10 +565,30 @@
   --state-readonly-bg: #eae7de;  /* same well as disabled; the TEXT differs —
                                     readonly keeps --text-secondary at 6.14:1,
                                     disabled drops to --state-disabled-fg */
-  /* One number for every "this control is off" opacity, so no module invents
-     its own. Buttons use it instead of a flat fill because it has to work
-     over four variants at once (secondary, primary, tonal, danger). */
+  /* The remaining "this control is off" opacity, for the few controls that are
+     a GLYPH rather than a box (a checkbox, a radio) and so have no fill of
+     their own to swap. It is no longer how a BUTTON says it is disabled —
+     see the note under --state-disabled-bg in the dark block. */
   --state-disabled-opacity: 0.5;
+
+  /* A LIST ROW UNDER THE POINTER.
+     Its own token, not --state-hover, because a row is a large area and a
+     button is a small one: at the button's step a whole row reads as selected
+     rather than as pointed-at. Measured on the rendered entry list before this
+     existed: background delta 0,0,0 and a luminance ratio of 1.00 with :hover
+     matching, in BOTH themes — the one component in the app with no hover
+     feedback whatsoever, while every button and every nav row had a step.
+     Carbon keeps row hover on even for non-interactive rows, purely so a
+     reader can keep their place while scanning a column of hours.
+
+     A row can land on the page canvas or inside a card, so the value clears
+     the 1.12:1 state bar against BOTH:
+                       vs --surface-0   vs --surface-1   vs --surface-raised
+       light  #e4e1d7      1.16             1.31             1.31
+       dark   #2f2f29      1.38             1.27             1.17
+     (--state-hover, for comparison: 1.17/1.32 light, 1.55/1.42 dark — this is
+     one notch under it in both themes, which is the intended relationship.) */
+  --surface-row-hover: #e4e1d7;
 
   /* THE ACTIVE OPTION in a combobox/listbox — what Enter will select. It gets
      its own token above --state-selected because it is a MOVING cursor rather
@@ -538,8 +608,13 @@
      one declaration resolves correctly in either theme — do not copy them
      into the dark blocks. */
   --meter-track: var(--surface-3);
-  --meter-fill: var(--accent-muted);
-  --meter-fill-soft: var(--accent-muted-soft);
+  /* The target meter and every bar like it. Points at --data-fill, NOT at
+     --accent: the wave-1 census found the day-footer meter painting the
+     full-chroma action blue (`.tf-meter-fill { background: var(--accent) }`,
+     views.css) directly under a "New entry" button painted the same colour.
+     Whoever rebuilds that footer: this is the token it takes. */
+  --meter-fill: var(--data-fill);
+  --meter-fill-soft: var(--data-fill-soft);
   --nav-selected-bg: var(--state-selected);
   --nav-selected-fg: var(--text-primary);
   --nav-selected-mark: var(--accent-muted);
@@ -663,6 +738,15 @@
   --shadow-2: 0 2px 4px rgba(24, 20, 12, 0.05), 0 8px 20px rgba(24, 20, 12, 0.08);
   --shadow-3: 0 4px 8px rgba(24, 20, 12, 0.06), 0 24px 48px rgba(24, 20, 12, 0.16);
   --shadow: var(--shadow-2);     /* legacy alias — most consumers are overlays */
+  /* A shadow cast UPWARD by a bar pinned over a scrolling region, shown only
+     while there is still content underneath it. It is the "there is more below"
+     signal a phone sheet otherwise has no way to give: the critic's note on the
+     clipped blocking message ended "with nothing signalling there is more
+     below", and a hairline alone cannot say whether the list has ended. Same
+     construction as the elevation ramp — a soft warm-black blur in light, a
+     brighter hairline plus a deeper blur in dark, where black on black is
+     invisible. */
+  --shadow-lift: 0 -1px 0 var(--border), 0 -10px 14px -10px rgba(24, 20, 12, 0.34);
 
   /* -------------------------------------------------------------------------
      10. FOCUS RING
@@ -815,6 +899,10 @@
     --accent-muted-soft: #2c3340;
     --accent-muted-subtle: #22262e;
 
+    /* The data ink (see the light block). Half the chroma of --accent-muted at
+       a lightness that still clears 4.70:1 against --meter-track. */
+    --data-fill: #8d9cb4;
+
     /* 7b. Interactive states, designed for dark rather than inherited from
        it. In dark a state LIGHTENS its surface; only the inert well (disabled
        / readonly) darkens, because a dead control sinks below its field in
@@ -824,11 +912,33 @@
     --state-hover: #37372f;
     --state-selected: #2d3749;
     --state-pressed: #4a4a40;
+    /* THE DEAD CONTROL, and why it is not an opacity any more.
+       A button used to say "disabled" by dropping --state-disabled-opacity
+       over its own variant fill. Measured in dark on quick capture: the
+       disabled "File it" composited to rgb(71,97,137) — half of the light
+       accent #6c9ff2 over the raised panel — a solid mid-blue, against an
+       ENABLED "Cancel" of rgb(28,28,26) with a grey border. The button you
+       could not press was the brightest object in the dialog and the one you
+       could press was the dimmest. In light the same rule read correctly
+       (rgb(146,175,231) sitting BELOW a white Cancel), which is the signature
+       of a light-theme habit that inverts in dark: opacity moves a colour
+       toward the backdrop, and the backdrop is white in one theme and near
+       black in the other, so "faded" means "darker" in one and "lighter" in
+       the other. A dead control has to SINK in both.
+       So disabled is a real fill now, per theme, and it is the same well the
+       inert form field uses. Painted luminance, dark: dead 0.004, enabled
+       0.012, panel 0.017 — the disabled control is the quietest thing on the
+       surface, which is the whole point. --state-disabled-fg clears 4.53:1
+       on it. */
     --state-disabled-bg: #0e0e0c;
     --state-disabled-fg: #7a786f;
     --state-disabled-border: #343430;
     --state-readonly-bg: #0e0e0c;
     --option-active: #35415e;
+    /* A list row under the pointer — see the light block for the measurement
+       this answers. 1.38:1 against the canvas, 1.27:1 against a card,
+       1.17:1 against a raised menu. */
+    --surface-row-hover: #2f2f29;
 
     --valid-info-bg: #262c36;
 
@@ -857,6 +967,7 @@
     --shadow-2: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.55);
     --shadow-3: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 56px rgba(0, 0, 0, 0.7);
     --shadow: var(--shadow-2);
+    --shadow-lift: 0 -1px 0 var(--border-strong), 0 -12px 16px -10px rgba(0, 0, 0, 0.75);
 
     --focus-outer: #eef2fb;
     --focus-inner: #0b0b0a;
@@ -895,6 +1006,10 @@
   --accent-muted-soft: #2c3340;
   --accent-muted-subtle: #22262e;
 
+  /* The data ink (see the light block). Half the chroma of --accent-muted at
+     a lightness that still clears 4.70:1 against --meter-track. */
+  --data-fill: #8d9cb4;
+
   /* 7b. Interactive states, designed for dark rather than inherited from
      it. In dark a state LIGHTENS its surface; only the inert well (disabled
      / readonly) darkens, because a dead control sinks below its field in
@@ -904,11 +1019,33 @@
   --state-hover: #37372f;
   --state-selected: #2d3749;
   --state-pressed: #4a4a40;
+  /* THE DEAD CONTROL, and why it is not an opacity any more.
+     A button used to say "disabled" by dropping --state-disabled-opacity
+     over its own variant fill. Measured in dark on quick capture: the
+     disabled "File it" composited to rgb(71,97,137) — half of the light
+     accent #6c9ff2 over the raised panel — a solid mid-blue, against an
+     ENABLED "Cancel" of rgb(28,28,26) with a grey border. The button you
+     could not press was the brightest object in the dialog and the one you
+     could press was the dimmest. In light the same rule read correctly
+     (rgb(146,175,231) sitting BELOW a white Cancel), which is the signature
+     of a light-theme habit that inverts in dark: opacity moves a colour
+     toward the backdrop, and the backdrop is white in one theme and near
+     black in the other, so "faded" means "darker" in one and "lighter" in
+     the other. A dead control has to SINK in both.
+     So disabled is a real fill now, per theme, and it is the same well the
+     inert form field uses. Painted luminance, dark: dead 0.004, enabled
+     0.012, panel 0.017 — the disabled control is the quietest thing on the
+     surface, which is the whole point. --state-disabled-fg clears 4.53:1
+     on it. */
   --state-disabled-bg: #0e0e0c;
   --state-disabled-fg: #7a786f;
   --state-disabled-border: #343430;
   --state-readonly-bg: #0e0e0c;
   --option-active: #35415e;
+  /* A list row under the pointer — see the light block for the measurement
+     this answers. 1.38:1 against the canvas, 1.27:1 against a card,
+     1.17:1 against a raised menu. */
+  --surface-row-hover: #2f2f29;
 
   --valid-info-bg: #262c36;
 
@@ -937,6 +1074,7 @@
   --shadow-2: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 8px 24px rgba(0, 0, 0, 0.55);
   --shadow-3: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 24px 56px rgba(0, 0, 0, 0.7);
   --shadow: var(--shadow-2);
+  --shadow-lift: 0 -1px 0 var(--border-strong), 0 -12px 16px -10px rgba(0, 0, 0, 0.75);
 
   --focus-outer: #eef2fb;
   --focus-inner: #0b0b0a;

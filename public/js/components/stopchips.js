@@ -1,122 +1,393 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, createPortal, fmtHours, emitToast, Icon } from '/js/ui.js';
+import { useDismissLayer, overlayOpen } from '/js/components/overlay.js';
+import { NarrativeHistory } from '/js/components/narrativehistory.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { formatSuggestion } from '/js/lib/narrativesync.js';
 
-// Non-blocking stop affordance (spec §6): replaces the per-stop StopPopup
-// modal. The stop has ALREADY filed the draft entry when this appears — it
-// offers 2–3 one-tap narratives for this matter (suggested-on-start first,
-// then the phrasebook); dismissing or ignoring it costs nothing, the draft
-// waits for Phase 4's close-out. Keys: 1–3 pick · e edit · Esc dismiss.
+// ---------------------------------------------------------------------------
+// THE STOP CHIP FINISHES THE ENTRY  (teardown §17, E2, D4)
+//
+// The instant a timer stops, this offers 2–3 one-tap narratives drawn from
+// that matter's own phrasebook (plus the model's suggested-on-start line), so
+// the entry finishes itself. The teardown called it "the second-best idea in
+// the product and one line away from being the best", and named three faults:
+//
+//   1. `pick()` PATCHed the narrative and then called `openEditor(...)`, so a
+//      one-tap action became tap → a 25-control modal → Save & close. Three
+//      interactions and a full context switch to confirm text you just chose.
+//      NOW: the pick IS the commit. The row updates in place, no dialog opens,
+//      and a toast carries **Undo** — the pattern the app already uses for
+//      every other overwrite (entrylist.js).
+//   2. A 15-second auto-dismiss threw the offer away while the lawyer took the
+//      call he stopped the timer for. NOW: an offer with something to pick
+//      never times out. Only a BARE stop — nothing to pick, nothing to warn
+//      about — retires itself, after 30s, paused while the pointer or the
+//      keyboard is inside it (component notes §6: Radix pauses on hover AND
+//      focus, not hover alone).
+//   3. It was a fixed slab at `top: 22%`, unanchored to the timer that had
+//      stopped. NOW it renders INSIDE that timer's own row in the merged
+//      Today list, as a state of the row rather than a layer over the page.
+//      The floating panel survives only as the fallback for when the row is
+//      not on screen (filtered out, or a stop fired from another surface) —
+//      the offer must never be unreachable.
+//
+// Every path is a real control: chips are buttons (44px on touch, per
+// base.css's touch tier), Dismiss is a labelled button and not just an Esc
+// hint, and "More from this matter" opens the full phrasebook. The 1/2/3 · e
+// keys are a desktop layer on top, and the number caps are not drawn at phone
+// width at all (component notes §7: omission, not translation).
+//
+// INTEGRATION SURFACE with the Today list, deliberately one selector wide:
+// `.today-list .work-row[data-timer-id=…]` (or `[data-entry-id=…]`), which is
+// how the row already addresses itself for focus, reveal and scroll-into-view.
+// Nothing else about that component is assumed, and if the row is not found
+// the floating fallback renders instead. That component is still being built
+// in this wave — see the report.
+// ---------------------------------------------------------------------------
 
-const AUTO_DISMISS_MS = 15_000;
+// Only a stop with NOTHING to offer retires itself. Doubled from the old
+// blanket 15s, and paused whenever the reader is in it.
+const BARE_DISMISS_MS = 30_000;
+// How long the bare number keys stay live while focus is on nothing at all —
+// i.e. straight after a stop fired from a button click or a global shortcut.
+// Once focus lands anywhere else they stop being magic, so `g e`, `1`, `2`
+// and `3` mean what they always mean everywhere else in the app.
+const HOT_KEYS_MS = 90_000;
+
+// The inline slot is a flex child of `.work-row`, on its own line under the
+// narrative (`.work-body` is order 2). `all: unset` first, so the slab styling
+// on `.stop-chips` — position, inset, width, border, shadow, padding — cannot
+// reach it whatever that rule grows into; the class is kept because the chips
+// ARE the stop chips, at both placements, for CSS and for the smoke test.
+const SLOT_CSS = 'all:unset;display:block;order:3;flex:1 1 100%;min-width:0';
 
 export function StopChips({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
   const { result } = popup;
   const entry = result.entry;
   const timer = result.timer || popup.timer; // stop payload carries the fresh row
-  const [chips, setChips] = useState(null); // null = loading
+  const [chips, setChips] = useState(null);  // null = loading
+  const [busy, setBusy] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const wide = useWideViewport();
+
+  const doneRef = useRef(false);   // one commit per stop, whatever fires first
+  const rootRef = useRef(null);    // the element the dismissal stack ranks
+  const hotUntil = useRef(Date.now() + HOT_KEYS_MS);
   const dismissRef = useRef(null);
 
   // never clobber: chips only when the narrative is blank and not auto-generated
   const offerChips = !entry.narrative_auto && String(entry.narrative || '').trim() === '';
+  const cmId = timer.cm_id || entry.cm?.id || null;
+  const cmLabel = entry.cm ? entry.cm.short_name : (timer.cm_short_name || null);
+
+  // The narrative as the SERVER has it right now. It seeds from the stop
+  // payload and re-reads on every entry write, which is what makes Undo honest
+  // once the offer can stand for ten minutes: if the lawyer wrote the
+  // narrative himself in the meantime, this is what a pick would overwrite and
+  // what Undo puts back. Costs one GET per entry write, only while the offer
+  // is up, and never a round trip on the fast path itself.
+  const liveRef = useRef({
+    narrative: entry.narrative || '',
+    narrative_ai: entry.narrative_ai ? 1 : 0,
+  });
+
+  const finish = (changed) => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    onClose(changed);
+  };
 
   useEffect(() => {
     // matterless stop: no phrasebook to draw from — the entry still filed
-    if (!offerChips || !timer.cm_id) { setChips([]); return undefined; }
+    if (!offerChips || !cmId) { setChips([]); return undefined; }
     let alive = true;
-    // The suggested-on-start chip is model-written; the phrasebook chips are
-    // David's own past phrases. Picking one has to record which, so AI text
-    // never enters the pool the model learns its voice from (spec §5).
+    // The suggested-on-start line may have been refined by the local model
+    // (timers.js: refineSuggestedNarrative); the phrasebook chips are the
+    // attorney's own past phrases. Picking one has to record which, so AI text
+    // never enters the pool the model learns its voice from (spec §5) — and
+    // the chip says so, with its leading glyph.
     const build = (phrases) => dedupe(clean([timer.suggested_narrative, ...phrases])
       .map(formatSuggestion))
       .map((text) => ({ text, ai: text === formatSuggestion(timer.suggested_narrative || '') }));
-    api.get(`/api/matters/${timer.cm_id}/suggestions`)
+    api.get(`/api/matters/${cmId}/suggestions`)
       .then((r) => { if (alive) setChips(build(r.phrases.map((p) => p.text))); })
       .catch(() => { if (alive) setChips(build([])); });
     return () => { alive = false; };
   }, []); // eslint-disable-line
 
-  // auto-dismiss (hover pauses) — non-blocking must also mean non-nagging
-  const startDismiss = () => {
-    clearTimeout(dismissRef.current);
-    dismissRef.current = setTimeout(() => onClose(false), AUTO_DISMISS_MS);
+  // The offer is spent the moment the entry gets a narrative some other way —
+  // the row's own "Write narrative" field, the editor, the close-out sweep.
+  // `tk:entries-changed` is fired by api.js on every entry write.
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      if (doneRef.current) return;
+      api.get(`/api/entries/${entry.id}`).then((e) => {
+        if (!alive || doneRef.current) return;
+        liveRef.current = {
+          narrative: e.narrative || '', narrative_ai: e.narrative_ai ? 1 : 0,
+        };
+        if (String(e.narrative || '').trim() || e.status !== 'draft') finish(false);
+      }).catch(() => { /* offline or deleted — leave the offer standing */ });
+    };
+    window.addEventListener('tk:entries-changed', refresh);
+    return () => { alive = false; window.removeEventListener('tk:entries-changed', refresh); };
+  }, [entry.id]); // eslint-disable-line
+
+  // ---- placement: the stopped row, or the floating fallback ----
+  const slot = useRowSlot(timer ? timer.id : null, entry.id);
+  const inline = !!slot;
+  // The dismissal stack ranks layers by their root element; inline that root
+  // is the slot itself, floating it is the panel's own ref callback below.
+  useEffect(() => { if (slot) rootRef.current = slot; }, [slot]);
+
+  // Escape goes through the app's ONE dismissal stack, not a private capture
+  // listener: a dialog opened over the chips (the phrasebook) then answers
+  // Escape first and leaves the offer standing, which is exactly what the
+  // stack is for.
+  useDismissLayer(true, () => finish(false), rootRef);
+
+  // ---- the bare stop: nothing to pick, nothing to warn about ----
+  const nothingToPick = !offerChips || (chips !== null && chips.length === 0);
+  const bare = nothingToPick && !result.relinked;
+  const clearDismiss = () => { clearTimeout(dismissRef.current); dismissRef.current = null; };
+  const armDismiss = () => {
+    clearDismiss();
+    if (!bare) return;
+    dismissRef.current = setTimeout(() => finish(false), BARE_DISMISS_MS);
   };
-  const pauseDismiss = () => clearTimeout(dismissRef.current);
-  useEffect(() => { startDismiss(); return () => clearTimeout(dismissRef.current); }, []); // eslint-disable-line
+  useEffect(() => { armDismiss(); return clearDismiss; }, [bare]); // eslint-disable-line
 
   async function pick(chip) {
+    if (busy || doneRef.current) return;
+    const before = liveRef.current;
+    setBusy(true);
     try {
       await api.patch(`/api/entries/${entry.id}`, {
         narrative: chip.text, narrative_ai: chip.ai ? 1 : 0,
       });
-      emitToast('Narrative set — review & save');
-      openEditor({ id: entry.id });
+      doneRef.current = true;
+      // The row is the confirmation — it redraws with the narrative on it and
+      // its "needs a narrative" rail cleared. The toast only carries the way
+      // back, because a pick overwrites.
+      emitToast('Narrative saved', {
+        actionLabel: 'Undo',
+        action: () => api.patch(`/api/entries/${entry.id}`, {
+          narrative: before.narrative, narrative_ai: before.narrative_ai,
+        }).then(() => { emitToast('Narrative put back'); onFiled(); })
+          .catch((err) => emitToast(err.message, { error: true })),
+      });
       onFiled();
     } catch (e) {
+      setBusy(false);
       emitToast(e.message, { error: true });
     }
   }
 
-  function edit() { onClose(false); openEditor({ id: entry.id }); }
+  function edit() { finish(false); openEditor({ id: entry.id }); }
 
+  // 1/2/3 pick · e edit. Scoped, because the offer no longer expires: keys
+  // this cheap may not stay captured forever, or `g e` (go to Entries) and
+  // every future digit binding would be dead for as long as a draft sits
+  // unnarrated. They are live while the reader is in the offer or on its row,
+  // and — for the moment right after a stop, when focus is on nothing at all —
+  // for HOT_KEYS_MS.
   useEffect(() => {
+    const live = () => {
+      if (overlayOpen()) return false;
+      const root = rootRef.current;
+      const a = document.activeElement;
+      if (root && a && root.contains(a)) return true;
+      const row = root && root.closest ? root.closest('.work-row') : null;
+      if (row && a && row.contains(a)) return true;
+      if (!a || a === document.body || a === document.documentElement) {
+        return Date.now() < hotUntil.current;
+      }
+      return false;
+    };
+    // `g` opens the app's navigation chord (`g` then d/c/s/e), and its `e`
+    // branch is the Entries ledger. A capture-phase listener that swallowed a
+    // bare `e` would break that key for as long as an unnarrated draft sat on
+    // the board — which, now that the offer never expires, could be all day.
+    // So a `g` seen in the last 900ms (app.js's own chord window) hands the
+    // next `e` back to the chord.
+    let lastG = 0;
     const onKey = (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       if (['input', 'textarea', 'select'].includes(tag) || e.target.isContentEditable) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape') { e.stopPropagation(); onClose(false); }
-      else if (e.key === 'e') { e.preventDefault(); e.stopPropagation(); edit(); }
-      else if (['1', '2', '3'].includes(e.key) && chips && chips[Number(e.key) - 1]) {
+      if (e.key === 'g') { lastG = Date.now(); return; }
+      if (!live()) return;
+      if (e.key === 'e') {
+        if (Date.now() - lastG < 900) return; // the chord owns it
+        e.preventDefault(); e.stopPropagation(); edit();
+      } else if (['1', '2', '3'].includes(e.key) && chips && chips[Number(e.key) - 1]) {
         e.preventDefault();
         e.stopPropagation();
         pick(chips[Number(e.key) - 1]);
       }
     };
-    // Capture phase: the stopped card usually keeps DOM focus, so these keys
-    // would otherwise route through the timer board's React handlers first.
-    // The board no longer eats printable keys (filtering moved to the `/`
-    // search bar), but capture is still the right choice — it guarantees the
-    // chips keys (1/2/3/e/Esc) win over any focused-card handling, now and if
-    // the board grows new key bindings. The input/textarea guard above keeps
-    // normal typing (e.g. the editor) unaffected.
+    // Capture phase: the stopped row usually keeps DOM focus, so these keys
+    // would otherwise route through the Today list's own handlers first.
     document.addEventListener('keydown', onKey, true);
     return () => document.removeEventListener('keydown', onKey, true);
-  }, [chips]); // eslint-disable-line
+  }, [chips, busy]); // eslint-disable-line
 
-  return createPortal(html`
-    <div class="stop-chips" onMouseEnter=${pauseDismiss} onMouseLeave=${startDismiss}>
-      <div class="stop-chips-head">
+  const hoursFiled = fmtHours(result.hours);
+  const body = html`
+    <div class="stop-chips-inner"
+      onMouseEnter=${clearDismiss} onMouseLeave=${armDismiss}
+      onFocus=${clearDismiss} onBlur=${armDismiss}>
+
+      <div class="stop-chips-head" style=${{ flexWrap: 'wrap' }}>
         <${Icon} name="check" size=${14} />
-        <strong>${fmtHours(result.hours)}h filed</strong>
-        <span class="muted">— ${entry.cm ? entry.cm.short_name : 'no matter yet'}</span>
-        <span class="spacer" style=${{ flex: 1 }}></span>
-        <button class="btn btn-ghost btn-sm" title="Dismiss (Esc) — the draft is saved either way"
-          onClick=${() => onClose(false)}><${Icon} name="x" size=${14} /></button>
+        <strong>${hoursFiled}h filed</strong>
+        <span class="muted" style=${TRUNCATE}>— ${cmLabel || 'no matter yet'}</span>
       </div>
+
       ${result.relinked ? html`
         <div class="stop-chips-warn">
           The entry this timer was filling got finalized, so the full day clock
-          (${fmtHours(result.hours)}h) went to a <strong>new</strong> entry.
+          (${hoursFiled}h) went to a <strong>new</strong> entry.
           ${result.previousTotal ? html`
-            <button class="btn btn-sm" onClick=${() => { onClockDeduct(result.previousTotal); onClose(true); }}>
+            <button type="button" class="btn btn-sm"
+              onClick=${() => { onClockDeduct(result.previousTotal); finish(true); }}>
               Deduct ${fmtHours(result.previousTotal)}h from the clock
             </button>` : null}
         </div>` : null}
-      ${offerChips ? (chips === null ? null : chips.length > 0 ? html`
+
+      ${offerChips && chips === null ? html`
+        <p class="muted small stop-chips-note">Looking for what you wrote last time…</p>` : null}
+
+      ${offerChips && chips && chips.length > 0 ? html`
         <div class="stop-chips-list">
+          ${/* A chip carries a leading visual, the way every filter/assist chip
+                in a mature system does — without one a full-width bordered box
+                of prose reads as a field, not an action, and at phone width
+                the number cap that used to be the only leading mark is not
+                drawn at all. It doubles as provenance: ⟲ is something the
+                attorney wrote on this matter before, ✦ is the model's
+                suggested-on-start line. He should be able to tell which he is
+                accepting — the app already tracks it (narrative_ai) so that AI
+                text never re-enters the pool the model learns his voice from,
+                and that distinction is worth showing rather than hiding. */''}
           ${chips.map((chip, i) => html`
-            <button key=${chip.text} class="chip-btn" title=${chip.text} onClick=${() => pick(chip)}>
-              <kbd>${i + 1}</kbd> <span>${chip.text}</span>
+            <button type="button" key=${chip.text} class="chip-btn" disabled=${busy}
+              style=${{ alignItems: 'center' }}
+              title=${chip.ai
+                ? `Suggested when this timer started — finish the entry with: ${chip.text}`
+                : `You wrote this on this matter before — finish the entry with: ${chip.text}`}
+              onClick=${() => pick(chip)}>
+              ${wide ? html`<kbd>${i + 1}</kbd>` : null}
+              <${Icon} name=${chip.ai ? 'sparkles' : 'history'} size=${14} />
+              <span>${chip.text}</span>
             </button>`)}
-        </div>` : html`
-        <div class="muted small" style=${{ padding: '2px 0 6px' }}>
-          No narrative yet — it’ll wait as a draft.
-        </div>`) : null}
-      <div class="stop-chips-foot">
-        <button class="btn btn-sm" onClick=${edit}><${Icon} name="edit" size=${14} /> Edit entry <kbd>e</kbd></button>
+        </div>` : null}
+
+      ${offerChips && chips && chips.length === 0 ? html`
+        <p class="muted small stop-chips-note">
+          Nothing on file for this matter yet — write the narrative on the row,
+          or leave it as a draft for close-out.
+        </p>` : null}
+
+      <div class="stop-chips-foot" style=${FOOT}>
+        <button type="button" class="btn btn-sm"
+          title="Dismiss — the draft is saved either way"
+          onClick=${() => finish(false)}>
+          <${Icon} name="x" size=${14} /> Dismiss
+        </button>
+        ${cmId ? html`
+          <button type="button" class="btn btn-sm" onClick=${() => setHistoryOpen(true)}>
+            <${Icon} name="history" size=${14} /> More from this matter
+          </button>` : null}
+        <button type="button" class="btn btn-sm" onClick=${edit}>
+          <${Icon} name="edit" size=${14} /> Edit entry ${wide ? html`<kbd>e</kbd>` : null}
+        </button>
       </div>
-    </div>`, document.body);
+
+      ${historyOpen && cmId ? html`
+        <${NarrativeHistory} cmId=${cmId} cmLabel=${cmLabel || 'this matter'}
+          insertLabel="Use it" announce=${false}
+          onInsert=${(text) => pick({ text, ai: false })}
+          onClose=${() => setHistoryOpen(false)} />` : null}
+    </div>`;
+
+  if (inline) return createPortal(body, slot);
+  // Fallback: the row is not on screen, so the offer floats — but it is still
+  // the same markup, the same keys and the same one-tap commit.
+  return createPortal(html`
+    <div class="stop-chips" ref=${(el) => { rootRef.current = el; }}
+      role="group" aria-label="Finish this entry" aria-live="polite">${body}</div>`, document.body);
+}
+
+const TRUNCATE = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const FOOT = { flexWrap: 'wrap', gap: 'var(--space-2)', justifyContent: 'flex-start' };
+
+// ---------------------------------------------------------------------------
+// The row slot.
+//
+// Returns a plain element appended to the stopped timer's row in the Today
+// list, or null when that row is not on screen. It re-resolves on a slow
+// interval rather than once, because the stop is followed by a reload and an
+// entries refetch: the row may be re-keyed, re-sorted or briefly absent in the
+// frames right after a stop, and an offer that mounted into a stale node would
+// be an offer nobody can see. Cheap, self-healing, and it touches exactly one
+// attribute of a component another agent owns.
+// ---------------------------------------------------------------------------
+function useRowSlot(timerId, entryId) {
+  const [slot, setSlot] = useState(null);
+  useEffect(() => {
+    let el = null;
+    let row = null;
+    const find = () => (
+      (timerId != null
+        && document.querySelector(`.today-list .work-row[data-timer-id="${timerId}"]`))
+      || (entryId != null
+        && document.querySelector(`.today-list .work-row[data-entry-id="${entryId}"]`))
+      || null);
+    const sync = () => {
+      const found = find();
+      if (found === row && el && el.isConnected && el.parentElement === row) return;
+      if (el) el.remove();
+      row = found;
+      if (!row) { el = null; setSlot(null); return; }
+      el = document.createElement('div');
+      el.className = 'stop-chips stop-chips-inline';
+      el.style.cssText = SLOT_CSS;
+      el.setAttribute('role', 'group');
+      el.setAttribute('aria-label', 'Finish this entry');
+      // The offer arrives without the reader having asked for it, so it is
+      // announced the way a non-modal offer should be: politely, at the next
+      // natural pause, never interrupting.
+      el.setAttribute('aria-live', 'polite');
+      row.appendChild(el);
+      setSlot(el);
+      // The list re-sorts on stop (a running row outranks a stopped one), so
+      // the offer can land off-screen. `nearest` is a no-op when it did not.
+      try { row.scrollIntoView({ block: 'nearest' }); } catch { /* not supported */ }
+    };
+    sync();
+    const iv = setInterval(sync, 400);
+    return () => { clearInterval(iv); if (el) el.remove(); };
+  }, [timerId, entryId]);
+  return slot;
+}
+
+// Key caps are a desktop layer. Gated on the app's own phone breakpoint rather
+// than on `hover`/`pointer`, which headless Chromium reports as coarse at
+// every width — a media query nothing in this overhaul could photograph.
+function useWideViewport() {
+  const [wide, setWide] = useState(() => (
+    typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 768px)').matches : true));
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(min-width: 768px)');
+    const on = () => setWide(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return wide;
 }
 
 // Suggested narratives must never invent time amounts (spec: the app records

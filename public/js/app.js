@@ -1,6 +1,5 @@
 import { api, accessSignInUrl } from '/js/api.js';
 import { html, React, useState, useEffect, useRef, useCallback, Spinner, Icon } from '/js/ui.js';
-import { runningTitle, IDLE_ICON, RUNNING_ICON } from '/js/lib/titlebar.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
 import { DayView } from '/js/views/day.js';
@@ -15,6 +14,7 @@ import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
 import { RunTodo } from '/js/components/runtodo.js';
+import { RunBar } from '/js/components/runbar.js';
 import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 const { createRoot } = window.ReactDOM;
@@ -30,6 +30,51 @@ function parseHash() {
 export function nav(to) {
   location.hash = to;
 }
+
+// THE ROUTE TABLE, and the promise it keeps: four destinations, and every URL
+// that ever worked still works.
+//
+// The teardown (§A) cut seven destinations to four — Today, Calendar, Entries,
+// Settings — by folding Day and Stats into Calendar, Export into Entries, and
+// Clients/Matters into Settings. A lawyer's bookmark knows nothing about that,
+// and `#/export/unfinalized/2026-07-01` is a link the dashboard's own attention
+// banner still generates. So a retired route is not deleted: it is CANONICALISED
+// to where its screen now lives, carrying its arguments, and the URL is then
+// rewritten in place (location.replace — a redirect that pushed history would
+// trap Back in a loop).
+//
+// Canonicalising is a pure function of the hash, used by the renderer as well
+// as by the rewrite, so a deep link paints its destination on the FIRST frame
+// and never flashes a "Not found" on the way.
+//
+//   #/search[/…]                → #/entries[/…]              the ledger
+//   #/export                    → #/entries/export           export, inside it
+//   #/export/<filter>           → #/entries/export/<filter>
+//   #/export/<filter>/<from>    → #/entries/export/<filter>/<from>
+//   #/stats                     → #/calendar/stats           stats, inside it
+//   #/cms                       → #/settings/cms             reference data
+//   #/day/<date>                → unchanged; Calendar owns it in the nav
+//
+// Export and Stats are MODES of their new owners rather than rows in the
+// navigation: they keep every control they had, one tap from the destination
+// that absorbed them (see PAGENAV below), until the screens that absorbed them
+// finish swallowing their contents outright.
+const ROUTE_ALIASES = {
+  search: (args) => ['entries', args],
+  export: (args) => ['entries', ['export', ...args]],
+  stats: () => ['calendar', ['stats']],
+  cms: () => ['settings', ['cms']],
+};
+
+function canonicalRoute(route) {
+  const alias = ROUTE_ALIASES[route.path];
+  if (!alias) return route;
+  const [path, args] = alias(route.args);
+  return { path, args };
+}
+
+const hashFor = (path, args) =>
+  (path === 'dashboard' && args.length === 0 ? '#/' : `#/${[path, ...args].join('/')}`);
 
 // ---------- overlay dismissal ----------
 //
@@ -73,30 +118,48 @@ function useBackDismiss(open, close) {
   }, [open]);
 }
 
-// Destinations. The fourth field is the one-word label used where there is no
-// room for the full one: the tablet rail (76px) and the phone bottom bar.
+// THE FOUR DESTINATIONS. The fourth field is the one-word label used where
+// there is no room for the full one: the tablet rail (76px) and the phone
+// bottom bar.
+//
+// Was seven destinations and three actions. Four of the seven answered the same
+// question ("show me the entries in a date range") with four filter UIs and
+// four Export buttons, and the three "actions" — Add todo, Run /todo, Float
+// timer — were a developer's tools sitting one thumb-reach from Settings in a
+// lawyer's production navigation. Four destinations plus ONE action (quick
+// capture) is the whole surface now; everything else is a mode of one of these
+// four, or lives in Settings → Tools.
 const NAV = [
-  ['dashboard', 'Dashboard', 'layout', 'Today'],
+  ['dashboard', 'Today', 'layout', 'Today'],
   ['calendar', 'Calendar', 'calendar', 'Calendar'],
-  ['search', 'Search', 'search', 'Search'],
-  ['stats', 'Stats', 'stats', 'Stats'],
-  ['cms', 'Clients/Matters', 'briefcase', 'Clients'],
-  ['export', 'Export', 'export', 'Export'],
+  ['entries', 'Entries', 'clipboard', 'Entries'],
   ['settings', 'Settings', 'settings', 'Settings'],
 ];
 
-// Phone bottom bar: four destinations plus More. Material 3 caps a navigation
-// bar at five items and Apple HIG at five before a "More" tab, so the three
-// lowest-frequency destinations move into the More sheet rather than being
-// crushed into the bar. These four are the daily chain: today's work, the day
-// you are looking for, finding an old narrative, sending the CSV.
-const BOTTOM_NAV = ['dashboard', 'calendar', 'search', 'export'];
-const SHEET_NAV = NAV.filter(([p]) => !BOTTOM_NAV.includes(p)).map(([p]) => p);
+// The phone bottom bar carries all four — Material 3 allows 3–5 destinations
+// and Apple HIG caps a tab bar at 5 — plus quick capture as the centre action
+// (Material's BottomAppBar + FAB pattern). There is no More sheet any more:
+// with four destinations nothing overflows, and the two things that used to
+// live in the sheet have real homes (Export inside Entries, the tools in
+// Settings → Tools).
+const CAPTURE_SLOT = 2; // the centre of five slots
 
 const routeOf = (path) => (path === 'dashboard' ? '#/' : `#/${path}`);
 
-// One nav row, used by the sidebar, the rail and the More sheet. Both labels
-// are always in the DOM; CSS shows whichever one fits the width.
+// Sub-navigation inside a destination: the strip of chips the shell renders
+// between a page's title and its content (.pagenav below 1024px, .subnav in
+// the sidebar above it). Settings has had one since wave 0; Calendar and
+// Entries have one now because they absorbed a screen each, and a mode you can
+// only reach by typing a URL is a mode a thumb cannot reach.
+//
+// [arg, label] — arg '' is the destination's own default surface.
+const PAGENAV = {
+  calendar: { label: 'Calendar sections', items: [['', 'Calendar'], ['stats', 'Statistics']] },
+  entries: { label: 'Entries sections', items: [['', 'All entries'], ['export', 'Export']] },
+};
+
+// One nav row, used by the sidebar and the rail. Both labels are always in the
+// DOM; CSS shows whichever one fits the width.
 function NavLink({ path, label, icon, short, active, onNav }) {
   return html`
     <button
@@ -109,9 +172,33 @@ function NavLink({ path, label, icon, short, active, onNav }) {
     </button>`;
 }
 
-// The action group — things that DO something rather than places to go. Same
-// three items on every width; only where they live changes (sidebar group on
-// desktop, icon column in the rail, More sheet on a phone).
+// QUICK CAPTURE'S VISIBLE CONTROL — the one action in the whole shell.
+//
+// The teardown's single worst placement finding: `setQuickCapture(true)` was
+// called from exactly one place in the app, `e.key === 'q'`. There was no
+// button anywhere — not in the sidebar, not in a header, not in the bottom bar.
+// David uses this as an installed Android PWA, so the app's fastest feature did
+// not exist on the device he uses it on.
+//
+// On desktop it is the first thing under the brand, shaped like the input it
+// opens (Attio/Linear/Slack all trigger their palette from a field-shaped
+// button that carries its own shortcut) — the palette itself is the real input,
+// so this is a button, and it says which key does the same thing. On the rail
+// it collapses to its icon; on a phone it is the centre of the bottom bar.
+function CaptureTrigger({ onOpen }) {
+  return html`
+    <button type="button" class="qc-trigger" onClick=${onOpen} aria-haspopup="dialog"
+      title="Quick capture — file an entry from one sentence (q)">
+      <${Icon} name="sparkles" size=${16} />
+      <span class="qc-trigger-label">What did you do?</span>
+      <kbd class="qc-trigger-kbd">q</kbd>
+    </button>`;
+}
+
+// The action group — things that DO something rather than places to go. These
+// left the primary navigation in this wave (a control that launches a
+// full-permission coding agent is not a lawyer's navigation item); they live in
+// Settings → Tools now, unchanged, arming and all.
 function NavActions({ onDone }) {
   const after = () => { if (onDone) onDone(); };
   return html`
@@ -134,38 +221,43 @@ function NavActions({ onDone }) {
     <//>`;
 }
 
-// Phone overflow: a modal bottom sheet. It rides the shared Overlay primitive
-// like every other dialog, so the scrim, the focus trap, Escape-restores-focus,
-// the scroll lock and the inert background all come from one place — including
-// the bottom bar it was opened from, which used to stay live underneath it.
-// Everything the bottom bar could not hold lives here, one thumb-reach from it.
-function NavSheet({ active, onClose, onHelp }) {
-  useEffect(() => {
-    // The sheet only exists below the bottom-bar breakpoint. If the viewport
-    // grows past it (a phone turned landscape), CSS would hide the sheet while
-    // the trap kept holding focus — so close it instead.
-    const wide = window.matchMedia('(min-width: 768px)');
-    const onWide = (e) => { if (e.matches) onClose(); };
-    wide.addEventListener('change', onWide);
-    return () => wide.removeEventListener('change', onWide);
-  }, [onClose]);
-
+// Settings → Tools. Where the three ex-navigation actions live now, plus the
+// keyboard sheet — which used to be reachable on a phone only from the More
+// sheet that this wave removed.
+//
+// Nothing about them changed: Add todo still writes to TODO.md through the same
+// event the Alt+drag feedback gesture uses, Run /todo still arms on the first
+// click and launches on the second, Float timer still opens the
+// document-picture-in-picture window (and is also on the running-timer bar,
+// which is where you want it while a timer is actually running).
+function ToolsPanel({ onHelp }) {
   return html`
-    <${Overlay} title=${null} label="More" className="navsheet" onClose=${() => onClose()}>
-      <div class="nav-group">
-        <div class="nav-label">Go to</div>
-        ${NAV.filter(([p]) => SHEET_NAV.includes(p)).map(([path, label, icon, short]) => html`
-          <${NavLink} key=${path} path=${path} label=${label} icon=${icon} short=${short}
-            active=${active === path} onNav=${onClose} />`)}
+    <${React.Fragment}>
+      <div class="page-head">
+        <h1>Settings</h1><span class="muted">· Tools</span>
       </div>
-      <div class="nav-group nav-actions">
-        <div class="nav-label">Actions</div>
-        <${NavActions} onDone=${onClose} />
-        <button class="navlink" onClick=${() => { onClose(); onHelp(); }}>
-          <span class="navlink-ind"><${Icon} name="keyboard" size=${18} /></span>
-          <span class="navlink-label">Keyboard shortcuts</span>
-          <span class="navlink-short">Keys</span>
-        </button>
+      <div class="grid" style=${{ maxWidth: '760px' }}>
+        <div class="card">
+          <h2>Tools</h2>
+          <p class="muted small">
+            Utilities that are not part of keying time. The float window is a
+            Chrome/Edge desktop feature and appears on the running-timer bar too;
+            the two todo actions write to this repo's own backlog.
+          </p>
+          <div class="tools-list">
+            <${NavActions} />
+            <button class="navlink" onClick=${onHelp}>
+              <span class="navlink-ind"><${Icon} name="keyboard" size=${18} /></span>
+              <span class="navlink-label">Keyboard shortcuts</span>
+              <span class="navlink-short">Keys</span>
+            </button>
+          </div>
+          ${pipSupported() ? null : html`
+            <p class="muted small">
+              The float window needs Chrome or Edge on a desktop — this browser
+              does not offer it.
+            </p>`}
+        </div>
       </div>
     <//>`;
 }
@@ -215,30 +307,50 @@ function ToastHost() {
 
 // ---------- keyboard help ----------
 
-function KeyboardHelp({ onClose }) {
-  const rows = [
+// Seventeen rows in one flat table before this — global shortcuts and
+// timer-grid chords mixed together. Slack, GitHub and Linear all group a
+// shortcut sheet by task area, and component.gallery §7 says the same, so it is
+// four groups now. The Navigation group is also the one place the new route
+// table has to be told the truth about: `g` then `d`/`c`/`e`/`s` goes to the
+// four destinations that now exist.
+const HELP_GROUPS = [
+  ['Recording time', [
+    ['q', 'Quick capture — file an entry from one sentence'],
     ['n', 'New time entry'],
     ['t', 'Start / stop the last-used timer'],
-    ['c', 'Close the day (dashboard)'],
+    ['c', 'Close the day — review, finalize and export (Today)'],
     ['s', 'Summary of the day in view as plain text'],
-    ['/', 'Search — timers on the dashboard, everything elsewhere'],
-    ['g then d / c / s / e', 'Go to Dashboard / Calendar / Stats / Export'],
-    ['[ and ]', 'Previous / next day (day view)'],
-    ['Ctrl+Enter', 'Save and close the entry editor'],
-    ['Esc', 'Close dialogs'],
-    ['q', 'Quick capture — bill from a sentence'],
+  ]],
+  ['Getting around', [
+    ['g then d/c/e/s', 'Go to Today / Calendar / Entries / Settings'],
+    ['/', 'Search — timers on Today, the entry ledger everywhere else'],
+    ['[ and ]', 'Previous / next day'],
     ['?', 'This help'],
+  ]],
+  ['The timer list', [
     ['Tab / click', 'Focus the timer grid'],
     ['← → ↑ ↓', 'Move between timer cards'],
     ['Enter or Space', 'Start–stop the focused timer'],
     ['Alt+↑ / Alt+↓', 'Nudge the focused timer ±0.1h (+Shift: ±0.2h)'],
     ['Shift+Enter', 'Edit the focused timer'],
-    ['Ctrl+Enter (grid)', 'Open the focused timer’s entry'],
-  ];
+    ['Ctrl+Enter', 'Open the focused timer’s entry'],
+  ]],
+  ['Dialogs', [
+    ['Ctrl+Enter', 'Save and close the entry editor'],
+    ['Esc', 'Close the dialog on top'],
+  ]],
+];
+
+function KeyboardHelp({ onClose }) {
   return html`
     <${Overlay} title="Keyboard shortcuts" className="kbd-help" onClose=${() => onClose()}>
-      <table>${rows.map(([k, d]) => html`
-        <tr key=${k}><td><kbd>${k}</kbd></td><td>${d}</td></tr>`)}
+      <table>
+        ${HELP_GROUPS.map(([group, rows]) => html`
+          <tbody key=${group}>
+            <tr class="kbd-group"><th colspan="2" scope="colgroup">${group}</th></tr>
+            ${rows.map(([k, d]) => html`
+              <tr key=${k}><td><kbd>${k}</kbd></td><td>${d}</td></tr>`)}
+          </tbody>`)}
       </table>
     <//>`;
 }
@@ -252,10 +364,16 @@ function App() {
   const [editor, setEditor] = useState(null); // {id} | {template:{...}} | null
   const [showHelp, setShowHelp] = useState(false);
   const [quickCapture, setQuickCapture] = useState(false);
-  const [navSheet, setNavSheet] = useState(false); // phone "More" bottom sheet
   const [refreshKey, setRefreshKey] = useState(0);
   const [accessExpired, setAccessExpired] = useState(false);
   const pagenavRef = useRef(null);
+
+  // Where we actually are, after a retired route has been folded into its new
+  // home. Everything downstream — the view, the navigation's active item, the
+  // shortcuts that are screen-specific — reads this, never the raw hash, so a
+  // deep link behaves identically to the canonical URL from its first frame.
+  const at = canonicalRoute(route);
+  const here = at.path;
 
   const reloadAuth = useCallback(async () => {
     try {
@@ -280,10 +398,19 @@ function App() {
   // backdrop and its focus trap while the page underneath has changed, and
   // every global shortcut stays dead behind it.
   useEffect(() => {
-    setNavSheet(false);
     setEditor(null);
     setShowHelp(false);
     setQuickCapture(false);
+  }, [route]);
+
+  // A retired route paints its new home immediately (canonicalRoute is applied
+  // during render) and the URL catches up here, in place — `location.replace`,
+  // never a push, or Back would bounce between the old hash and the new one
+  // forever. Guarded so it only fires for a hash that actually moved.
+  useEffect(() => {
+    const c = canonicalRoute(route);
+    if (c === route) return;
+    location.replace(hashFor(c.path, c.args));
   }, [route]);
 
   useEffect(() => {
@@ -360,50 +487,20 @@ function App() {
     return () => window.removeEventListener('tk:open-entry', onOpenEntry);
   }, []);
 
-  // Running-timer presence in the OS chrome: the tab title (which is also the
-  // installed PWA's taskbar hover preview) carries the live clock + timer
-  // name, and the favicon gains a red recording dot. App-level (not
-  // TimerGrid) so it stays live on every view; a light 5s poll plus a 1s
-  // title tick, re-kicked by refreshKey so timer actions show up promptly.
+  // Quick capture is app-level state, and it now has three doors: the `q` key,
+  // the shell's own control (sidebar on desktop, the centre of the bottom bar
+  // on a phone), and this event — so any view can open the palette without
+  // this file having to know it exists.
   useEffect(() => {
-    if (!settings) return undefined; // not logged in — leave the chrome alone
-    let timers = null;
-    let fetchedAt = 0;
-    let alive = true;
-    const poll = () => api.get('/api/timers')
-      .then((t) => { if (alive) { timers = t; fetchedAt = Date.now(); } })
-      .catch(() => {});
-    poll();
-    const p = setInterval(poll, 5000);
-    window.addEventListener('tk:timers-changed', poll);
-    let badged = null;
-    const apply = () => {
-      const { title, running } = runningTitle(timers, Date.now(), fetchedAt);
-      if (document.title !== title) document.title = title;
-      const link = document.querySelector('link[rel="icon"]');
-      const want = running ? RUNNING_ICON : IDLE_ICON;
-      if (link && link.getAttribute('href') !== want) {
-        // replace the node, not just href — some browsers ignore in-place swaps
-        const fresh = link.cloneNode();
-        fresh.setAttribute('href', want);
-        link.replaceWith(fresh);
-      }
-      // The installed PWA's taskbar icon is fixed by the manifest — the
-      // OS-supported running signal there is an app badge on the icon.
-      if (navigator.setAppBadge && badged !== running) {
-        badged = running;
-        (running ? navigator.setAppBadge() : navigator.clearAppBadge()).catch(() => {});
-      }
-    };
-    const t = setInterval(apply, 1000);
-    return () => {
-      alive = false;
-      clearInterval(p);
-      clearInterval(t);
-      window.removeEventListener('tk:timers-changed', poll);
-      document.title = 'Timekeeper';
-    };
-  }, [settings, refreshKey]);
+    const onCapture = () => setQuickCapture(true);
+    window.addEventListener('tk:quick-capture', onCapture);
+    return () => window.removeEventListener('tk:quick-capture', onCapture);
+  }, []);
+
+  // (The running-timer poll, the tab title, the favicon and the app badge all
+  // moved into components/runbar.js: one poll and one tick now feed the bar,
+  // the title and the badge, instead of the bar being a screen the clock only
+  // existed on and the title being a second poll that duplicated it.)
 
   const openEditor = useCallback((spec) => setEditor(spec), []);
   const closeEditor = useCallback((changed) => {
@@ -412,14 +509,13 @@ function App() {
   }, [bumpRefresh]);
   const closeHelp = useCallback(() => setShowHelp(false), []);
   const closeQuickCapture = useCallback(() => setQuickCapture(false), []);
-  const closeNavSheet = useCallback(() => setNavSheet(false), []);
+  const openQuickCapture = useCallback(() => setQuickCapture(true), []);
 
   // Back / the Android gesture dismisses the top overlay instead of leaving
   // the screen under it. Order is irrelevant — each hook owns its own marker.
   useBackDismiss(!!editor, closeEditor);
   useBackDismiss(showHelp, closeHelp);
   useBackDismiss(quickCapture, closeQuickCapture);
-  useBackDismiss(navSheet, closeNavSheet);
 
   const reloadSettings = useCallback(async () => {
     const s = await api.get('/api/settings');
@@ -443,11 +539,16 @@ function App() {
       // the close-out sweep and the summary included, which this handler could
       // not see before (they are view-local state) and which each had to fence
       // the keyboard themselves. Escape belongs to the topmost overlay.
-      if (editor || quickCapture || navSheet || overlayOpen()) return;
+      if (editor || quickCapture || overlayOpen()) return;
       if (pendingG) {
         pendingG = false;
         clearTimeout(gTimer);
-        const map = { d: '#/', c: '#/calendar', s: '#/stats', e: '#/export' };
+        // The same four letters, remapped onto the four destinations that
+        // exist now: d stays Today (it was Dashboard), c stays Calendar, e
+        // moves from Export to the Entries ledger that swallowed it, and s
+        // moves from Stats — which Calendar swallowed — to Settings. The `?`
+        // overlay lists exactly this.
+        const map = { d: '#/', c: '#/calendar', e: '#/entries', s: '#/settings' };
         if (map[e.key]) { nav(map[e.key]); e.preventDefault(); }
         return;
       }
@@ -459,24 +560,24 @@ function App() {
         openEditor({ template: {} });
       } else if (e.key === '/') {
         e.preventDefault();
-        if (route.path === 'dashboard') {
+        if (here === 'dashboard') {
           window.dispatchEvent(new CustomEvent('tk:timer-search'));
         } else {
-          nav('#/search');
+          nav('#/entries');
           setTimeout(() => document.querySelector('[data-search-q]')?.focus(), 80);
         }
       } else if (e.key === 't') {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:toggle-last-timer'));
-        if (route.path !== 'dashboard') nav('#/');
+        if (here !== 'dashboard') nav('#/');
       } else if (e.key === 'q') {
         if (showHelp) return; // don't open the palette under the help overlay
         e.preventDefault();
         setQuickCapture(true);
-      } else if (e.key === 'c' && route.path === 'dashboard') {
+      } else if (e.key === 'c' && here === 'dashboard') {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:close-day'));
-      } else if (e.key === 's' && (route.path === 'dashboard' || route.path === 'day')) {
+      } else if (e.key === 's' && (here === 'dashboard' || here === 'day')) {
         // whichever of the two views is mounted answers this
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('tk:day-summary'));
@@ -486,7 +587,7 @@ function App() {
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [editor, openEditor, route.path, showHelp, quickCapture, navSheet]);
+  }, [editor, openEditor, here, showHelp, quickCapture]);
 
   // Cloudflare Access expired (remote only). Checked before the spinner: on a
   // cold load every call 401s, so authState never arrives and the app would
@@ -514,73 +615,118 @@ function App() {
   if (!settings) return html`<${Spinner} />`;
 
   const ctx = { settings, reloadSettings, openEditor, refreshKey, bumpRefresh };
+  const args = at.args;
 
-  const view = {
-    dashboard: () => html`<${DashboardView} ...${ctx} />`,
-    day: () => html`<${DayView} date=${route.args[0]} ...${ctx} />`,
-    calendar: () => html`<${CalendarView} ...${ctx} />`,
-    search: () => html`<${SearchView} ...${ctx} />`,
-    stats: () => html`<${StatsView} ...${ctx} />`,
-    settings: () => html`<${SettingsView} page=${route.args[0]} ...${ctx} authState=${authState} reloadAuth=${reloadAuth} />`,
-    cms: () => html`<${CmsView} ...${ctx} />`,
-    // #/export/<filter>/<from> — the dashboard's attention pills deep-link here
-    export: () => html`<${ExportView} focus=${route.args[0]} focusFrom=${route.args[1]} ...${ctx} />`,
-  }[route.path] || (() => html`<div class="card">Not found. <a href="#/">Go home</a></div>`);
+  // SETTINGS CATEGORIES, plus the two the shell adds. Clients & Matters is
+  // reference data — configured once, used constantly through the CM picker —
+  // so it belongs beside the other configuration rather than in the daily
+  // navigation; Tools is where the three ex-navigation actions went. Both are
+  // appended only if settings.js has not already grown them itself, so the day
+  // that view absorbs them this file stops adding a duplicate chip.
+  const categories = [...SETTINGS_CATEGORIES];
+  const addCategory = (key, label) => {
+    if (!categories.some(([k]) => k === key)) categories.push([key, label]);
+  };
+  addCategory('cms', 'Clients & matters');
+  addCategory('tools', 'Tools');
+  const nativeSettings = (key) => SETTINGS_CATEGORIES.some(([k]) => k === key);
 
-  const active = route.path === 'day' ? 'calendar' : route.path;
   // Same fallback SettingsView applies to its own content: an unknown category
   // (a stale bookmark, a typo'd deep link) renders General, so the strip has to
   // say General too. Without this the shell showed six chips with none of them
   // active above a General page — the one state where the nav lies about where
   // you are.
-  const rawSettingsPage = route.args[0] || 'general';
-  const settingsPage = SETTINGS_CATEGORIES.some(([k]) => k === rawSettingsPage)
-    ? rawSettingsPage : 'general';
-  const moreActive = SHEET_NAV.includes(active);
+  const rawSettingsPage = args[0] || 'general';
+  const settingsPage = categories.some(([k]) => k === rawSettingsPage) ? rawSettingsPage : 'general';
+
+  const settingsView = () => {
+    if (settingsPage === 'cms' && !nativeSettings('cms')) return html`<${CmsView} ...${ctx} />`;
+    if (settingsPage === 'tools' && !nativeSettings('tools')) {
+      return html`<${ToolsPanel} onHelp=${() => setShowHelp(true)} />`;
+    }
+    return html`<${SettingsView} page=${settingsPage} ...${ctx}
+      authState=${authState} reloadAuth=${reloadAuth} />`;
+  };
+
+  const view = {
+    dashboard: () => html`<${DashboardView} ...${ctx} />`,
+    // #/day/<date> keeps its route and its bookmarks; the navigation has
+    // always called it Calendar (and now Calendar owns it outright).
+    day: () => html`<${DayView} date=${args[0]} ...${ctx} />`,
+    calendar: () => (args[0] === 'stats'
+      ? html`<${StatsView} ...${ctx} />`
+      : html`<${CalendarView} ...${ctx} />`),
+    // #/entries is the ledger; #/entries/export[/<filter>[/<from>]] is the
+    // export surface that used to be a top-level destination — same controls,
+    // same deep-link contract, one tap from the ledger instead of a permanent
+    // slot in the phone's bottom bar for a once-a-day job.
+    entries: () => (args[0] === 'export'
+      ? html`<${ExportView} focus=${args[1]} focusFrom=${args[2]} ...${ctx} />`
+      : html`<${SearchView} ...${ctx} />`),
+    settings: settingsView,
+  }[here] || (() => html`<div class="card">Not found. <a href="#/">Go home</a></div>`);
+
+  const active = here === 'day' ? 'calendar' : here;
+  // The sub-navigation for the destination we are on: Settings' six categories
+  // plus the shell's two, or the two-mode strip Calendar and Entries grew when
+  // they absorbed Stats and Export. Day has none — it is a deep link into
+  // Calendar, not a mode of it.
+  const pagenav = active === 'settings'
+    ? { label: 'Settings sections', base: '#/settings/', current: settingsPage,
+      items: categories }
+    : (here === 'calendar' || here === 'entries') && PAGENAV[here]
+      ? { label: PAGENAV[here].label, base: `#/${here}/`, current: args[0] || '',
+        items: PAGENAV[here].items }
+      : null;
+
+  // One sub-navigation model, two renderings: .subnav under the destination in
+  // the sidebar at ≥1024px, .pagenav as a scrollable chip strip below it.
+  // (Settings has worked this way since wave 0; Calendar and Entries join it
+  // now, and the desktop half is not optional — without it "Statistics" and
+  // "Export" would be reachable only by typing a URL.)
+  const chipTo = (key) => (key ? pagenav.base + key : pagenav.base.replace(/\/$/, ''));
+  const chip = (cls) => (key, label) => html`
+    <button key=${key || 'default'}
+      class=${cls + (pagenav.current === key ? ' active' : '')}
+      aria-current=${pagenav.current === key ? 'page' : undefined}
+      onClick=${() => nav(chipTo(key))}>${label}</button>`;
 
   return html`
     <div class="shell">
+      <${RunBar} />
       <nav class="sidebar" aria-label="Main">
         <div class="brand">
           <${Icon} name="timer" size=${21} />
           <span class="brand-word">Time<span>keeper</span></span>
         </div>
+        <${CaptureTrigger} onOpen=${openQuickCapture} />
         <div class="nav-group">
           <div class="nav-label">Go to</div>
           ${NAV.map(([path, label, icon, short]) => html`
             <${React.Fragment} key=${path}>
               <${NavLink} path=${path} label=${label} icon=${icon} short=${short}
                 active=${active === path} />
-              ${path === 'settings' && active === 'settings' ? html`
+              ${active === path && pagenav ? html`
                 <div class="subnav">
-                  ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
-                    <button key=${key}
-                      class=${'subnavlink' + (settingsPage === key ? ' active' : '')}
-                      aria-current=${settingsPage === key ? 'page' : undefined}
-                      onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
+                  ${pagenav.items.map(([key, sub]) => chip('subnavlink')(key, sub))}
                 </div>` : null}
             <//>`)}
         </div>
-        <div class="nav-group nav-actions">
-          <div class="nav-label">Actions</div>
-          <${NavActions} />
-        </div>
         <div class="foot">Press <kbd>?</kbd> for shortcuts</div>
       </nav>
-      <main class=${'main' + (active === 'settings' ? ' main-pagenav' : '')}>
-        ${active === 'settings' ? html`
-          <div class="pagenav" role="group" aria-label="Settings sections" ref=${pagenavRef}>
-            ${SETTINGS_CATEGORIES.map(([key, sub]) => html`
-              <button key=${key}
-                class=${'pagenav-item' + (settingsPage === key ? ' active' : '')}
-                aria-current=${settingsPage === key ? 'page' : undefined}
-                onClick=${() => nav(`#/settings/${key}`)}>${sub}</button>`)}
+      <main class=${'main' + (pagenav ? ' main-pagenav' : '')}>
+        ${pagenav ? html`
+          <div class="pagenav" role="group" aria-label=${pagenav.label} ref=${pagenavRef}>
+            ${pagenav.items.map(([key, label]) => chip('pagenav-item')(key, label))}
           </div>` : null}
         ${view()}
       </main>
     </div>
+    ${/* The phone bar: four destinations, and quick capture in the middle —
+          Material 3's BottomAppBar-with-a-FAB, and the first time the app's
+          fastest feature has had a control a thumb can reach. */''}
     <nav class="botnav" aria-label="Main">
-      ${NAV.filter(([path]) => BOTTOM_NAV.includes(path)).map(([path, label, icon, short]) => html`
+      ${NAV.slice(0, CAPTURE_SLOT).map(([path, label, icon, short]) => html`
         <button key=${path}
           class=${'botnav-item' + (active === path ? ' active' : '')}
           aria-current=${active === path ? 'page' : undefined}
@@ -589,16 +735,21 @@ function App() {
           <span class="botnav-ind"><${Icon} name=${icon} size=${20} /></span>
           <span class="botnav-label">${short}</span>
         </button>`)}
-      <button class=${'botnav-item' + (moreActive ? ' active' : '')}
-        aria-haspopup="dialog" aria-expanded=${navSheet ? 'true' : 'false'}
-        onClick=${() => setNavSheet(true)}>
-        <span class="botnav-ind"><${Icon} name="more" size=${20} /></span>
-        <span class="botnav-label">More</span>
+      <button class="botnav-item botnav-capture" onClick=${openQuickCapture}
+        aria-haspopup="dialog" title="Quick capture — file an entry from one sentence">
+        <span class="botnav-ind"><${Icon} name="sparkles" size=${20} /></span>
+        <span class="botnav-label">Capture</span>
       </button>
+      ${NAV.slice(CAPTURE_SLOT).map(([path, label, icon, short]) => html`
+        <button key=${path}
+          class=${'botnav-item' + (active === path ? ' active' : '')}
+          aria-current=${active === path ? 'page' : undefined}
+          title=${label}
+          onClick=${() => nav(routeOf(path))}>
+          <span class="botnav-ind"><${Icon} name=${icon} size=${20} /></span>
+          <span class="botnav-label">${short}</span>
+        </button>`)}
     </nav>
-    ${navSheet ? html`
-      <${NavSheet} active=${active} onClose=${closeNavSheet}
-        onHelp=${() => setShowHelp(true)} />` : null}
     <${ToastHost} />
     <${FeedbackCapture} />
     ${editor ? html`<${EntryEditor} spec=${editor} settings=${settings} onClose=${closeEditor} />` : null}

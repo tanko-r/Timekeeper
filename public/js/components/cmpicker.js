@@ -1,16 +1,40 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel,
+  html, React, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel,
 } from '/js/ui.js';
 import { useDismissLayer } from '/js/components/overlay.js';
 
 const SIX_RE = /^\d{6}$/;
 const CM_RE = /^\d{6}-\d{6}$/;
 
+// A DOM id is a document-wide fact and there can be two pickers on one screen
+// (the entry editor's, and the ledger filter's), so the ids that wire the
+// combobox together come from React's own id generator. The colons React puts
+// in them are legal in an id attribute and legal in getElementById, but they
+// are not legal in a CSS selector without escaping, so they come out here.
+const uid = () => React.useId().replace(/:/g, '');
+
 // Type-ahead Client/Matter picker. value = cm object or null.
 // onChange(cm). allowCreate shows a "New client/matter…" row.
 // Search is one unified fuzzy query over client name/number + matter
 // name/number (ranked server-side by /api/cms/picker).
+//
+// THE ARIA 1.2 COMBOBOX PATTERN, on the app's most-used control.
+// Measured on the open picker before this: the input had no role, no
+// aria-expanded, no aria-controls, no aria-activedescendant and no
+// aria-autocomplete; the menu had no role and no id; all six rows had no role,
+// no aria-selected and no id, so querySelectorAll('[role="option"]').length was
+// 0. A screen-reader user typing into it heard a plain text field that appeared
+// to do nothing while six results came and went underneath.
+//
+// The pattern (component-notes §9, and the same one cmdk/Linear/Raycast build
+// on): ONE text input keeps real DOM focus at all times; the arrow keys move a
+// VIRTUAL cursor — aria-activedescendant pointing at the option's id — rather
+// than moving focus onto the rows, which is what lets the input go on receiving
+// keystrokes while the list filters underneath. Moving real focus into the list
+// is the single most common command-palette accessibility bug; it is not what
+// this does, and `hover` was already the virtual cursor. It just had no name
+// assistive technology could read.
 export function CmPicker({ value, onChange, autoFocus, allowCreate = true, placeholder = 'Search client or matter…' }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
@@ -18,6 +42,9 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
   const [hover, setHover] = useState(0);
   const [creating, setCreating] = useState(false);
   const boxRef = useRef(null);
+  const id = uid();
+  const listId = `${id}-list`;
+  const optId = (i) => `${id}-opt-${i}`;
 
   useEffect(() => {
     if (!open) return;
@@ -64,10 +91,19 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
 
   const favorites = items.filter((c) => c.favorite);
   const rest = items.filter((c) => !c.favorite);
+  // How many rows the cursor can land on, and therefore whether there is an
+  // active option to point aria-activedescendant at. An empty result set with
+  // no "New…" row has no cursor, so the attribute is omitted rather than
+  // pointing at an id that does not exist.
+  const optionCount = items.length + (allowCreate ? 1 : 0);
+  const activeId = open && optionCount > 0 && hover < optionCount ? optId(hover) : undefined;
 
   // Hierarchy shown per row: client (name, or number while unnamed) › matter.
+  // aria-selected marks the row the virtual cursor is on — the one Enter takes
+  // — so the visual highlight and the announced state cannot drift apart.
   const renderItem = (cm, idx) => html`
-    <div key=${cm.id} class=${'cmpicker-item' + (hover === idx ? ' hover' : '')}
+    <div key=${cm.id} id=${optId(idx)} role="option" aria-selected=${hover === idx}
+      class=${'cmpicker-item' + (hover === idx ? ' hover' : '')}
       onMouseEnter=${() => setHover(idx)} onMouseDown=${(e) => { e.preventDefault(); pick(cm); }}>
       ${cm.favorite ? html`<span title="Favorite">★</span>` : null}
       ${clientLabel(cm) ? html`<span class="client" title=${clientLabel(cm)}>${clientLabel(cm)}</span>` : null}
@@ -88,18 +124,37 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
           </button>
         </div>` : html`
         <input type="search" value=${q} placeholder=${placeholder} autoFocus=${autoFocus}
+          role="combobox" aria-expanded=${open ? 'true' : 'false'}
+          aria-controls=${open ? listId : undefined}
+          aria-activedescendant=${activeId}
+          aria-autocomplete="list" aria-haspopup="listbox"
+          autoComplete="off" autoCorrect="off" spellCheck=${false}
           onFocus=${() => setOpen(true)}
           onInput=${(e) => { setQ(e.target.value); setOpen(true); }}
           onKeyDown=${onKey} />`}
       ${open ? html`
-        <div class="cmpicker-menu">
-          ${favorites.length ? html`<div class="cmpicker-section">Favorites</div>` : null}
-          ${favorites.map((cm) => renderItem(cm, items.indexOf(cm)))}
-          ${favorites.length && rest.length ? html`<div class="cmpicker-section">Recent & all</div>` : null}
-          ${rest.map((cm) => renderItem(cm, items.indexOf(cm)))}
-          ${items.length === 0 ? html`<div class="cmpicker-item muted">No matches</div>` : null}
+        ${/* The rows are grouped, so a screen reader hears "Favorites, 2 items"
+              rather than one undifferentiated run of results. A listbox may own
+              options and groups; the visible section heading names its group
+              through aria-labelledby instead of being a stray text node inside
+              the list. */''}
+        <div class="cmpicker-menu" id=${listId} role="listbox" aria-label=${placeholder}>
+          ${favorites.length ? html`
+            <div role="group" aria-labelledby=${`${id}-g-fav`}>
+              <div class="cmpicker-section" id=${`${id}-g-fav`}>Favorites</div>
+              ${favorites.map((cm) => renderItem(cm, items.indexOf(cm)))}
+            </div>` : null}
+          ${favorites.length && rest.length ? html`
+            <div role="group" aria-labelledby=${`${id}-g-rest`}>
+              <div class="cmpicker-section" id=${`${id}-g-rest`}>Recent & all</div>
+              ${rest.map((cm) => renderItem(cm, items.indexOf(cm)))}
+            </div>` : null}
+          ${!favorites.length ? rest.map((cm) => renderItem(cm, items.indexOf(cm))) : null}
+          ${items.length === 0 ? html`
+            <div class="cmpicker-item muted" role="presentation">No matches</div>` : null}
           ${allowCreate ? html`
-            <div class=${'cmpicker-item' + (hover === items.length ? ' hover' : '')}
+            <div id=${optId(items.length)} role="option" aria-selected=${hover === items.length}
+              class=${'cmpicker-item' + (hover === items.length ? ' hover' : '')}
               onMouseEnter=${() => setHover(items.length)}
               onMouseDown=${(e) => { e.preventDefault(); setCreating(true); }}>
               <span class="name" style=${{ color: 'var(--accent)' }}>＋ New client/matter…</span>
@@ -212,6 +267,15 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
   const [error, setError] = useState(null);
   const clientBoxRef = useRef(null);
+  // The client list is the same combobox pattern as CmPicker above. It starts
+  // with the cursor OFF the list (-1) rather than on the first row, because
+  // this input sits inside a <form> where Enter means "submit" until the user
+  // has actually arrowed into the results — a keyboard user typing a six-digit
+  // client number and pressing Enter must still get the form's own behaviour.
+  const [hoverC, setHoverC] = useState(-1);
+  const cid = uid();
+  const clientListId = `${cid}-list`;
+  const clientOptId = (i) => `${cid}-opt-${i}`;
 
   useEffect(() => { api.get('/api/clients').then(setClients).catch(() => {}); }, []);
 
@@ -245,6 +309,26 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
     if (qIsText) { setClientName(qt); setClientQ(''); }
     setWantNew(true);
     setListOpen(false);
+  }
+
+  // Every row in this list used to be a bare <div> with a mousedown handler:
+  // reachable by pointer, unreachable by keyboard, and invisible to a screen
+  // reader. Arrow keys move the same virtual cursor CmPicker uses.
+  const clientRows = matches.length + (wantNew ? 0 : 1);
+  function onClientKey(e) {
+    if (!clientListOpen) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHoverC((h) => Math.min(h + 1, clientRows - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHoverC((h) => Math.max(h - 1, -1));
+    } else if (e.key === 'Enter' && hoverC >= 0) {
+      e.preventDefault();
+      if (hoverC < matches.length) { setPicked(matches[hoverC]); setListOpen(false); }
+      else startNewClient();
+    }
+    // Escape is not handled here — useDismissLayer above owns it.
   }
 
   async function save(e) {
@@ -288,19 +372,30 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
             <div class="cmpicker" ref=${clientBoxRef}>
               <input type="search" data-nc-client value=${clientQ} autoFocus
                 placeholder=${wantNew ? '6-digit client number' : 'e.g. 100004 — or a name to search'}
+                role="combobox" aria-expanded=${clientListOpen ? 'true' : 'false'}
+                aria-controls=${clientListOpen ? clientListId : undefined}
+                aria-activedescendant=${clientListOpen && hoverC >= 0 ? clientOptId(hoverC) : undefined}
+                aria-autocomplete="list" aria-haspopup="listbox"
+                autoComplete="off" autoCorrect="off" spellCheck=${false}
                 onFocus=${() => setListOpen(true)}
-                onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); }}
+                onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); setHoverC(-1); }}
+                onKeyDown=${onClientKey}
                 onBlur=${() => setTimeout(() => setListOpen(false), 150)} />
               ${clientListOpen ? html`
-                <div class="cmpicker-menu">
-                  ${matches.map((c) => html`
-                    <div key=${c.id} class="cmpicker-item"
+                <div class="cmpicker-menu" id=${clientListId} role="listbox" aria-label="Existing clients">
+                  ${matches.map((c, i) => html`
+                    <div key=${c.id} id=${clientOptId(i)} role="option" aria-selected=${hoverC === i}
+                      class=${'cmpicker-item' + (hoverC === i ? ' hover' : '')}
+                      onMouseEnter=${() => setHoverC(i)}
                       onMouseDown=${(ev) => { ev.preventDefault(); setPicked(c); setListOpen(false); }}>
                       <span class="name">${clientLabel(c)}</span>
                       <span class="num">${c.client_number} · ${c.matter_count} matter${c.matter_count === 1 ? '' : 's'}</span>
                     </div>`)}
                   ${!wantNew ? html`
-                    <div class="cmpicker-item" onMouseDown=${(ev) => { ev.preventDefault(); startNewClient(); }}>
+                    <div id=${clientOptId(matches.length)} role="option" aria-selected=${hoverC === matches.length}
+                      class=${'cmpicker-item' + (hoverC === matches.length ? ' hover' : '')}
+                      onMouseEnter=${() => setHoverC(matches.length)}
+                      onMouseDown=${(ev) => { ev.preventDefault(); startNewClient(); }}>
                       <span class="name" style=${{ color: 'var(--accent)' }}>
                         ＋ New client${qIsText ? ` “${qt}”` : ''}…</span>
                     </div>` : null}

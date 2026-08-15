@@ -70,23 +70,79 @@ const clickText = async (selector, text) => {
   }, selector, text);
   await page.mouse.click(box.x, box.y);
 };
-// Native HTML5 drag-and-drop, synthesized directly on the DOM — headless
-// Chromium has no real pointer to drive an actual drag gesture. The app's
-// own drag state lives in a plain ref (set by the source card's
-// onDragStart, read by the target's onDrop), not in the DataTransfer
-// payload, so dispatching real dragstart/dragover/drop events with a
-// constructed DataTransfer is enough to exercise the production handlers
-// end-to-end (not a mocked shortcut around them).
-const dndToTab = (sourceSel, tabText) => page.evaluate((srcSel, text) => {
+// The timer BOARD's header (three grouping modes, a ten-tab strip, A-Z, New
+// group, Import, search) collapsed into one "⋯" menu on the merged list
+// (teardown E1). Nothing was removed — these helpers drive the same
+// capabilities where they live now.
+const openListMenu = async () => {
+  await waitFor('.today-menu-btn');
+  await page.click('.today-menu-btn');
+  await waitFor('.ctx-menu');
+};
+const closeMenu = async () => {
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+};
+// One of the menu's segmented controls (Show / Group / Order), by its label.
+const setListSeg = async (label, text) => {
+  await openListMenu();
+  await page.evaluate((l, t) => {
+    const seg = document.querySelector(`.ctx-menu .seg[aria-label="${l}"]`);
+    const btn = [...seg.querySelectorAll('button')].find((b) => b.textContent.trim() === t);
+    if (!btn) throw new Error(`no "${t}" in the ${l} control`);
+    btn.click();
+  }, label, text);
+  await closeMenu();
+};
+const listSegOn = async (label) => {
+  await openListMenu();
+  const on = await page.evaluate((l) => document.querySelector(`.ctx-menu .seg[aria-label="${l}"] button.on`)?.textContent.trim(), label);
+  await closeMenu();
+  return on;
+};
+// "Only this group/client" — the isolation the tab strip used to do.
+const setOnly = async (labelOrEmpty) => {
+  await openListMenu();
+  // Flat grouping has no sections to isolate, so the control is not there —
+  // clearing an isolation that cannot exist is a no-op, not a failure.
+  if (!await page.$('.ctx-menu select')) { await closeMenu(); return; }
+  await page.evaluate((want) => {
+    const sel = document.querySelector('.ctx-menu select');
+    const opt = want
+      ? [...sel.options].find((o) => o.textContent.includes(want))
+      : sel.options[0];
+    if (!opt) throw new Error(`no "${want}" in the Only control`);
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  }, labelOrEmpty);
+  await closeMenu();
+};
+// Drop a row onto a group SECTION (the tabs it used to be dropped on are gone;
+// the section itself is the drop target, and the row menu's "Group" select is
+// the touch equivalent).
+const dndToSection = (sourceSel, headText) => page.evaluate((srcSel, text) => {
   const src = document.querySelector(srcSel);
-  const tgt = [...document.querySelectorAll('.timer-tab')].find((b) => b.textContent.includes(text));
-  if (!src || !tgt) throw new Error(`dndToTab: missing element (card=${!!src}, tab "${text}"=${!!tgt})`);
+  const tgt = [...document.querySelectorAll('.timer-section')]
+    .find((sec) => sec.querySelector('.group-head')?.textContent.includes(text));
+  if (!src || !tgt) throw new Error(`dndToSection: missing element (row=${!!src}, section "${text}"=${!!tgt})`);
   const dt = new DataTransfer();
   src.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: dt }));
   tgt.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
   tgt.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
-}, sourceSel, tabText);
+}, sourceSel, headText);
+const sectionCount = (headText) => page.evaluate((text) => {
+  const sec = [...document.querySelectorAll('.timer-section')]
+    .find((x) => x.querySelector('.group-head')?.textContent.includes(text));
+  return sec ? sec.querySelectorAll('.work-row').length : -1;
+}, headText);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Global shortcuts are deliberately dead while the caret sits in a field, and
+// the dashboard now carries an always-visible quick-capture input — so a step
+// that means "press n as a global shortcut" has to leave the field first.
+const pressGlobal = async (key) => {
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.press(key);
+};
 const todayLocal = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -97,7 +153,9 @@ console.log(`E2E against ${base}`);
 await step('app shell renders (dashboard, SVG icons)', async () => {
   await page.goto(base, { waitUntil: 'networkidle0' });
   await waitFor('.sidebar .brand svg');
-  await waitFor('.timer-new');
+  // A brand-new account has no timers and no entries, so the list shows its
+  // designed empty state rather than the bare "+ New timer" row.
+  await waitFor('.today-list .blankslate');
 });
 
 await step('PWA shell files are reachable (manifest.json, sw.js) — cheap reachability check, not a full SW-lifecycle test (headless SW registration is flaky)', async () => {
@@ -121,7 +179,7 @@ await step('spike page is reachable (public/spike-webllm.html) — cheap static-
 });
 
 await step('create client+matter through picker (client→matter path, prefilled)', async () => {
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await type('.modal .cmpicker input', '100001-000012');
   await clickText('.cmpicker-item .name', 'New client/matter');
@@ -225,10 +283,13 @@ await step('persistent today footer: live total, ticking clock, close-the-day bu
   })).json();
   await fetch(`${base}/api/timers/${scratch.id}/start`, { method: 'POST' });
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.today-footer .tf-running .mono');
-  const before = await page.$eval('.today-footer .tf-running .mono', (el) => el.textContent.trim());
+  // The live clock lives on the persistent run bar now (it is visible on every
+  // screen, not just this one — teardown D1); the footer keeps the filed total
+  // and Close the day. Same capability, one surface up.
+  await waitFor('.runbar .runbar-clock');
+  const before = await page.$eval('.runbar .runbar-clock', (el) => el.textContent.trim());
   await page.waitForFunction((prev) =>
-    document.querySelector('.today-footer .tf-running .mono')?.textContent.trim() !== prev,
+    document.querySelector('.runbar .runbar-clock')?.textContent.trim() !== prev,
   { timeout: 4000 }, before);
   const del = await fetch(`${base}/api/timers/${scratch.id}`, { method: 'DELETE' });
   if (!del.ok) throw new Error(`scratch timer cleanup failed: ${del.status}`);
@@ -237,16 +298,16 @@ await step('persistent today footer: live total, ticking clock, close-the-day bu
 });
 
 await step('create timer; a sub-2s stop reverts as if nothing happened', async () => {
-  await page.click('.timer-new');
+  await clickText('button', 'New timer');
   await type('.modal input[placeholder="e.g. Acme — research"]', 'Acme research');
   await page.click('.modal .cmpicker input');
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Acme');
   await clickText('.modal button', 'Create');
-  await waitFor('.timer-card');
-  await page.click('.timer-card button[title="Start"]');
+  await waitFor('.timer-row');
+  await page.click('.timer-row button[title="Start"]');
   await sleep(1200);
-  await page.click('.timer-card button[title="Stop & file time"]');
+  await page.click('.timer-row button[title="Stop & file time"]');
   await sleep(500);
   const clock = await page.$eval('.timer-clock', (el) => el.textContent.trim());
   if (clock !== '0.0') throw new Error(`expected 0.0 tenths after misclick, got ${clock}`);
@@ -254,29 +315,51 @@ await step('create timer; a sub-2s stop reverts as if nothing happened', async (
   if (!title.startsWith('00:00')) throw new Error(`misclick must fully revert, got ${title}`);
 });
 
-await step('backdated start (10m ago) → stop → non-blocking chips; picking one opens the entry editor', async () => {
-  await page.click('.timer-card button[title="Timer menu"]');
+await step('backdated start (10m ago) → stop → inline chips; picking one FINISHES the entry', async () => {
+  await page.click('.timer-row button[title="Timer menu"]');
   await waitFor('.ctx-menu');
   await clickText('.ctx-menu .ctx-inline button', '10m');
-  await page.waitForFunction(() => document.querySelector('.timer-card.running'), { timeout: 4000 });
-  await page.click('.timer-card button[title="Stop & file time"]');
+  await page.waitForFunction(() => document.querySelector('.timer-row.running'), { timeout: 4000 });
+  await page.click('.timer-row button[title="Stop & file time"]');
   await waitFor('.stop-chips'); // lightweight affordance…
   if (await page.$('.modal')) throw new Error('stop must not open a modal'); // …not a blocking one
   await shot('stop-chips');
-  // one-tap narrative from the matter's history (the finalized Acme entry)
-  // opens the entry editor with that narrative already filed.
+  // teardown §17 / E2: the offer is a state of the row that stopped, not a
+  // fixed slab floating over the middle of the page.
+  const anchored = await page.$eval('.stop-chips', (el) => ({
+    inRow: !!el.closest('.work-row'), position: getComputedStyle(el).position,
+  }));
+  if (!anchored.inRow) throw new Error(`chips are not on the stopped row: ${JSON.stringify(anchored)}`);
+  // ONE TAP FINISHES IT. Before this the pick PATCHed the narrative and then
+  // opened the 25-control editor to confirm text the user had just chosen —
+  // three interactions and a context switch for a one-tap action. Now the
+  // pick is the commit: no dialog, the row carries the narrative, and the
+  // toast carries the way back.
   await clickText('.stop-chips .chip-btn', 'Reviewed lease agreement');
-  await waitFor('.modal-wide .narrative-preview textarea');
-  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
-  const narrative = await page.$eval('.modal-wide .narrative-preview textarea', (el) => el.value);
-  if (!narrative.startsWith('Reviewed lease agreement')) {
-    throw new Error(`chip narrative did not land in the editor: "${narrative}"`);
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 5000 });
+  await sleep(500);
+  if (await page.$('.ovl-panel')) throw new Error('picking a chip must not open a dialog');
+  const rowText = await page.$eval('.today-list .work-row', (el) => el.textContent.replace(/\s+/g, ' '));
+  if (!rowText.includes('Reviewed lease agreement')) {
+    throw new Error(`chip narrative did not land on the row: "${rowText}"`);
   }
-  await clickText('.modal-wide button', 'Save & close');
-  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
-  await sleep(400);
-  const entries = await page.$$eval('.entry-card', (els) => els.length);
-  if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);
+  // …and it really is saved, not just painted
+  const dayEntries = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
+  if (!dayEntries.some((e) => String(e.narrative || '').startsWith('Reviewed lease agreement'))) {
+    throw new Error('chip narrative did not reach the server');
+  }
+  // the overwrite is reversible, through the app's own toast-with-Undo pattern
+  // (up to three toasts can be on screen; earlier steps leave theirs behind)
+  const toasts = await page.$$eval('.toast', (els) => els.map((el) => ({
+    text: el.textContent, action: el.querySelector('button')?.textContent.trim(),
+  })));
+  if (!toasts.some((t) => t.action === 'Undo')) {
+    throw new Error(`the pick must offer Undo, got ${JSON.stringify(toasts)}`);
+  }
+  // One merged list: the timer and the entry it filled are the SAME row, and
+  // the earlier finalized entry (which has no timer) is a row of its own.
+  const rows = await page.$$eval('.today-list .work-row', (els) => els.length);
+  if (rows < 2) throw new Error(`expected at least 2 rows of today's work, got ${rows}`);
 });
 
 await step('quick-capture palette (q): "call re acme .3" parses clean and files', async () => {
@@ -285,7 +368,7 @@ await step('quick-capture palette (q): "call re acme .3" parses clean and files'
   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const before = await (await fetch(`${base}/api/entries?date=${today}`)).json();
 
-  await page.keyboard.press('q');
+  await pressGlobal('q');
   await waitFor('.qc-card input');
   await page.type('.qc-card input', 'call re acme .3', { delay: 20 });
   await page.waitForFunction(() => !document.querySelector('.qc-chip.miss')
@@ -340,19 +423,19 @@ await step('exclusive timers: starting a second timer stops & files the first (c
   const tb = await mkJson('/api/timers', { name: '__excl-B__', cm_id: cm.id });
   await mkJson(`/api/timers/${ta.id}/start`, { minutesAgo: 10 }); // enough to file ≥0.1h on auto-stop
   await page.reload({ waitUntil: 'networkidle0' });
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-row')]
     .some((c) => c.textContent.includes('__excl-A__') && c.classList.contains('running')), { timeout: 4000 });
 
   // clicking Start on B must stop A server-side and pop A's stop chips
   await page.evaluate(() => {
-    const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('__excl-B__'));
+    const card = [...document.querySelectorAll('.timer-row')].find((c) => c.textContent.includes('__excl-B__'));
     card.querySelector('button[title="Start"]').click();
   });
   await waitFor('.stop-chips');
   const filedHead = await page.$eval('.stop-chips-head', (el) => el.textContent);
   if (!filedHead.includes('Exclusive scratch')) throw new Error(`chips are not for the auto-stopped timer: "${filedHead}"`);
   await page.waitForFunction(() => {
-    const running = [...document.querySelectorAll('.timer-card.running')];
+    const running = [...document.querySelectorAll('.timer-row.running')];
     return running.length === 1 && running[0].textContent.includes('__excl-B__');
   }, { timeout: 4000 });
   await page.keyboard.press('Escape');
@@ -370,13 +453,13 @@ await step('exclusive timers: starting a second timer stops & files the first (c
     if (!del.ok) throw new Error(`scratch timer cleanup failed: ${del.status}`);
   }
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.timer-card');
+  await waitFor('.timer-row');
 });
 
 await step('quick timer: stop files a matterless entry → assign from the entry card', async () => {
   const entriesBefore = await (await fetch(`${base}/api/entries?date=${todayLocal()}`)).json();
   await clickText('button', 'Quick');
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-row')]
     .some((c) => c.textContent.includes('Quick timer') && c.classList.contains('running')
       && c.classList.contains('unassigned')), { timeout: 4000 });
   // running state reaches the OS chrome: tab title carries ▶ clock + name
@@ -388,7 +471,7 @@ await step('quick timer: stop files a matterless entry → assign from the entry
   if (!favRunning) throw new Error('favicon did not switch to the running variant');
   await sleep(2200); // past the misclick grace so the stop files for real
   await page.evaluate(() => {
-    const card = [...document.querySelectorAll('.timer-card')].find((c) => c.textContent.includes('Quick timer'));
+    const card = [...document.querySelectorAll('.timer-row')].find((c) => c.textContent.includes('Quick timer'));
     card.querySelector('button[title="Stop & file time"]').click();
   });
   // 2026-07-13 model: the stop FILES a matterless entry — chips pop like any
@@ -404,10 +487,12 @@ await step('quick timer: stop files a matterless entry → assign from the entry
     !document.querySelector('link[rel="icon"]').getAttribute('href').includes('circle'),
   { timeout: 10000 }).catch(() => { throw new Error('favicon did not revert after stop'); });
 
-  // the entry is real but blocked — its card carries the Assign matter button
-  await page.waitForFunction(() => [...document.querySelectorAll('.entry-card')]
-    .some((c) => c.textContent.includes('No matter yet')), { timeout: 5000 });
-  await clickText('.entry-card button', 'Assign matter');
+  // the entry is real but blocked — and it is the quick TIMER's own row now,
+  // which carries the Assign matter button inline
+  await page.waitForFunction(() => [...document.querySelectorAll('.today-list .work-row')]
+    .some((c) => c.classList.contains('unassigned') && c.textContent.includes('Assign matter')),
+  { timeout: 5000 });
+  await clickText('.today-list .work-row button', 'Assign matter');
   await waitFor('.modal-wide .cmpicker input');
   await page.click('.modal-wide .cmpicker input');
   await sleep(250);
@@ -436,11 +521,11 @@ await step('quick timer: stop files a matterless entry → assign from the entry
     if (!del.ok) throw new Error(`quick timer cleanup failed: ${del.status}`);
   }
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.timer-card');
+  await waitFor('.timer-row');
 });
 
 await step('timer name is editable in place', async () => {
-  await page.click('.timer-card .timer-name');
+  await page.click('.timer-row .timer-name');
   await waitFor('.name-input');
   const setName = (v) => page.evaluate((val) => {
     const inp = document.querySelector('.name-input');
@@ -453,7 +538,7 @@ await step('timer name is editable in place', async () => {
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-name')]
     .some((el) => el.textContent === 'Acme research (renamed)'), { timeout: 4000 });
   // rename back so later steps' name references hold
-  await page.click('.timer-card .timer-name');
+  await page.click('.timer-row .timer-name');
   await waitFor('.name-input');
   await setName('Acme research');
   await page.keyboard.press('Enter');
@@ -462,7 +547,7 @@ await step('timer name is editable in place', async () => {
 });
 
 await step('ghost-text: phrasebook completion in the entry editor, Tab accepts', async () => {
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await clickText('.cmpicker-item .name', 'Acme');
@@ -503,7 +588,7 @@ await step('Reuse: pick past narratives for this matter and insert them', async 
   const second = await seedEntry('2026-06-02', 'Draft response to the landlord.');
 
   await page.reload({ waitUntil: 'networkidle0' });
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await clickText('.cmpicker-item .name', 'Acme');
@@ -540,7 +625,7 @@ await step('Reuse: pick past narratives for this matter and insert them', async 
 });
 
 await step('shortcuts: save-from-selection, inline expansion, settings list', async () => {
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await clickText('.cmpicker-item .name', 'Acme');
@@ -578,7 +663,7 @@ await step('shortcuts: save-from-selection, inline expansion, settings list', as
 });
 
 await step('AUTO narrative: two-way edit-through, structural-break detach, client label', async () => {
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await clickText('.cmpicker-item .name', 'Acme');
@@ -666,12 +751,14 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
   await clickText('.modal-wide button', 'Save & close');
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('.entry-card')].some((c) => c.textContent.includes('Review lease terms')),
+    [...document.querySelectorAll('.today-list .work-row')].some((c) => c.textContent.includes('Review lease terms')),
   { timeout: 5000 });
+  // The pencil is gone (teardown E8: one primary action plus an overflow); the
+  // matter name IS the open affordance, and the rest is behind the row's ⋯.
   await page.evaluate(() => {
-    const card = [...document.querySelectorAll('.entry-card')]
+    const row = [...document.querySelectorAll('.today-list .work-row')]
       .find((c) => c.textContent.includes('Review lease terms'));
-    card.querySelector('button[title="Edit"]').click();
+    row.querySelector('.timer-name').click();
   });
   await waitFor('.modal-wide .narrative-preview textarea');
   await page.waitForFunction(() => !document.querySelector('.modal-wide .auto-badge'), { timeout: 4000 });
@@ -728,131 +815,105 @@ await step('picker: NEW CLIENT by name first (feedback 2026-07-10)', async () =>
   await clickText('.modal button', 'Cancel'); // no timer created
 });
 
-await step('groups as tabs: create, assign via menu, isolate, drop-on-tab, persist; A-Z present', async () => {
-  await clickText('button', 'New group');
+await step('groups: create from the list menu, assign from the row menu, isolate, drop on a section, persist; A–Z present', async () => {
+  // The ten-tab strip is gone (teardown §5: role="tab" over one filtered panel
+  // was the wrong component, and it sat above the timers on a phone). Every
+  // capability it carried lives in the list's ⋯ menu or the row's ⋯ menu, and
+  // each now has a touch path it did not have before.
+  await openListMenu();
+  await clickText('.ctx-menu .ctx-item', 'New group');
   await type('.modal input[placeholder="e.g. Litigation"]', 'Litigation');
   await clickText('.modal button', 'Create');
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
-    .some((el) => el.textContent === 'Litigation'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
 
-  // tabs render with counts: the lone existing timer is still ungrouped
-  const counts1 = await page.evaluate(() => Object.fromEntries(
-    [...document.querySelectorAll('.timer-tab')].map((b) =>
-      [b.querySelector('.timer-tab-label').textContent, b.querySelector('.timer-tab-count').textContent])));
-  if (counts1.All !== '1') throw new Error(`All tab count wrong: ${JSON.stringify(counts1)}`);
-  if (counts1.Ungrouped !== '1') throw new Error(`Ungrouped tab count wrong: ${JSON.stringify(counts1)}`);
-  if (counts1.Litigation !== '0') throw new Error(`Litigation tab count wrong: ${JSON.stringify(counts1)}`);
+  await setListSeg('Group', 'By group');
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === 'Litigation'), { timeout: 4000 });
 
-  // clicking a tab isolates its cards — the still-empty Litigation tab shows
-  // none of the existing (ungrouped) timers
-  await clickText('.timer-tab', 'Litigation');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length === 0
-    && document.querySelector('.timer-board').textContent.includes('Drop timers here'), { timeout: 4000 });
-  await clickText('.timer-tab', 'All');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length === 1, { timeout: 4000 });
+  // the lone existing timer is still ungrouped, so the empty group section
+  // stands there as its own drop target
+  if (await sectionCount('Litigation') !== 0) throw new Error('new group should start empty');
+  if (await sectionCount('Ungrouped') < 1) throw new Error('the existing timer should be Ungrouped');
 
-  // assign the existing timer to Litigation via the context-menu path
-  await page.click('.timer-card button[title="Timer menu"]');
+  // "Only this group" isolates it — the tab strip's job, as a filter
+  await setOnly('Litigation');
+  await page.waitForFunction(() => document.querySelectorAll('.today-list .timer-row').length === 0
+    && document.querySelector('.today-list').textContent.includes('Drop timers here'), { timeout: 4000 });
+  // …and the filter is visible and removable in place, which is what makes it
+  // safe for it to live one tap deep
+  await page.waitForFunction(() => [...document.querySelectorAll('.filter-pill')]
+    .some((p) => p.textContent.includes('Litigation')), { timeout: 4000 });
+  await setOnly('');
+  await page.waitForFunction(() => document.querySelectorAll('.today-list .timer-row').length === 1, { timeout: 4000 });
+
+  // assign the existing timer to Litigation via the ROW menu (the touch path)
+  await page.click('.timer-row button[title="Timer menu"]');
   await waitFor('.ctx-menu select');
   await page.evaluate(() => {
     const sel = document.querySelector('.ctx-menu select');
     sel.value = sel.querySelector('option:not([value=""])').value;
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+  await page.waitForFunction(async () => true);
   await page.waitForFunction(() => {
-    const tab = [...document.querySelectorAll('.timer-tab')].find((b) => b.textContent.includes('Litigation'));
-    return tab && tab.querySelector('.timer-tab-count')?.textContent === '1';
-  }, { timeout: 4000 });
-  // no ungrouped timers left → the Ungrouped tab disappears entirely
-  await page.waitForFunction(() => ![...document.querySelectorAll('.timer-tab-label')]
-    .some((el) => el.textContent === 'Ungrouped'), { timeout: 4000 });
+    const sec = [...document.querySelectorAll('.timer-section')]
+      .find((x) => x.querySelector('.group-head')?.textContent.includes('Litigation'));
+    return sec && sec.querySelectorAll('.timer-row').length === 1;
+  }, { timeout: 5000 });
 
-  // still on "All" — no rename/delete tools anywhere (no group is active)
-  const toolsUnderAll = await page.evaluate(() => !!document.querySelector('.tab-tools'));
-  if (toolsUnderAll) throw new Error('group tools must not render while "All" is active');
-
-  // clicking Litigation isolates exactly that one (now-assigned) card, and
-  // now that it's the active tab, its kebab (group menu) appears
-  await clickText('.timer-tab', 'Litigation');
-  await page.waitForFunction(() => {
-    const wrap = [...document.querySelectorAll('.timer-tab-wrap')].find((w) => w.textContent.includes('Litigation'));
-    return wrap && wrap.querySelector('.tab-tools button[title="Group menu"]');
-  }, { timeout: 4000 });
-  await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
-    return cards.length === 1 && cards[0].textContent.includes('Acme research');
-  }, { timeout: 4000 });
-
-  // the kebab opens a menu holding the rename/delete actions (no bare
-  // edit/trash buttons on the tab itself); Rename opens the group modal
-  const bareTools = await page.evaluate(() =>
-    !!document.querySelector('.tab-tools button[title="Rename group"], .tab-tools button[title^="Delete group"]'));
-  if (bareTools) throw new Error('rename/delete must live in the kebab menu, not as bare tab buttons');
-  await page.click('.tab-tools button[title="Group menu"]');
-  await waitFor('.ctx-menu');
+  // rename/delete live in the list menu while that group is the isolated one —
+  // one labelled menu instead of a kebab hidden on an active tab
+  await setOnly('Litigation');
+  await openListMenu();
   const menuLabels = await page.$$eval('.ctx-menu .ctx-item', (els) => els.map((el) => el.textContent.trim()));
-  if (!menuLabels.some((l) => l.includes('Rename group'))) throw new Error(`kebab menu missing Rename: ${JSON.stringify(menuLabels)}`);
-  if (!menuLabels.some((l) => l.includes('Delete group'))) throw new Error(`kebab menu missing Delete: ${JSON.stringify(menuLabels)}`);
-  await clickText('.ctx-menu .ctx-item', 'Rename group');
+  if (!menuLabels.some((l) => l.includes('Rename'))) throw new Error(`list menu missing Rename: ${JSON.stringify(menuLabels)}`);
+  if (!menuLabels.some((l) => l.includes('Delete'))) throw new Error(`list menu missing Delete: ${JSON.stringify(menuLabels)}`);
+  if (!menuLabels.some((l) => l.includes('A–Z'))) throw new Error(`list menu missing A–Z: ${JSON.stringify(menuLabels)}`);
+  if (!menuLabels.some((l) => l.includes('Import'))) throw new Error(`list menu missing CSV import: ${JSON.stringify(menuLabels)}`);
+  await clickText('.ctx-menu .ctx-item', 'Rename');
   await waitFor('.modal input[placeholder="e.g. Litigation"]');
   await clickText('.modal button', 'Cancel');
   await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+  await setOnly('');
 
-  // drop-on-tab: create a second group, drag the card from the isolated
-  // Litigation grid onto its tab, then drag it back — exercises the actual
-  // dragstart/dragover/drop handlers (not just the context-menu path) in
-  // both directions and leaves the timer back in Litigation for later steps.
-  await clickText('button', 'New group');
+  // drop-on-section: a second group, drag the row into it and back — the real
+  // dragstart/dragover/drop handlers, in both directions
+  await openListMenu();
+  await clickText('.ctx-menu .ctx-item', 'New group');
   await type('.modal input[placeholder="e.g. Litigation"]', 'General');
   await clickText('.modal button', 'Create');
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
-    .some((el) => el.textContent === 'General'), { timeout: 4000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === 'General'), { timeout: 4000 });
 
-  await dndToTab('.timer-board .timer-card', 'General');
+  await dndToSection('.today-list .timer-row', 'General');
   await page.waitForFunction(() => {
-    const tabs = [...document.querySelectorAll('.timer-tab')];
-    const general = tabs.find((b) => b.textContent.includes('General'));
-    const litigation = tabs.find((b) => b.textContent.includes('Litigation'));
-    return general?.querySelector('.timer-tab-count')?.textContent === '1'
-      && litigation?.querySelector('.timer-tab-count')?.textContent === '0';
-  }, { timeout: 4000 });
-  await clickText('.timer-tab', 'General');
+    const sec = [...document.querySelectorAll('.timer-section')]
+      .find((x) => x.querySelector('.group-head')?.textContent.includes('General'));
+    return sec && sec.querySelectorAll('.timer-row').length === 1;
+  }, { timeout: 5000 });
+  await dndToSection('.today-list .timer-row', 'Litigation');
   await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
-    return cards.length === 1 && cards[0].textContent.includes('Acme research');
-  }, { timeout: 4000 });
-
-  await dndToTab('.timer-board .timer-card', 'Litigation');
-  await page.waitForFunction(() => {
-    const tabs = [...document.querySelectorAll('.timer-tab')];
-    const general = tabs.find((b) => b.textContent.includes('General'));
-    const litigation = tabs.find((b) => b.textContent.includes('Litigation'));
-    return general?.querySelector('.timer-tab-count')?.textContent === '0'
-      && litigation?.querySelector('.timer-tab-count')?.textContent === '1';
-  }, { timeout: 4000 });
-  await clickText('.timer-tab', 'Litigation');
-  await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
-    return cards.length === 1 && cards[0].textContent.includes('Acme research');
-  }, { timeout: 4000 });
+    const sec = [...document.querySelectorAll('.timer-section')]
+      .find((x) => x.querySelector('.group-head')?.textContent.includes('Litigation'));
+    return sec && sec.querySelectorAll('.timer-row').length === 1;
+  }, { timeout: 5000 });
   await shot('groups');
 
-  // active tab persists across reload (tk:timerTab:group), per mode
+  // the isolation persists across reload (tk:timerOnly:<mode>), per mode
+  await setOnly('Litigation');
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.timer-tab.on');
-  const activeLabel = await page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
-  if (activeLabel !== 'Litigation') throw new Error(`active tab did not persist across reload: ${activeLabel}`);
+  await page.waitForFunction(() => [...document.querySelectorAll('.filter-pill')]
+    .some((p) => p.textContent.includes('Litigation')), { timeout: 5000 });
   await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
-    return cards.length === 1 && cards[0].textContent.includes('Acme research');
-  }, { timeout: 4000 });
-
-  const az = await page.$$eval('button', (els) => els.some((b) => b.textContent.includes('A–Z')));
-  if (!az) throw new Error('A–Z button missing');
+    const rows = [...document.querySelectorAll('.today-list .timer-row .timer-name')];
+    return rows.length === 1 && rows[0].textContent.includes('Acme research');
+  }, { timeout: 5000 });
+  await setOnly('');
 });
 
-await step('grouping selector: by client / flat / persists across reload', async () => {
-  await clickText('.seg button', 'By client');
+await step('grouping: by client / flat / persists across reload (list ⋯ menu)', async () => {
+  await setListSeg('Group', 'By client');
   // Acme's client is unnamed → its section is labeled by the 6-digit number,
   // with a "· unnamed" hint alongside the group-name span (not inside it).
   await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
@@ -863,25 +924,17 @@ await step('grouping selector: by client / flat / persists across reload', async
     return head?.textContent.includes('unnamed');
   });
   if (!unnamedHint) throw new Error('by-client head missing the "unnamed" hint for an unnamed client');
-  // by-client mode gets tabs too (just no rename/delete tools)
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
-    .some((el) => el.textContent === '100001'), { timeout: 4000 });
-  const hasClientTabTools = await page.evaluate(() =>
-    [...document.querySelectorAll('.timer-tab-wrap')]
-      .some((w) => w.textContent.includes('100001') && w.querySelector('.tab-tools')));
-  if (hasClientTabTools) throw new Error('client tabs must not show rename/delete tools');
 
-  await clickText('.seg button', 'Flat');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-tabs').length === 0
-    && document.querySelectorAll('.group-head').length === 0
-    && document.querySelectorAll('.timer-card').length >= 1, { timeout: 4000 });
+  await setListSeg('Group', 'Flat');
+  await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
+    && document.querySelectorAll('.timer-row').length >= 1, { timeout: 4000 });
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.timer-card');
-  const on = await page.$eval('.seg button.on', (el) => el.textContent.trim());
+  await waitFor('.timer-row');
+  const on = await listSegOn('Group');
   if (on !== 'Flat') throw new Error(`grouping did not persist: ${on}`);
-  await clickText('.seg button', 'By group');
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-tab-label')]
-    .some((el) => el.textContent === 'Litigation'), { timeout: 4000 });
+  await setListSeg('Group', 'By group');
+  await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
+    .some((el) => el.textContent.trim() === 'Litigation'), { timeout: 4000 });
 });
 
 await step('client rename: inline on CMs view, reflected in by-client grouping', async () => {
@@ -899,10 +952,10 @@ await step('client rename: inline on CMs view, reflected in by-client grouping',
     .some((r) => r.textContent.includes('Acme Holdings')), { timeout: 4000 });
   // the by-client grouping now shows the name instead of the number
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await clickText('.seg button', 'By client');
+  await setListSeg('Group', 'By client');
   await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
     .some((el) => el.textContent.trim() === 'Acme Holdings'), { timeout: 4000 });
-  await clickText('.seg button', 'By group'); // restore for later steps
+  await setListSeg('Group', 'By group'); // restore for later steps
 });
 
 await step('client name editable from the matter Edit modal, reflected in C&M row + by-client head', async () => {
@@ -939,22 +992,20 @@ await step('client name editable from the matter Edit modal, reflected in C&M ro
 
   // by-client head picks up the rename after a reload (real /api/timers refetch)
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await clickText('.seg button', 'By client');
+  await setListSeg('Group', 'By client');
   await page.reload({ waitUntil: 'networkidle0' });
-  await waitFor('.timer-card');
+  await waitFor('.timer-row');
   await page.waitForFunction(() => [...document.querySelectorAll('.group-head .group-name')]
     .some((el) => el.textContent.trim() === 'Acme Holdings LLC'), { timeout: 4000 });
-  await clickText('.seg button', 'By group'); // restore for later steps
+  await setListSeg('Group', 'By group'); // restore for later steps
 });
 
 await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today highlight', async () => {
-  // The dashboard is still in by-group mode with the "Litigation" tab active
-  // (persisted from the earlier groups step, isolating that group's cards);
-  // switch to "All" so every group's timers render together — this step
-  // needs to see Acme research alongside the fresh ungrouped timers it
-  // creates below.
-  await clickText('.timer-tab', 'All');
-  await page.waitForFunction(() => [...document.querySelectorAll('.timer-card')]
+  // The dashboard is still in by-group mode; drop any "Only this group"
+  // isolation so every group's timers render together — this step needs to see
+  // Acme research alongside the fresh ungrouped timers it creates below.
+  await setOnly('');
+  await page.waitForFunction(() => [...document.querySelectorAll('.timer-row')]
     .some((c) => c.textContent.includes('Acme research')), { timeout: 4000 });
 
   // a second, untouched timer proves the worked/zero distinction
@@ -964,18 +1015,18 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Harbor Lease');
   await clickText('.modal button', 'Create');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length >= 2, { timeout: 4000 });
+  await page.waitForFunction(() => document.querySelectorAll('.timer-row').length >= 2, { timeout: 4000 });
 
-  const workedNames = await page.$$eval('.timer-card.worked .timer-name', (els) => els.map((e) => e.textContent));
+  const workedNames = await page.$$eval('.timer-row.worked .timer-name', (els) => els.map((e) => e.textContent));
   if (!workedNames.includes('Acme research')) throw new Error(`Acme not highlighted: ${workedNames}`);
   if (workedNames.includes('Harbor drafting')) throw new Error('zero timer must not be highlighted');
 
   const focusAcme = () => page.evaluate(() => {
-    [...document.querySelectorAll('.timer-card')]
+    [...document.querySelectorAll('.timer-row')]
       .find((c) => c.textContent.includes('Acme research')).focus();
   });
   const acmeClockIs = (want) => page.waitForFunction((w) => {
-    const card = [...document.querySelectorAll('.timer-card')]
+    const card = [...document.querySelectorAll('.timer-row')]
       .find((c) => c.textContent.includes('Acme research'));
     return card && card.querySelector('.timer-clock')?.textContent.trim() === w;
   }, { timeout: 4000 }, want);
@@ -993,7 +1044,7 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await acmeClockIs('1.3');
 
   await page.keyboard.press('Enter');              // start
-  await page.waitForFunction(() => document.querySelector('.timer-card.running'), { timeout: 4000 });
+  await page.waitForFunction(() => document.querySelector('.timer-row.running'), { timeout: 4000 });
   await sleep(2500);                               // outlive the 2s misclick grace
   await focusAcme();
   await page.keyboard.press('Enter');              // stop → chips
@@ -1014,64 +1065,113 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
     await clickText('.modal button', 'Create');
     await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
   }
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+  await page.waitForFunction(() => document.querySelectorAll('.timer-row').length >= 5, { timeout: 4000 });
 
-  await clickText('.seg button', 'Flat');
+  await setListSeg('Group', 'Flat');
   await page.waitForFunction(() => document.querySelectorAll('.group-head').length === 0
-    && document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+    && document.querySelectorAll('.timer-row').length >= 5, { timeout: 4000 });
 
-  // ArrowDown: next card in DOM order — directly below in the same column
-  await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
+  // A4: the board is ONE COLUMN now (teardown E1), which deletes the
+  // getBoundingClientRect column geometry onBoardKey used to need. Down/Right
+  // step forward through the list, Up/Left step back — the arrow keys still
+  // walk every row, and they can no longer desync from what is on screen.
+  const rowFocused = (n) => page.waitForFunction((i) => {
+    const rows = [...document.querySelectorAll('.today-list .work-row')];
+    return document.activeElement === rows[i];
+  }, { timeout: 4000 }, n);
+  await page.evaluate(() => document.querySelector('.today-list .work-row').focus());
   await page.keyboard.press('ArrowDown');
-  await page.waitForFunction(() => {
-    const cards = [...document.querySelectorAll('.timer-board .timer-card')];
-    return document.activeElement === cards[1];
-  }, { timeout: 4000 });
-
-  // ArrowRight from the top-left card: must land in the NEXT COLUMN (left
-  // edge further right), not on cards[1] (which sits below in the same
-  // column — the old flat index+1 target).
-  await page.evaluate(() => document.querySelector('.timer-board .timer-card').focus());
-  const leftBefore = await page.evaluate(() => document.activeElement.getBoundingClientRect().left);
+  await rowFocused(1);
   await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((prevLeft) => {
-    const el = document.activeElement;
-    return el && el.classList.contains('timer-card') && el.getBoundingClientRect().left > prevLeft + 4;
-  }, { timeout: 4000 }, leftBefore);
+  await rowFocused(2);
+  await page.keyboard.press('ArrowUp');
+  await rowFocused(1);
+  await page.keyboard.press('ArrowLeft');
+  await rowFocused(0);
 
-  await clickText('.seg button', 'By group'); // restore for later steps
+  // Shift+Enter still edits the focused row's TIMER, and Ctrl+Enter still
+  // opens its entry — the two chords the merge could most easily have lost.
+  await page.evaluate(() => document.querySelector('.today-list .timer-row').focus());
+  await page.keyboard.down('Shift');
+  await page.keyboard.press('Enter');
+  await page.keyboard.up('Shift');
+  await waitFor('.modal input[placeholder="e.g. Acme — research"]');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.today-list .timer-row')]
+      .find((c) => c.textContent.includes('Acme research'));
+    row.focus();
+  });
+  await page.keyboard.down('Control');
+  await page.keyboard.press('Enter');
+  await page.keyboard.up('Control');
+  await waitFor('.modal-wide');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+
+  await setListSeg('Group', 'By group'); // restore for later steps
+});
+
+// The teardown's §6/E9 finding: the inline narrative editor — the fastest path
+// in the app — had NO discoverable affordance (cursor:text plus a :hover tint,
+// both pointer-only). It is a real control on the row now, and this proves the
+// control exists and still edits in place.
+await step('narrative is editable in place from the row, with a visible control', async () => {
+  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  await waitFor('.today-list');
+  const has = await page.evaluate(() =>
+    !!document.querySelector('.today-list .narrative-editable, .today-list .narrative-write'));
+  if (!has) throw new Error('no visible narrative control on any row of today\'s work');
+  await page.evaluate(() => {
+    const el = document.querySelector('.today-list .narrative-editable, .today-list .narrative-write');
+    el.scrollIntoView({ block: 'center' });
+    el.click();
+  });
+  await waitFor('.today-list .narrative-inline-input');
+  const focused = await page.evaluate(() =>
+    document.activeElement === document.querySelector('.today-list .narrative-inline-input'));
+  if (!focused) throw new Error('the inline narrative editor did not take focus');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.today-list .narrative-inline-input'), { timeout: 4000 });
 });
 
 // 2026-08-05 feedback, both halves: mouse-selecting text in an inline edit
 // used to start a drag (a draggable ancestor eats the selection gesture), and
 // a relocation gave no hint where the timer would land.
-await step('drag: an open inline edit suspends it; hovering a card opens a drop slot', async () => {
-  await clickText('.timer-tab', 'All');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-board .timer-card').length >= 2,
+await step('drag: an open inline edit suspends it; hovering a row opens a drop slot', async () => {
+  await setOnly('');
+  // Drag-and-drop reorders the MANUAL order, so put the list in it first —
+  // otherwise the reorder would be written to the server and be invisible on
+  // screen, which is worse than not having the feature. (A drop switches the
+  // list to manual on its own too; this just makes the assertion legible.)
+  await setListSeg('Order', 'Manual');
+  await page.waitForFunction(() => document.querySelectorAll('.today-list .timer-row').length >= 2,
     { timeout: 4000 });
 
   // (a) an open rename input takes the card out of the drag system entirely
-  await page.click('.timer-board .timer-card .timer-name');
-  await waitFor('.timer-board .timer-card .name-input');
-  const whileEditing = await page.$eval('.timer-board .timer-card',
+  await page.click('.today-list .timer-row .timer-name');
+  await waitFor('.today-list .timer-row .name-input');
+  const whileEditing = await page.$eval('.today-list .timer-row',
     (el) => ({ draggable: el.getAttribute('draggable'), editing: el.classList.contains('editing') }));
   if (whileEditing.draggable !== 'false' || !whileEditing.editing) {
     throw new Error(`card still draggable while renaming: ${JSON.stringify(whileEditing)}`);
   }
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.timer-board .name-input'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.today-list .name-input'), { timeout: 4000 });
   await page.waitForFunction(() =>
-    document.querySelector('.timer-board .timer-card').getAttribute('draggable') === 'true',
+    document.querySelector('.today-list .timer-row').getAttribute('draggable') === 'true',
     { timeout: 4000 });
 
   // (b) drag the SECOND card over the first: a slot opens immediately before
   // the first card (dropOn inserts before its target), and the dragged card
   // fades. Then drop, confirm the reorder, and drag it back so later steps
   // see the original order.
-  const names = () => page.$$eval('.timer-board .timer-card .timer-name', (els) => els.map((e) => e.textContent));
+  const names = () => page.$$eval('.today-list .timer-row .timer-name', (els) => els.map((e) => e.textContent));
   const before = await names();
   const dragCardToCard = (fromName, toName, drop) => page.evaluate((from, to, doDrop) => {
-    const card = (n) => [...document.querySelectorAll('.timer-board .timer-card')]
+    const card = (n) => [...document.querySelectorAll('.today-list .timer-row')]
       .find((c) => c.querySelector('.timer-name')?.textContent === n);
     const src = card(from); const tgt = card(to);
     if (!src || !tgt) throw new Error(`drag: missing card (${from}=${!!src}, ${to}=${!!tgt})`);
@@ -1083,32 +1183,44 @@ await step('drag: an open inline edit suspends it; hovering a card opens a drop 
 
   await dragCardToCard(before[1], before[0], false);
   await page.waitForFunction((firstName) => {
-    const slot = document.querySelector('.timer-board .timer-drop-slot');
+    const slot = document.querySelector('.today-list .timer-drop-slot');
     const next = slot && slot.nextElementSibling;
     return !!slot
-      && next?.classList.contains('timer-card')
+      && next?.classList.contains('work-row')
       && next.querySelector('.timer-name')?.textContent === firstName
-      && document.querySelectorAll('.timer-board .timer-card.dragging').length === 1;
+      && document.querySelectorAll('.today-list .timer-row.dragging').length === 1;
   }, { timeout: 4000 }, before[0]);
   await shot('drop-slot');
 
   await dragCardToCard(before[1], before[0], true);
   await page.waitForFunction((want) => {
-    const now = [...document.querySelectorAll('.timer-board .timer-card .timer-name')].map((e) => e.textContent);
+    const now = [...document.querySelectorAll('.today-list .timer-row .timer-name')].map((e) => e.textContent);
     return now[0] === want && !document.querySelector('.timer-drop-slot');
   }, { timeout: 4000 }, before[1]);
 
   await dragCardToCard(before[0], before[1], true);   // put it back
-  await page.waitForFunction((want) => [...document.querySelectorAll('.timer-board .timer-card .timer-name')]
+  await page.waitForFunction((want) => [...document.querySelectorAll('.today-list .timer-row .timer-name')]
     .map((e) => e.textContent).join('|') === want, { timeout: 4000 }, before.join('|'));
+
+  // "Move to group…" and "Move up/down in the list" on the row menu are the
+  // TOUCH equivalents of the drag — dragging is not a touch path (teardown E1).
+  await page.click('.today-list .timer-row button[title="Timer menu"]');
+  await waitFor('.ctx-menu');
+  const hasMove = await page.evaluate(() => [...document.querySelectorAll('.ctx-menu button')]
+    .some((b) => (b.getAttribute('title') || '').includes('Move down in the list')));
+  if (!hasMove) throw new Error('row menu missing the touch reorder (Move up/down)');
+  if (!await page.$('.ctx-menu select')) throw new Error('row menu missing the "Group" move-to control');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+  await setListSeg('Order', 'Recent activity');
 });
 
 // 2026-08-06 feedback: multi-select timers, right-click for a batch menu with
 // a batch delete. Right-click on a single card already opened its menu.
 await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears', async () => {
-  await clickText('.timer-tab', 'All');
-  await waitFor('.timer-board .timer-card');
-  const before = await page.$$eval('.timer-board .timer-card', (els) => els.length);
+  await setOnly('');
+  await waitFor('.today-list .timer-row');
+  const before = await page.$$eval('.today-list .timer-row', (els) => els.length);
 
   // Throwaway timers, so the batch delete can't disturb the fixtures later
   // steps count and search on. They land at the end of Ungrouped, in order,
@@ -1123,12 +1235,12 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
     await clickText('.modal button', 'Create');
     await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
   }
-  await page.waitForFunction((want) => document.querySelectorAll('.timer-board .timer-card').length === want,
+  await page.waitForFunction((want) => document.querySelectorAll('.today-list .timer-row').length === want,
     { timeout: 4000 }, before + 3);
 
   // ctrl-click two cards — and the ctrl-click must NOT open the rename input
   const ctrlClick = (name, shift = false) => page.evaluate((n, sh) => {
-    const card = [...document.querySelectorAll('.timer-board .timer-card')]
+    const card = [...document.querySelectorAll('.today-list .timer-row')]
       .find((c) => c.querySelector('.timer-name')?.textContent === n);
     if (!card) throw new Error(`no card named ${n}`);
     card.querySelector('.timer-name').dispatchEvent(new MouseEvent('click', {
@@ -1138,19 +1250,19 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
 
   await ctrlClick(probes[0]);
   await ctrlClick(probes[1]);
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card.selected').length === 2
+  await page.waitForFunction(() => document.querySelectorAll('.timer-row.selected').length === 2
     && !document.querySelector('.name-input')
     && document.querySelector('.timer-selbar')?.textContent.includes('2 selected'), { timeout: 4000 });
 
   // shift-click extends the range to the third card
   await ctrlClick(probes[2], true);
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card.selected').length === 3,
+  await page.waitForFunction(() => document.querySelectorAll('.timer-row.selected').length === 3,
     { timeout: 4000 });
   await shot('multi-select');
 
   // right-click inside the selection → BATCH menu, not the single-timer one
   await page.evaluate((n) => {
-    const card = [...document.querySelectorAll('.timer-board .timer-card')]
+    const card = [...document.querySelectorAll('.today-list .timer-row')]
       .find((c) => c.querySelector('.timer-name')?.textContent === n);
     card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
   }, probes[0]);
@@ -1162,13 +1274,13 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
   await clickText('.ctx-menu .ctx-item', 'Delete 3 timers');
   await waitFor('.modal');
   await clickText('.modal button', 'Delete');
-  await page.waitForFunction((want) => document.querySelectorAll('.timer-board .timer-card').length === want
+  await page.waitForFunction((want) => document.querySelectorAll('.today-list .timer-row').length === want
     && !document.querySelector('.timer-selbar')
     && ![...document.querySelectorAll('.timer-name')].some((el) => el.textContent.startsWith('Batch probe')),
   { timeout: 4000 }, before);
 
   // right-click on a lone card still opens the ordinary single-timer menu
-  await page.evaluate(() => document.querySelector('.timer-board .timer-card')
+  await page.evaluate(() => document.querySelector('.today-list .timer-row')
     .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })));
   await waitFor('.ctx-menu');
   const single = await page.$eval('.ctx-menu', (el) => el.textContent);
@@ -1188,30 +1300,32 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
 
   await page.keyboard.type('meridian', { delay: 20 });
   await page.waitForFunction(() => {
-    const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
+    const names = [...document.querySelectorAll('.timer-row .timer-name')].map((e) => e.textContent);
     return names.length === 1 && names[0] === 'Harbor drafting'; // matched via CLIENT name
   }, { timeout: 4000 });
+  // the count covers every row of today's work now (timers AND entries that no
+  // timer owns), so it is asserted as a shape rather than a fixed total
   const narrowedCount = await page.$eval('.timer-search-wrap .muted', (el) => el.textContent);
-  if (narrowedCount !== '1/5') throw new Error(`match count wrong: ${narrowedCount}`);
+  if (!/^1\/\d+$/.test(narrowedCount)) throw new Error(`match count wrong: ${narrowedCount}`);
 
   // zero matches must not trap the keyboard: over-type past any match, then
   // Backspace back down to a matching query — all via native input editing
   await page.keyboard.type('zzz', { delay: 20 });
-  await page.waitForFunction(() => document.querySelectorAll('.timer-card').length === 0, { timeout: 4000 });
+  await page.waitForFunction(() => document.querySelectorAll('.work-row').length === 0, { timeout: 4000 });
   const zeroCount = await page.$eval('.timer-search-wrap .muted', (el) => el.textContent);
-  if (zeroCount !== '0/5') throw new Error(`match count wrong: ${zeroCount}`);
+  if (!/^0\/\d+$/.test(zeroCount)) throw new Error(`match count wrong: ${zeroCount}`);
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Backspace');
   await page.keyboard.press('Backspace');
   await page.waitForFunction(() => {
-    const names = [...document.querySelectorAll('.timer-card .timer-name')].map((e) => e.textContent);
+    const names = [...document.querySelectorAll('.timer-row .timer-name')].map((e) => e.textContent);
     return names.length === 1 && names[0] === 'Harbor drafting';
   }, { timeout: 4000 });
 
   // repeat `/` while the bar is already open: click a card (focus leaves the
   // input; the bar stays up because the filter is set), press `/` again — it
   // must refocus the input rather than no-op on unchanged searchOpen state.
-  await page.click('.timer-card .timer-clock-raw'); // safe spot — name/tenths/start are all interactive
+  await page.click('.timer-row .timer-clock-raw'); // safe spot — name/tenths/start are all interactive
   await page.waitForFunction(() =>
     document.activeElement !== document.querySelector('.timer-search'), { timeout: 4000 });
   await page.keyboard.press('/');
@@ -1220,9 +1334,9 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
 
   await page.keyboard.press('Escape'); // bar closes, filter clears, focus lands on a card
   await page.waitForFunction(() => !document.querySelector('.timer-search')
-    && document.querySelectorAll('.timer-card').length >= 5, { timeout: 4000 });
+    && document.querySelectorAll('.timer-row').length >= 5, { timeout: 4000 });
   await page.waitForFunction(() =>
-    document.activeElement && document.activeElement.classList.contains('timer-card'), { timeout: 4000 });
+    document.activeElement && document.activeElement.classList.contains('work-row'), { timeout: 4000 });
 });
 
 await step('calendar renders month grid with data', async () => {
@@ -1276,8 +1390,8 @@ await step('custom fields: define on client, entry enforces + carries value', as
 
   // a new entry on the matter renders the field and gates finalize
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await waitFor('.timer-board');
-  await page.keyboard.press('n');
+  await waitFor('.today-list');
+  await pressGlobal('n');
   await waitFor('.modal .cmpicker input');
   await page.click('.modal .cmpicker input');
   await page.type('.modal .cmpicker input', '777888', { delay: 5 });
@@ -1321,9 +1435,13 @@ await step('export view: row actions edit and finalize a not-finalized entry', a
   await page.waitForFunction(() =>
     [...document.querySelectorAll('table.tk tbody tr')].some((r) => r.textContent.includes('export action wiring')));
 
+  // Same two capabilities, where they live now (teardown E8: one primary
+  // action plus one labelled overflow, never five unlabelled ghost icons).
+  // "Edit" is the row's own open affordance — the matter name, exactly as on
+  // the dashboard's entry row; "Finalize" is an item in the row's "⋯" menu.
   await page.evaluate(() => {
     const row = [...document.querySelectorAll('table.tk tbody tr')].find((r) => r.textContent.includes('export action wiring'));
-    row.querySelector('button[title="Edit"]').click();
+    row.querySelector('.ledger-open').click();
   });
   await waitFor('.modal-wide');
   await page.waitForFunction(() => document.body.textContent.includes('export action wiring'));
@@ -1333,8 +1451,10 @@ await step('export view: row actions edit and finalize a not-finalized entry', a
 
   await page.evaluate(() => {
     const row = [...document.querySelectorAll('table.tk tbody tr')].find((r) => r.textContent.includes('export action wiring'));
-    row.querySelector('button[title="Finalize"]').click();
+    row.querySelector('.ledger-more').click();
   });
+  await waitFor('.ctx-menu');
+  await clickText('.ctx-item', 'Finalize this entry');
   await page.waitForFunction(() =>
     ![...document.querySelectorAll('table.tk tbody tr')].some((r) => r.textContent.includes('export action wiring')),
   { timeout: 5000 });
@@ -1375,10 +1495,13 @@ await step('stalled time: banner pill → Export filtered to exactly those entri
   })).json();
 
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+  // The four flat grey chips (whose only affordance was a pointer-only
+  // tooltip) are gone: unfinalized time from a day that is already over gets
+  // its own callout with an explicit action (teardown §3 / D3).
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('.alert-pill')].some((b) => b.textContent.includes('not finalized')));
+    [...document.querySelectorAll('.attn-stale')].some((b) => b.textContent.includes('not finalized')));
   await shot('attention-banner');
-  await clickText('.alert-pill', 'not finalized');
+  await clickText('.attn-stale button', 'Review');
 
   await page.waitForFunction(() =>
     [...document.querySelectorAll('.seg button')].some((b) => b.classList.contains('on') && b.textContent.includes('Not finalized')));
@@ -1439,19 +1562,35 @@ await step('dark mode applies', async () => {
   await shot('dashboard-dark');
 });
 
-await step('timer activity tabs include Yesterday', async () => {
+await step('activity filters (Today / Yesterday / Week / Recent) survive as a list filter', async () => {
+  // They used to be a role="tablist" of activity tabs above the timers — the
+  // wrong component for filtering one panel, and eleven controls a phone had
+  // to scroll past before it could start a timer. Same four windows, now a
+  // segmented control in the list's ⋯ menu, with the active one shown as a
+  // removable pill next to the list title.
   await page.emulateMediaFeatures([]);
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await waitFor('.timer-tabs');
-  const labels = await page.$$eval('.timer-tabs .timer-tab-label', (els) => els.map((e) => e.textContent));
-  for (const want of ['Today', 'Yesterday', 'Week', 'Recent']) {
-    if (!labels.includes(want)) throw new Error(`missing activity tab "${want}" — got: ${labels.join(', ')}`);
+  await openListMenu();
+  const labels = await page.$$eval('.ctx-menu .seg[aria-label="Show"] button', (els) => els.map((e) => e.textContent.trim()));
+  for (const want of ['All', 'Today', 'Yesterday', 'Week', 'Recent']) {
+    if (!labels.includes(want)) throw new Error(`missing activity filter "${want}" — got: ${labels.join(', ')}`);
   }
+  await closeMenu();
+  await setListSeg('Show', 'Yesterday');
+  await page.waitForFunction(() => [...document.querySelectorAll('.filter-pill')]
+    .some((p) => p.textContent.includes('Yesterday')), { timeout: 4000 });
+  // and it is removable in place, without reopening the menu
+  await page.click('.filter-pill');
+  await page.waitForFunction(() => !document.querySelector('.filter-pill'), { timeout: 4000 });
 });
 
-await step('add-todo button: sidebar → note box → TODO entry filed (no screenshot)', async () => {
-  await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await waitFor('.timer-board');
+// Add todo / Run /todo / Float timer left the primary navigation in the
+// ui-overhaul wave (a control that launches a full-permission coding agent is
+// not a lawyer's navigation item) and live in Settings → Tools. Same buttons,
+// same events, same two-click arming — one route further in.
+await step('add-todo button: Settings → Tools → note box → TODO entry filed (no screenshot)', async () => {
+  await page.goto(`${base}/#/settings/tools`, { waitUntil: 'networkidle0' });
+  await waitFor('.tools-list');
   await clickText('.navlink', 'Add todo');
   await waitFor('.feedback-note', 4000);
   // No screenshot preview on this path — the note files on its own.
@@ -1488,10 +1627,16 @@ await step('tk:open-entry event opens the entry editor (float → main app)', as
 // parameter and JSON.stringify(body) died on the circular DOM structure
 // before the request was ever sent. An empty far-past day keeps this
 // side-effect-free: the only success signal is the "Nothing to finalize" toast.
-await step('day summary: button and `s` render the day as plain text', async () => {
+// `#/day/<date>` is a deep link into the Calendar now (teardown §8) — the day
+// is a panel under the month grid, and its rare actions (summary, finalize,
+// download) are the ONE "⋯" menu that screen and the Today screen now share
+// instead of two toolbars arranging the same four words two different ways.
+// Same capabilities, one tap deeper; the assertions below are unchanged.
+await step('day summary: menu item and `s` render the day as plain text', async () => {
   await page.goto(`${base}/#/day/${todayLocal()}`, { waitUntil: 'networkidle0' });
-  await waitFor('.entry-row, .entry-card, .page-head');
-  await clickText('.page-head button', 'Summary');
+  await waitFor('.day-panel .entry-card, .day-panel .blankslate');
+  await page.click('.day-panel-menu');
+  await clickText('.ctx-menu .ctx-item', 'Summary');
   await waitFor('.summary-text');
   const text = await page.$eval('.summary-text', (el) => el.textContent);
   for (const needle of ['Acme lease dispute', '100001-000012', '1.2h', 'Reviewed lease agreement']) {
@@ -1502,7 +1647,7 @@ await step('day summary: button and `s` render the day as plain text', async () 
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.summary-text'), { timeout: 4000 });
   // same summary from the keyboard alone
-  await page.keyboard.press('s');
+  await pressGlobal('s');
   await waitFor('.summary-text');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.summary-text'), { timeout: 4000 });
@@ -1510,7 +1655,9 @@ await step('day summary: button and `s` render the day as plain text', async () 
 
 await step('day view: Finalize day posts cleanly (no circular-JSON crash)', async () => {
   await page.goto(`${base}/#/day/2020-01-01`, { waitUntil: 'networkidle0' });
-  await clickText('.page-head button', 'Finalize day');
+  await waitFor('.day-panel-menu');
+  await page.click('.day-panel-menu');
+  await clickText('.ctx-menu .ctx-item', 'Finalize day');
   await page.waitForFunction(() => document.body.textContent.includes('Nothing to finalize'), { timeout: 4000 });
 });
 
@@ -1518,7 +1665,7 @@ await step('day view: Finalize day posts cleanly (no circular-JSON crash)', asyn
 // so it runs after everything else that reads today's entry/timer state.
 await step('alt+drag feedback: select region → note box → TODO entry filed', async () => {
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
-  await waitFor('.timer-board');
+  await waitFor('.today-list');
   // Synthetic Alt+drag; the launch flag auto-accepts the tab capture, so
   // this exercises the REAL screenshot path end to end.
   await page.evaluate(() => {
@@ -1561,7 +1708,7 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   })).json();
 
   await page.evaluate(() => { document.activeElement?.blur(); });
-  await page.keyboard.press('c');
+  await pressGlobal('c');
   await waitFor('.closeout-card');
   // the just-seeded draft is the newest (highest id) → first card in the sweep
   await page.waitForFunction((name) => document.querySelector('.closeout-card')?.textContent.includes(name),
@@ -1570,7 +1717,7 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   // global-shortcut fence: while the sweep is up, `n` must NOT open the entry
   // editor underneath the overlay (CloseOut's capture listener stops
   // propagation of unhandled keys before app.js's bubble handler sees them)
-  await page.keyboard.press('n');
+  await pressGlobal('n');
   await sleep(300);
   // (`.modal` is the entry-editor panel — the dialog shell moved to the shared
   // .ovl primitive, so the panel, not a per-dialog backdrop, is the tell.)

@@ -1,1 +1,141 @@
-/* runbar — filled in by wave 1. Tokens only: no raw values in this file. */
+/* ============================================================================
+   runbar.css — the persistent running-timer bar (public/js/components/runbar.js).
+
+   The teardown's most serious omission (§7, §D1): the live clock was rendered
+   by the DASHBOARD, so navigating anywhere else hid it — measured `footerH: 0`
+   on calendar, search, stats, cms, export and settings — and in an installed
+   PWA even the tab title, the only other signal, is invisible. This bar exists
+   so a running timer can never be out of sight.
+
+   THE STACKING CONTRACT, decided once, here, because it is the part a later
+   hand will get wrong. Two bars already claim the bottom edge of a phone:
+
+     bottom edge ──┐
+                   │  safe-area inset      (padding inside the nav bar)
+                   │  .botnav              --z-nav      (95)
+                   │  .today-footer        --z-sticky   (90), pushed up by
+                   │                       --shell-nav-total
+                   │  toasts               above both
+   ... 121px, 14% of a 390×844 phone, permanently. A third bottom bar would be
+   indefensible, so the run bar takes the TOP edge, which nothing else claims:
+
+     top edge ─────┐
+                   │  safe-area inset      (padding inside the bar)
+                   │  .runbar              --z-nav      (95)
+
+   Consequences, all deliberate:
+     - it never overlaps the phone's navigation bar or the day footer, and the
+       day footer's own live clock stands down while this bar is up (the rule
+       at the end of this file) so the same seconds are not counted twice ten
+       inches apart;
+     - it clears the sidebar (≥1024px) and the rail (768–1023px) rather than
+       painting over the brand, so the shell still reads as one frame;
+     - it sits below --z-overlay (300), and it is inside .shell — which
+       overlay.js marks `inert` + aria-hidden — so every dialog covers it and
+       nothing in it can be tapped, focused or announced from behind a scrim;
+     - .main gains exactly the bar's height while it is up (.tk-running, set on
+       <html> by the component, next to .tk-overlay-open) so no content is ever
+       trapped underneath it.
+
+   Every value is a token or a composition of tokens.
+   ========================================================================== */
+
+/* THE OFFSET CONTRACT. --runbar-total is how much of the top of the viewport
+   this bar is currently occupying — and it is 0 whenever no timer is running,
+   so anything that pins itself to the top of the scrollport can offset by it
+   unconditionally:
+
+       position: sticky; top: calc(var(--runbar-total) + var(--space-2));
+
+   Any module that sticks something to the top MUST do that, or it will hide
+   under this bar the moment a timer starts. (Known outstanding case at the
+   time of writing: the entry ledger's bulk-action bar, an inline
+   `position: sticky; top: 8px` in views/search.js — flagged for its owner,
+   who is rebuilding that surface in this same wave.) */
+:root {
+  /* A 44px touch row plus a little air; on a phone the row itself is the
+     44px minimum plus its own padding, so the bar is a step taller. */
+  --runbar-h: calc(var(--tap-min) + var(--space-1));
+  --runbar-safe-t: env(safe-area-inset-top, 0px);
+  --runbar-total: 0px;
+}
+:root.tk-running {
+  --runbar-total: calc(var(--runbar-h) + var(--border-w) + var(--runbar-safe-t));
+}
+
+.runbar {
+  position: fixed; top: 0; left: 0; right: 0;
+  z-index: var(--z-nav);
+  display: flex; align-items: center;
+  gap: var(--gap-inline);
+  height: calc(var(--runbar-h) + var(--runbar-safe-t));
+  padding: 0 var(--page-gutter);
+  padding-top: var(--runbar-safe-t);
+  background: var(--surface-1);
+  border-bottom: var(--border-w) solid var(--border);
+  box-shadow: var(--shadow-1);
+  animation: runbar-in var(--dur-base) var(--ease-out);
+}
+@keyframes runbar-in { from { opacity: 0; transform: translateY(calc(var(--space-2) * -1)); } }
+
+/* Something is happening RIGHT NOW — tokens.css §--live. A ~2s ambient loop,
+   expressed as a multiple of the slowest one-shot duration because the motion
+   tokens describe transitions, not repeats (same convention as .agent-live). */
+.runbar-live {
+  flex: none;
+  width: var(--space-2); height: var(--space-2);
+  border-radius: var(--radius-circle);
+  background: var(--live);
+  animation: runbar-pulse calc(var(--dur-slow) * 7) var(--ease-standard) infinite;
+}
+@keyframes runbar-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) {
+  .runbar { animation: none; }
+  .runbar-live { animation: none; }
+}
+
+.runbar-name {
+  min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-primary);
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: var(--fw-semibold); letter-spacing: var(--ls-body);
+}
+
+.runbar-clock { flex: none; color: var(--live-strong); }
+
+.runbar-gap { flex: 1 1 auto; }
+
+.runbar-stop { flex: none; font-weight: var(--fw-semibold); }
+.runbar-stop:hover { border-color: var(--border-strong); }
+.runbar-pop { flex: none; }
+
+/* Room for the bar. Mirrors shell.css's own .main padding steps, and only ever
+   changes the top one. */
+.tk-running .main { padding-top: calc(var(--runbar-total) + var(--space-6)); }
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .runbar { left: var(--shell-rail-w); }
+}
+@media (min-width: 1024px) {
+  .runbar { left: var(--sidebar-w); }
+}
+
+@media (max-width: 767px) {
+  /* The Stop button is a real 44px target here (base.css tier 2), so the bar
+     grows to hold it rather than clipping it. */
+  :root { --runbar-h: calc(var(--control-h-touch) + var(--space-2)); }
+  .tk-running .main { padding-top: calc(var(--runbar-total) + var(--space-5)); }
+  /* Document picture-in-picture is a desktop-Chrome capability; the control
+     for it has no business taking a thumb-sized slot on a phone that cannot
+     use it. It stays in Settings → Tools on every platform. */
+  .runbar-pop { display: none; }
+}
+
+/* WHO OWNS WHAT, so the two bars never say the same thing twice: this bar owns
+   the LIVE CLOCK and Stop, on every screen; the dashboard's day footer
+   (components/todayfooter.js) owns the day's filed total and "Close the day",
+   on the one screen where a day is being closed. That split is the teardown's
+   own (§7, §E4) and both modules were written to it in this wave — there is no
+   CSS here suppressing anything the footer renders, and there should never
+   need to be. */

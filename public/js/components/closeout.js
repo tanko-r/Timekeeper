@@ -13,6 +13,10 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 // end, a single Finalize & export action closes the day. Keys: Enter accept
 // · e edit (opens the full editor, closes the sweep) · ↓ skip · Esc quit
 // (nothing lost — drafts stay drafts either way).
+//
+// All four of those outcomes are labelled buttons, not just keys. Quit used to
+// be the header ✕ alone — accessible name "Close" — so three of the four
+// choices were named and the fourth was an anonymous glyph.
 export function CloseOut({ onClose, openEditor }) {
   const [cards, setCards] = useState(null); // null = loading; frozen at open
   const [date, setDate] = useState(null);
@@ -296,21 +300,37 @@ export function CloseOut({ onClose, openEditor }) {
           </div>` : html`
           <${GhostInput} multiline rows=${3} value=${text} suggestions=${phrases} expand=${expand}
             placeholder="What did you do?" onChange=${setText} />`}
-        ${/* Every key this step answers to is a real, tappable control — the
-              <kbd> chips ride inside their own button and only where there is
-              a keyboard to press. Quit is the ✕ in the header. */''}
+        ${/* The reassurance the sweep needs BEFORE the buttons, not after: it is
+              what makes Quit safe to press, and on a phone it was invisible —
+              the old key legend carried it and the legend is desktop-only.
+              It also has to sit above the action row because on a phone that row
+              is lifted out of the scrolling body and anchored to the sheet, and
+              only the LAST child of .ovl-body is pinned (overlays.css). */''}
+        <p class="closeout-note muted small">Nothing is lost either way — a skipped draft stays a draft.</p>
+        ${/* FOUR OUTCOMES, FOUR LABELS. Accept, Edit and Skip were buttons and
+              the fourth — abandoning the review — was only the header ✕, whose
+              accessible name is the generic "Close": three named choices and one
+              anonymous one, for a decision the lawyer makes as deliberately as
+              the other three. Quit is a peer now, first in the row because the
+              committing action goes last. The ✕ stays as the sheet's ordinary
+              dismiss, and Esc still does it from the keyboard.
+              The <kbd> chips ride inside their own button, hidden at phone width
+              and aria-hidden everywhere, so a screen reader hears "Accept", not
+              "Accept Enter". */''}
         <div class="ovl-actions">
+          <button class="btn" onClick=${() => onClose(changedRef.current)}>
+            Quit<kbd class="ovl-kbd" aria-hidden="true">Esc</kbd>
+          </button>
           <button class="btn" onClick=${skipCurrent}>
-            Skip<kbd class="ovl-kbd">↓</kbd>
+            Skip<kbd class="ovl-kbd" aria-hidden="true">↓</kbd>
           </button>
           <button class="btn" onClick=${editCurrent}>
-            <${Icon} name="edit" size=${16} /> Edit<kbd class="ovl-kbd">e</kbd>
+            <${Icon} name="edit" size=${16} /> Edit<kbd class="ovl-kbd" aria-hidden="true">e</kbd>
           </button>
           <button class="btn btn-primary" onClick=${acceptCurrent}>
-            <${Icon} name="check" size=${16} /> Accept<kbd class="ovl-kbd">Enter</kbd>
+            <${Icon} name="check" size=${16} /> Accept<kbd class="ovl-kbd" aria-hidden="true">Enter</kbd>
           </button>
         </div>
-        <p class="closeout-keys muted small"><kbd>Esc</kbd> quits — nothing is lost either way</p>
       <//>`;
   } else if (phase === 'summary') {
     body = html`
