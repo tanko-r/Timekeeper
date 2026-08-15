@@ -14,6 +14,10 @@
      5. Sizing: control heights, touch minimum, layout widths, gutters
      6. Radii
      7. Colour — light palette (bare :root)
+       7a. THE ACCENT RATION — which blue is allowed to do what
+       7b. Interactive state surfaces — hover / active-option / selected /
+           pressed / disabled, tokenised so dark gets its own values
+       7c. Validation severities
      8. Colour — dark palette (designed separately, not inverted)
      9. Elevation
     10. Focus ring
@@ -293,17 +297,65 @@
   /* -------------------------------------------------------------------------
      7. COLOUR — LIGHT
      A warm near-neutral canvas with pure-white cards (Mercury/Attio both put
-     white content on a slightly tinted page). One accent hue carries
-     everything interactive AND everything billable; non-billable is
-     deliberately NEUTRAL rather than a second accent, so a normal screen runs
-     at accent + at most two semantic colours instead of the six the audit
-     counted.
+     white content on a slightly tinted page).
+
+     ─────────────────────────────────────────────────────────────────────────
+     7a. THE ACCENT RATION — READ THIS BEFORE YOU TYPE var(--accent)
+     ─────────────────────────────────────────────────────────────────────────
+     One hue is not the same as one token. The hue budget below got us down to
+     a single blue, and then that single blue was asked to do six unrelated
+     jobs at once on the dashboard — the primary button fill, every hours
+     figure, the "billable" chip, the target-meter fill, the running-timer card
+     border and the selected navigation item. A critic measuring the rendered
+     pixels put it plainly: "nothing tells the eye which blue thing to act on."
+     That is the axis on which this app lost two of three blind A/B pairs —
+     against Mercury (near-monochrome plus ONE accent reserved for ONE call to
+     action) and against Harvest mobile (cream and black plus one orange).
+
+     So the blue is now RATIONED into three tiers. The tier is chosen by what
+     the thing IS, never by what looks nice:
+
+       TIER 1 · ACTION — the saturated accent.
+         --accent / -hover / -active / -strong / -soft / -subtle
+         Reserved for things the user ACTS ON: the ONE primary (filled) button
+         on a screen, the tonal second-rank button, links, the focused field's
+         border, the active option's leading bar inside an open menu.
+         THE RULE: at most one FILLED saturated-accent surface is visible on a
+         screen at a time. If you are about to paint a second one, the thing
+         you are painting is not the primary action — take tier 2.
+
+       TIER 2 · STRUCTURE — the muted accent (same hue, ~a third of the
+         chroma, same lightness).
+         --accent-muted / -strong / -soft / -subtle, and the role aliases
+         --meter-fill, --nav-selected-*, --live-*, --billable.
+         For things that are BLUE BECAUSE THEY BELONG TO A FAMILY, not because
+         you should click them: meter and bar fills, chart series, the
+         running-timer card and clock, the selected navigation row, the
+         selected calendar day, the "exported" chip. These never compete with
+         the one filled button, because at equal lightness the eye ranks by
+         colourfulness — and they are all a different SHAPE from a button.
+
+       TIER 3 · DATA — no hue at all.
+         --figure / --figure-secondary / --figure-quiet, which are the plain
+         text tokens under different names.
+         Every hours figure, dollar figure, count and total. A number reads as
+         a number through WEIGHT, SIZE and TABULAR FIGURES (§2, §3) — one size
+         step and one weight class above the label that names it. It must
+         never need a hue to rank. Colouring a figure spends the accent on
+         something the user cannot act on and rebuilds the exact ambiguity the
+         critic measured.
+
+       STATE is not a tier. A hover, a pressed control, a highlighted option
+       or a disabled field takes a --state-* token from §7b, never an accent.
+
+     ─────────────────────────────────────────────────────────────────────────
 
      THE HUE BUDGET (wave-0 critic, round 2 — the dashboard was running five
      accent hues at once and lost both A/B pairs on colour restraint):
 
-       BLUE   --accent      the ONE action accent. Every interactive thing,
-                            the running/live state, and billable.
+       BLUE   --accent      the ONE hue, rationed across the three tiers in
+                            §7a: saturated for actions, muted for structure,
+                            absent from data.
        AMBER  --attention   the ONE attention hue. The needs-attention banner,
                             warning-level validation, "finalized then unlocked".
        RED    --danger      error and destruction ONLY: a blocking validation,
@@ -316,9 +368,11 @@
      vocabulary (idle play arrows, the running card, the running clock, the
      footer clock, worked-today) which put a second saturated hue on every
      row of an idle screen, next to a red stop square and a blue primary. The
-     live state is the app's ONE active thing, so it takes the action accent;
-     an idle control takes no hue at all. --status-good survives for screens
-     that genuinely need a good/short/critical SCALE (the calendar's
+     live state is the app's ONE active thing, so it takes the accent — at
+     TIER 2, because a running timer is a state to notice, not a button to
+     press, and it already has the strongest attention channel there is: it
+     moves. An idle control takes no hue at all. --status-good survives for
+     screens that genuinely need a good/short/critical SCALE (the calendar's
      target-attainment marks), never as decoration.
 
      Reach for --live / --attention below rather than picking a --status-*
@@ -330,6 +384,7 @@
        text-muted     / surface-1   5.68:1     / surface-2   4.59:1
        accent as text / surface-1   5.73:1
        text-on-accent / accent      5.73:1
+       accent-muted as text / surface-1 5.98:1 / surface-0 5.29:1
   ------------------------------------------------------------------------- */
   /* Tells the browser which palette to render NATIVE widgets in — unchecked
      checkboxes, radios, the date picker, scrollbars, form autofill. Without
@@ -358,7 +413,8 @@
   --text-on-danger: #ffffff;
   --text-inverse: #f7f6f1;
 
-  /* accent — one hue, four states */
+  /* TIER 1 · ACTION — the saturated accent. §7a: at most ONE filled surface
+     in this tier is visible on a screen at a time. */
   --accent: #2560d0;
   --accent-hover: #1e51b3;
   --accent-active: #194494;
@@ -366,37 +422,133 @@
   --accent-soft: #dbe7fb;        /* filled badge background */
   --accent-subtle: #eef3fd;      /* hover tint on a white surface */
 
-  /* THE SATURATED ACCENT IS FOR ACTIONS. DATA TAKES THIS ONE.
-     (wave-0 critic, round 3: "colour carries no rank because one blue does six
-     unrelated jobs — the primary button fill, every hours figure, the billable
-     chip, the target-meter fill, the running-timer card border, and the
-     selected nav item. Nothing tells the eye which blue thing to act on.")
-     --accent-muted is the same hue drained of saturation: it still reads as
-     "this is the billable/target family" but it never competes with the one
-     filled button on the screen. Bars, meter fills, calendar marks and hour
-     figures take it; buttons and links never do.
-     Contrast as text: light 5.98:1 on surface-1, 4.84 on surface-2;
-     dark 6.99:1 on surface-1, 6.22 on surface-2. */
+  /* TIER 2 · STRUCTURE — the same hue at roughly a third of the chroma and
+     the same lightness. It still reads as "this belongs to the blue family"
+     and it can carry a large area without shouting, because at equal
+     lightness the eye ranks two colours by COLOURFULNESS. Nothing in this
+     tier is ever a button.
+       --accent-muted         the ink: meter and bar fills, chart series, the
+                              running-timer border and clock, calendar marks
+       --accent-muted-strong  the same family AS TEXT on a muted-soft fill
+       --accent-muted-soft    a filled chip/badge in this family
+       --accent-muted-subtle  a wash over a large area (a track, a well)
+     Contrast as text:  light 5.98:1 on surface-1, 5.29 on surface-0
+                        dark  6.99:1 on surface-1, 7.62 on surface-0
+     muted-strong on muted-soft:  light 6.25:1, dark 7.17:1
+     as a meter fill against --meter-track: light 4.25:1, dark 5.36:1 —
+     comfortably past the 3:1 WCAG 1.4.11 floor for a meaningful graphic. */
   --accent-muted: #4f6488;
+  --accent-muted-strong: #3d5170;
   --accent-muted-soft: #dde3ee;
+  --accent-muted-subtle: #eef1f6;
 
-  /* The active row in a combobox/listbox — the client/matter picker. Its own
-     token because the generic hover surface could not carry it: in dark,
-     --surface-2 (#262622) against the menu's --surface-raised (#232320) is a
-     3/255 step, so arrow-keying through matters showed the dark-theme user
-     nothing about what Enter would select. This is a real band in both themes
-     (light 1.23:1 against white, dark 1.52:1 against the panel — a 3× jump in
-     luminance) and base.css pairs it with a 2px accent bar at the leading
-     edge so the state survives with no colour vision at all. */
-  --option-active: #dfe8fa;
-  --option-active-mark: var(--accent);
+  /* TIER 3 · DATA — a figure has no hue. These are the text tokens under a
+     name that says why: reach for --figure when you are colouring a NUMBER,
+     so the next person can see at a glance that a figure was never meant to
+     take an accent. Rank comes from --fs-num-* and --fw-num-* (§3), not from
+     colour. Defined here as aliases, so they follow the theme automatically. */
+  --figure: var(--text-primary);
+  --figure-secondary: var(--text-secondary);
+  --figure-quiet: var(--text-muted);
 
-  /* semantic: billable is the muted accent (a figure, not an action);
-     non-billable is neutral on purpose */
-  --billable: #4f6488;
+  /* semantic: billable is the TIER 2 muted accent (a property of a record,
+     not an action); non-billable is neutral on purpose. --billable is an
+     alias so the two can never drift apart — do NOT redeclare it in the dark
+     blocks. */
+  --billable: var(--accent-muted);
   --billable-soft: #dbe7fb;
   --nonbillable: #6a6458;
   --nonbillable-soft: #edeae3;
+
+  /* -------------------------------------------------------------------------
+     7b. INTERACTIVE STATE SURFACES
+
+     A state is not a surface. The old file painted every state out of the
+     SURFACE ramp — hover was --surface-2, pressed was --surface-3 — and that
+     is a light-theme habit that silently breaks in dark. Measured on the
+     rendered pixels:
+
+       light   menu --surface-1  rgb(255,255,255)
+               hovered row --surface-2 rgb(233,231,225)   1.24:1, obvious
+       dark    menu --surface-raised rgb(35,35,32)
+               hovered row --surface-2 rgb(38,38,34)      1.04:1, INVISIBLE
+
+     Three steps out of 255. On the client/matter picker — the app's fastest
+     and most-used input, and the one list (NewCmModal's client list) that has
+     no keyboard navigation at all, so :hover is the ONLY state it can show.
+     That is the "dark is one design, not a filter" failure in its purest
+     form: the light ramp happens to have a big gap between step 1 and step 2,
+     the dark ramp does not, and the state inherited whichever gap it landed on.
+
+     So every state now has its OWN token with its OWN value per theme, chosen
+     against the surfaces it actually sits on (--surface-0 canvas, --surface-1
+     card, --surface-raised menu/dialog) rather than against one of them.
+
+     THE BAR: a state must reach at least a 1.12:1 contrast ratio — a 12%
+     step in adjusted luminance — against EVERY surface it can land on. Worst
+     case measured across all three hosts:
+
+                        light                       dark
+       hover            1.17:1  (was 1.09)          1.31:1  (was 1.04)
+       selected         1.15:1                      1.32:1
+       option-active    1.26:1  (was 1.09)          1.70:1  (was 1.52)
+       pressed          1.36:1                      1.76:1
+       disabled/readonly fill, measured against the ENABLED field it replaces
+       (that is the comparison the eye makes, in a form beside live fields):
+                        1.24:1                      1.13:1
+
+     Direction is per theme, not shared: in light a state DARKENS the surface,
+     in dark it LIGHTENS it. Only disabled goes the same way in both (a dead
+     control sinks below its field in either theme), which is why it is the
+     one state whose dark value is darker rather than lighter.
+
+     COLOUR IS NEVER THE ONLY CHANNEL. Every highlight below is paired in
+     base.css with a leading bar (--state-mark-w wide) at the start of the
+     row, so the state survives with no colour vision at all — the same shape
+     cue the sidebar's active row uses. */
+  --state-hover: #e3e0d6;        /* pointer resting on it — a hint */
+  --state-selected: #dbe2ef;     /* this row IS the current choice */
+  --state-pressed: #d5d0c2;      /* finger/mouse is down on it right now */
+  --state-disabled-bg: #eae7de;
+  --state-disabled-fg: #6f6b5f;  /* 4.31:1 on the disabled fill */
+  --state-disabled-border: #d5d1c4;
+  --state-readonly-bg: #eae7de;  /* same well as disabled; the TEXT differs —
+                                    readonly keeps --text-secondary at 6.14:1,
+                                    disabled drops to --state-disabled-fg */
+  /* One number for every "this control is off" opacity, so no module invents
+     its own. Buttons use it instead of a flat fill because it has to work
+     over four variants at once (secondary, primary, tonal, danger). */
+  --state-disabled-opacity: 0.5;
+
+  /* THE ACTIVE OPTION in a combobox/listbox — what Enter will select. It gets
+     its own token above --state-selected because it is a MOVING cursor rather
+     than a settled choice, and it has to out-rank the pointer hover sitting
+     under it. It is also the one state that keeps the TIER 1 accent for its
+     leading bar: inside an open menu, the active option is the primary action
+     of that moment, and a 2px sliver is a different weight class from a
+     filled button. */
+  --option-active: #cbd9f4;
+  --option-active-mark: var(--accent);
+  --state-selected-fg: var(--text-primary);
+  --state-selected-mark: var(--accent-muted);   /* a settled choice: tier 2 */
+  --state-mark-w: var(--border-w-thick);
+
+  /* Role aliases, so a feature module never has to decide which tier a job
+     belongs to. These are aliases of tokens defined for BOTH themes above, so
+     one declaration resolves correctly in either theme — do not copy them
+     into the dark blocks. */
+  --meter-track: var(--surface-3);
+  --meter-fill: var(--accent-muted);
+  --meter-fill-soft: var(--accent-muted-soft);
+  --nav-selected-bg: var(--state-selected);
+  --nav-selected-fg: var(--text-primary);
+  --nav-selected-mark: var(--accent-muted);
+  /* A ticked checkbox or radio. TIER 2: ticking a box is a SELECTION, and the
+     rule in §7a is that at most one filled saturated surface is on screen at
+     a time — the Export screen's column of ticked boxes would break that on
+     its own. The tick mark keeps --text-on-accent (5.98:1 light, 7.5:1 dark
+     against the muted fill), so the glyph is unaffected. */
+  --control-checked: var(--accent-muted);
 
   /* the four target-attainment states, in escalating order */
   --status-good: #116b35;        /* on target */
@@ -419,19 +571,62 @@
 
        --live       something is happening RIGHT NOW: a running timer, its
                     card, its clock, its chip, the footer's running clock.
+                    TIER 2 (§7a), not tier 1: a running timer is a state to
+                    notice, not a button to press, and it already carries the
+                    strongest attention channel in the app — the digits move.
+                    Leaving it saturated put a second full-strength blue on
+                    every dashboard next to the one primary button, which is
+                    two of the six jobs the critic counted.
        --attention  something needs a look but nothing is broken: the
                     needs-attention banner, a warning-level validation row,
                     an entry that was finalized and then unlocked.
        --transport  an idle start/stop control. It is a button, not a status,
                     so it is the same neutral as any other row action until
                     the timer it owns is actually running. */
-  --live: var(--accent);
-  --live-soft: var(--accent-soft);
-  --live-strong: var(--accent-strong);
+  --live: var(--accent-muted);
+  --live-soft: var(--accent-muted-soft);
+  --live-strong: var(--accent-muted-strong);
   --attention: var(--status-warning);
   --attention-soft: var(--status-warning-soft);
   --transport: var(--text-secondary);
   --transport-hover: var(--text-primary);
+
+  /* -------------------------------------------------------------------------
+     7c. VALIDATION SEVERITIES
+
+     Three, and only three, because that is what the day-close gate actually
+     distinguishes. The names say what happens, not how loud it is:
+
+       block  this stops the day being finalized      RED   (--danger family)
+       warn   finalizing still works, but look        AMBER (--attention)
+       info   context, nothing is wrong               TIER 2 muted blue
+
+     `info` is the one that needed a real value rather than another grey. A
+     neutral grey slab reads as a loading skeleton, which is exactly what the
+     critic saw ("full-bleed flat grey slabs about 900px wide … the shape
+     reads as a progress bar"). A cool, low-chroma blue-grey separates it from
+     the warm page and ties it to the muted-accent family without spending a
+     hue on it.
+
+     Each severity carries THREE redundant channels, per WCAG 1.4.1: the tint,
+     the text colour, and a mark at the leading edge — plus the icon the
+     markup supplies. Colour is never load-bearing on its own.
+
+     Text on its own tint:  block  light 4.89:1  dark 5.55:1
+                            warn   light 5.42:1  dark 6.90:1
+                            info   light 6.67:1  dark 7.93:1
+     Tint against a card:   block  1.27 / 1.07   warn 1.18 / 1.17
+                            info   1.21 / 1.22                          */
+  --valid-block-bg: var(--status-critical-soft);
+  --valid-block-fg: var(--status-critical);
+  --valid-block-mark: var(--status-critical);
+  --valid-warn-bg: var(--attention-soft);
+  --valid-warn-fg: var(--attention);
+  --valid-warn-mark: var(--attention);
+  --valid-info-bg: #e6eaf1;
+  --valid-info-fg: var(--accent-muted-strong);
+  --valid-info-mark: var(--accent-muted);
+  --valid-mark-w: 3px;
 
   /* scrims for anything that dims the page behind an overlay. ONE value; the
      old file had three different opacities for the same idea. */
@@ -578,6 +773,12 @@
      - the status hues are lifted and desaturated; the light-theme greens and
        reds are chosen for contrast against white and go muddy on black.
      - elevation switches from black blur to a hairline light ring.
+     - the INTERACTIVE STATES (§7b) are their own values, not the surface
+       ramp. The light ramp has a wide gap between --surface-1 and
+       --surface-2 (1.24:1) and the dark ramp has almost none (1.04:1 against
+       a raised menu), so a state built out of surfaces works in one theme and
+       vanishes in the other. Each state carries its own dark value chosen
+       against the surfaces it can actually land on.
    Both selectors below carry the SAME declarations. Edit them together.
    ========================================================================= */
 
@@ -610,10 +811,28 @@
     --accent-subtle: #1a2436;
 
     --accent-muted: #93a7c8;
+    --accent-muted-strong: #b3c4dd;
     --accent-muted-soft: #2c3340;
-    --option-active: #33405c;
+    --accent-muted-subtle: #22262e;
 
-    --billable: #93a7c8;
+    /* 7b. Interactive states, designed for dark rather than inherited from
+       it. In dark a state LIGHTENS its surface; only the inert well (disabled
+       / readonly) darkens, because a dead control sinks below its field in
+       both themes. Worst case across canvas, card and menu: hover 1.31:1,
+       selected 1.32:1, option-active 1.70:1, pressed 1.76:1 — against the
+       1.04:1 the surface ramp used to give the picker's hovered row. */
+    --state-hover: #37372f;
+    --state-selected: #2d3749;
+    --state-pressed: #4a4a40;
+    --state-disabled-bg: #0e0e0c;
+    --state-disabled-fg: #7a786f;
+    --state-disabled-border: #343430;
+    --state-readonly-bg: #0e0e0c;
+    --option-active: #35415e;
+
+    --valid-info-bg: #262c36;
+
+    /* --billable is an alias of --accent-muted on :root; do not redeclare it. */
     --billable-soft: #18325e;
     --nonbillable: #a49b8a;
     --nonbillable-soft: #2b2823;
@@ -672,10 +891,28 @@
   --accent-subtle: #1a2436;
 
   --accent-muted: #93a7c8;
+  --accent-muted-strong: #b3c4dd;
   --accent-muted-soft: #2c3340;
-  --option-active: #33405c;
+  --accent-muted-subtle: #22262e;
 
-  --billable: #93a7c8;
+  /* 7b. Interactive states, designed for dark rather than inherited from
+     it. In dark a state LIGHTENS its surface; only the inert well (disabled
+     / readonly) darkens, because a dead control sinks below its field in
+     both themes. Worst case across canvas, card and menu: hover 1.31:1,
+     selected 1.32:1, option-active 1.70:1, pressed 1.76:1 — against the
+     1.04:1 the surface ramp used to give the picker's hovered row. */
+  --state-hover: #37372f;
+  --state-selected: #2d3749;
+  --state-pressed: #4a4a40;
+  --state-disabled-bg: #0e0e0c;
+  --state-disabled-fg: #7a786f;
+  --state-disabled-border: #343430;
+  --state-readonly-bg: #0e0e0c;
+  --option-active: #35415e;
+
+  --valid-info-bg: #262c36;
+
+  /* --billable is an alias of --accent-muted on :root; do not redeclare it. */
   --billable-soft: #18325e;
   --nonbillable: #a49b8a;
   --nonbillable-soft: #2b2823;

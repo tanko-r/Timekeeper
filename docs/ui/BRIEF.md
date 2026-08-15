@@ -152,8 +152,39 @@ Styles live in `public/css/`, split into modules, each loaded by its own
 If you find a hardcoded color, font size, or spacing value outside
 `tokens.css`, that is a defect.
 
+## The standing teardown critic
+
+One principal critic tore the whole app down screen by screen, judging every
+element by the job it does for a lawyer keying time, with authority to say
+DELETE, MERGE, MOVE, RETHINK or NEW about any element or any whole page. Its
+verdict lives in `docs/ui/teardown.md`.
+
+That same critic reviews the whole app again at the end of every wave, holding
+the work against its own original teardown. It re-shoots the app itself and
+answers two questions: did this wave move toward the architecture the teardown
+called for, and did it break anything elsewhere. Its findings rewrite the next
+wave's plan before any more building happens.
+
+So `docs/ui/teardown.md` is not background reading. It is the standard every
+wave is measured against. Read it before you design anything, and if your task
+conflicts with it, say so rather than quietly building the old shape.
+
 ## Working rules for agents in this run
 
+- **Do not edit `public/sw.js`.** Several agents work in this tree at the same
+  time and would collide on it. The orchestrator bumps `CACHE` and syncs the
+  `SHELL` list at each wave boundary. The only exception is a task that
+  explicitly says you own `sw.js`.
+- Every dialog goes through the shared overlay primitive. Do not hand-roll a
+  backdrop, a focus trap, or a scroll lock — a dialog that invents its own is
+  a defect, however good it looks.
+- The screenshot harness measures two mobile fences on every run and records
+  them in `manifest.json`: horizontal overflow (`document.documentElement.
+  scrollWidth` must equal the viewport width) and the 44×44 touch floor for
+  every visible interactive element. Pass `--strict` to make either one exit
+  non-zero. A `<kbd>` hint is not an interactive element and does not satisfy
+  the touch floor — a dialog whose only phone affordance is a keyboard hint
+  passes the fence and still fails the brief.
 - Stay inside the file scope your task names. Another agent owns the rest.
 - Do not revert or rewrite another agent's work to suit your own taste. If
   something adjacent is wrong, say so in your report.

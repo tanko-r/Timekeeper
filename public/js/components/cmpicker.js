@@ -2,6 +2,7 @@ import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel,
 } from '/js/ui.js';
+import { useDismissLayer } from '/js/components/overlay.js';
 
 const SIX_RE = /^\d{6}$/;
 const CM_RE = /^\d{6}-\d{6}$/;
@@ -35,6 +36,13 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
 
+  // The open listbox is a LAYER, not a detail of the input. Registering it with
+  // the overlay primitive is what makes the first Escape close just this list
+  // and leave the entry editor standing (see the dismissal stack in
+  // components/overlay.js); it is also why onKey below has no Escape branch —
+  // the dialog's own capture listener always beat it to the key.
+  useDismissLayer(open, () => setOpen(false), boxRef);
+
   function pick(cm) {
     onChange(cm);
     setOpen(false);
@@ -50,7 +58,8 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
       e.preventDefault();
       if (hover < items.length) pick(items[hover]);
       else if (allowCreate) setCreating(true);
-    } else if (e.key === 'Escape') { setOpen(false); }
+    }
+    // Escape is not handled here — useDismissLayer above owns it.
   }
 
   const favorites = items.filter((c) => c.favorite);
@@ -202,6 +211,7 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
   const [taskBilling, setTaskBilling] = useState(false);
   const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
   const [error, setError] = useState(null);
+  const clientBoxRef = useRef(null);
 
   useEffect(() => { api.get('/api/clients').then(setClients).catch(() => {}); }, []);
 
@@ -219,6 +229,11 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
     && (!newNumber || clientName.trim() !== '');
   const qt = clientQ.trim();
   const qIsText = qt !== '' && !/^[\d\s-]+$/.test(qt);
+  // Same layer rule as CmPicker's own listbox: while this dialog's client list
+  // is down, Escape closes the LIST. A half-filled new-matter form is not
+  // something to lose to a keystroke aimed at a dropdown.
+  const clientListOpen = listOpen && !exact && (matches.length > 0 || qt !== '');
+  useDismissLayer(clientListOpen, () => setListOpen(false), clientBoxRef);
 
   // Show the existing client's own setting once one is chosen, so the checkbox
   // never claims a matter is block-billed when its client is task-billed.
@@ -270,13 +285,13 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
               <span>${clientLabel(picked)}</span>
               <span class="muted mono small">${picked.client_number}</span>
             </button>` : html`
-            <div class="cmpicker">
+            <div class="cmpicker" ref=${clientBoxRef}>
               <input type="search" data-nc-client value=${clientQ} autoFocus
                 placeholder=${wantNew ? '6-digit client number' : 'e.g. 100004 — or a name to search'}
                 onFocus=${() => setListOpen(true)}
                 onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); }}
                 onBlur=${() => setTimeout(() => setListOpen(false), 150)} />
-              ${listOpen && !exact && (matches.length > 0 || qt !== '') ? html`
+              ${clientListOpen ? html`
                 <div class="cmpicker-menu">
                   ${matches.map((c) => html`
                     <div key=${c.id} class="cmpicker-item"

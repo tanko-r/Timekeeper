@@ -39,6 +39,48 @@
    backdrops the wave-0 critic found come straight back. */
 .confirm-message { color: var(--text-secondary); }
 
+/* ---------- the bottom sheet's action row, pinned ----------
+   The sheet's anatomy (Material 3 modal bottom sheet, Primer Dialog's
+   fixed header/footer with a scrolling body) is: grabber, header, SCROLLING
+   body, and an action row that stays put above the safe-area inset. The panel
+   shape, the grabber and the header live with the rest of the .ovl primitive
+   in shell.css; only this last piece is here, because the row belongs to each
+   dialog's own content and shell.css cannot see where a dialog ends.
+
+   Why it is needed, measured rather than assumed: scripts/overlay-fences.mjs
+   opens every dialog at 390×844 and checks that a ≥44×44 control is actually
+   ON SCREEN, not merely present. Before this, the entry editor for an existing
+   entry reported 4 of its 8 real controls on screen — "Save & close",
+   "Finalize" and "Delete" sat below the fold inside the body's own scroll box,
+   so the one action a phone user opens the sheet to perform had to be hunted
+   for. Every other dialog was short enough to hide the defect.
+
+   Sticky rather than a flex footer: the row is authored inside each dialog's
+   children, so there is no DOM seam to hang a real footer on without rewriting
+   nine components. The negative bottom margin cancels the body's bottom
+   padding, which is what stops the row jumping as the body reaches its end;
+   the row then carries the safe-area inset in its own padding, so the buttons
+   never sit under a home indicator. `.row-end` is matched alongside
+   `.ovl-actions` because several dialogs still use the generic utility class
+   for the same row (their e2e selectors bind to it), and a phone user should
+   not be able to tell which one a given dialog picked. */
+@media (max-width: 767px) {
+  .ovl-body > .ovl-actions,
+  .ovl-body > .row-end {
+    position: sticky; bottom: 0; z-index: var(--z-raised);
+    margin-left: calc(var(--space-4) * -1);
+    margin-right: calc(var(--space-4) * -1);
+    margin-bottom: calc((var(--space-5) + var(--shell-safe-b)) * -1);
+    padding: var(--space-3) var(--space-4) calc(var(--space-3) + var(--shell-safe-b));
+    background: var(--surface-raised);
+    border-top: var(--border-w) solid var(--border);
+  }
+  /* A desktop layout device: it exists to push the committing action to the
+     right of a wide row. In a stacked sheet row it would eat a whole line. */
+  .ovl-body > .ovl-actions > .spacer,
+  .ovl-body > .row-end > .spacer { display: none; }
+}
+
 /* Day/range summary — monospace so the wrapped narrative indents line up the
    way they will wherever the text is pasted. pre-wrap (not pre) so a phone
    never has to scroll sideways to read it: Copy takes the string straight

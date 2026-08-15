@@ -88,13 +88,17 @@ const SCREENS = [
   {
     key: 'entry-editor-existing',
     hash: `#/day/${TODAY}`,
+    // The entry card is a plain div: the editor opens from the row's Edit
+    // button (or the inline .narrative-editable), never from the card. This
+    // used to click the card and swallow the resulting timeout with
+    // `.catch(() => {})`, so all four shots of "the existing-entry editor"
+    // were photographs of the day view with no dialog on it — in this wave AND
+    // in the pre-overhaul baseline. Nobody had looked at this dialog for two
+    // waves. No catch now: a dialog that fails to open fails the shot.
     async act(page) {
-      await page.waitForSelector('.entry-row, .entry-card', { timeout: 5000 });
-      await page.evaluate(() => {
-        const el = document.querySelector('.entry-row, .entry-card');
-        el.click();
-      });
-      await page.waitForSelector('.modal', { timeout: 5000 }).catch(() => {});
+      await page.waitForSelector('.entry-card button[title="Edit"]', { timeout: 5000 });
+      await page.evaluate(() => document.querySelector('.entry-card button[title="Edit"]').click());
+      await page.waitForSelector('.ovl-panel', { timeout: 5000 });
       await sleep(400);
     },
   },
@@ -198,6 +202,7 @@ for (const vp of VIEWPORTS) {
       body: JSON.stringify({ theme }),
     });
 
+    let lastHash = null;
     for (const screen of SCREENS) {
       const before = errors.length;
       const name = `${screen.key}.${vp.key}.${theme}.png`;
@@ -205,6 +210,15 @@ for (const vp of VIEWPORTS) {
         await page.goto(`${base}/${screen.hash}`, { waitUntil: 'networkidle0' });
         // Hash-only changes do not reload; force the route every time.
         await page.evaluate((h) => { window.location.hash = h; }, screen.hash);
+        // …and where the NEXT screen shares the hash with the one before it —
+        // day/entry-editor/entry-editor-existing all live on #/day/<today>,
+        // dashboard/shortcuts/quick-capture/closeout all on #/ — neither the
+        // goto nor the hash write is a navigation at all, so the previous
+        // screen's dialog was still standing when the next shot was taken.
+        // That is how the baseline's "existing entry editor" ended up being a
+        // photograph of the NEW-entry modal. A real reload resets the app.
+        if (lastHash === screen.hash) await page.reload({ waitUntil: 'networkidle0' });
+        lastHash = screen.hash;
         await sleep(500);
         // Something on the dashboard autofocuses an input on load, and the
         // global key handler ignores keys typed inside one. Blur first so a

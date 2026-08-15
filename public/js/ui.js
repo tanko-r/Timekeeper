@@ -161,9 +161,13 @@ export function fmtTenths(seconds, mode = 'up') {
 // and the phone bottom-sheet shape all live there, so every dialog in the app
 // gets them from one place. `.modal` / `.modal-wide` stay on the panel: they
 // are the hooks the e2e suite and a few feature modules select by.
-export function Modal({ title, onClose, children, wide }) {
+// `initialFocus` is a selector for the control the dialog should open on, and
+// it is worth passing whenever the dialog has an obvious first job: without it
+// the primitive picks the first focusable that is not the ✕, which is right
+// generally but not always the field the reader came for.
+export function Modal({ title, onClose, children, wide, initialFocus }) {
   return html`
-    <${Overlay} title=${title} onClose=${() => onClose()}
+    <${Overlay} title=${title} onClose=${() => onClose()} initialFocus=${initialFocus}
       size=${wide ? 'lg' : 'md'} className=${'modal' + (wide ? ' modal-wide' : '')}>
       ${children}
     <//>`;

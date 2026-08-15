@@ -24,11 +24,32 @@
      text-on-accent on accent            5.73        6.75
      text-on-danger on danger            6.20        6.44
      accent-strong on accent-soft        6.46        7.48
+     accent-muted (tier 2) as text       5.98        6.99   (on surface-1)
+     accent-muted-strong on -muted-soft  6.25        7.17
      border-input vs surface-1  (3:1)    3.46        3.34
      focus outer vs surface-1   (3:1)   18.96       15.22
      focus inner vs accent fill (3:1)    5.73        7.39
 
    Body text and secondary text clear 4.5:1 on every surface in both themes.
+
+   INTERACTIVE STATES (tokens.css §7b). Every state below is a --state-*
+   token, never a step of the surface ramp, because the two ramps have
+   different gaps: --surface-2 against a white card is 1.24:1 but against a
+   dark raised menu it is 1.04:1 — three values out of 255, which is what the
+   picker's hovered row used to be in dark. Worst-case contrast of each state
+   against ANY surface it can land on (canvas / card / raised menu):
+
+                     LIGHT   DARK      paired non-colour cue
+     hover           1.17    1.31      —  (a hint, not a commitment)
+     selected        1.15    1.32      leading bar, --state-selected-mark
+     option-active   1.26    1.70      leading bar, --option-active-mark
+     pressed         1.36    1.76      —  (transient, under the finger)
+     disabled fill   1.24    1.13      dimmed text + dimmed border
+       (disabled and readonly are measured against the ENABLED field they
+        replace, which is the comparison the eye makes in a form)
+
+   The bar is 1.12:1 — a 12% step in adjusted luminance. Nothing here is
+   below it in either theme.
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
@@ -245,10 +266,15 @@ a:active { color: var(--accent-active); }
   box-shadow: var(--shadow-1);
   transition: var(--transition-control);
 }
-.btn:hover { background: var(--surface-2); border-color: var(--border-strong); }
-.btn:active { background: var(--surface-3); }
+.btn:hover { background: var(--state-hover); border-color: var(--border-strong); }
+.btn:active { background: var(--state-pressed); }
+/* Opacity rather than a flat fill, because one rule has to switch off four
+   variants at once (secondary, primary, tonal, danger) and each has its own
+   fill and foreground. The value is a token so no module invents its own; it
+   was raised from a hardcoded 0.45 because in dark a 0.45 wash left the
+   button's border indistinguishable from the page. */
 .btn:disabled, .btn[aria-disabled="true"] {
-  opacity: 0.45; cursor: default; box-shadow: none;
+  opacity: var(--state-disabled-opacity); cursor: default; box-shadow: none;
 }
 .btn:disabled:hover, .btn[aria-disabled="true"]:hover {
   background: var(--surface-1); border-color: var(--border-input);
@@ -275,26 +301,28 @@ a:active { color: var(--accent-active); }
   background: var(--danger); border-color: var(--danger);
 }
 
-/* Tonal: the emphasis step between primary and secondary. A surface that
-   needs its own committing action while the PAGE's one filled accent button
-   lives somewhere else (the pinned day footer's "Close the day" against the
-   header's "New entry") takes this instead of a second filled accent — same
-   hue, a fraction of the weight, so only one thing on screen is shouting. */
+/* Tonal: the emphasis step between primary and secondary — and it is a RAISED
+   NEUTRAL, deliberately not a second accent.
+
+   It used to be an --accent-soft wash, and the wave-0b critic caught what that
+   cost: "button.btn-tonal ('New timer', a secondary action) and
+   button.navlink.active ('Dashboard', the selected navigation item) both paint
+   the identical fill rgb(24,50,94) — a button and a location indicator are
+   literally the same colour object." Emphasis does not have to be spent in
+   hue. A heavier surface, a stronger edge and a real shadow read as "this one
+   is more important" without adding a seventh accent job to a screen that
+   already has one filled accent button on it. Weight, not colour. */
 .btn-tonal {
-  --btn-fg: var(--accent-strong);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  --btn-fg: var(--text-primary);
+  background: var(--surface-2);
+  border-color: var(--border-strong);
   font-weight: var(--fw-semibold);
-  box-shadow: none;
+  box-shadow: var(--shadow-2);
 }
-.btn-tonal:hover {
-  background: color-mix(in srgb, var(--accent) 22%, var(--surface-1));
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.btn-tonal:active { background: color-mix(in srgb, var(--accent) 30%, var(--surface-1)); }
+.btn-tonal:hover { background: var(--state-hover); border-color: var(--border-strong); }
+.btn-tonal:active { background: var(--state-pressed); box-shadow: var(--shadow-1); }
 .btn-tonal:disabled:hover, .btn-tonal[aria-disabled="true"]:hover {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--surface-2); border-color: var(--border-strong);
 }
 
 .btn-ghost {
@@ -303,9 +331,9 @@ a:active { color: var(--accent-active); }
 }
 .btn-ghost:hover {
   --btn-fg: var(--text-primary);
-  background: var(--surface-2); border-color: transparent;
+  background: var(--state-hover); border-color: transparent;
 }
-.btn-ghost:active { background: var(--surface-3); }
+.btn-ghost:active { background: var(--state-pressed); }
 .btn-ghost:disabled:hover, .btn-ghost[aria-disabled="true"]:hover {
   background: none; border-color: transparent;
 }
@@ -383,9 +411,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 
 input::placeholder, textarea::placeholder { color: var(--text-muted); opacity: 1; }
 
+/* Disabled is an INERT WELL: the control sinks below the enabled fields
+   beside it, in both themes. That direction is the same in light and dark on
+   purpose — it is the one state where "recede" means the same thing to both
+   palettes — and it is measured against the enabled field it replaces
+   (light 1.24:1, dark 1.13:1), because that is the comparison the eye makes
+   when a disabled field sits in a form next to live ones. */
 input:disabled, select:disabled, textarea:disabled {
-  background: var(--surface-2); color: var(--text-muted); cursor: not-allowed;
-  border-color: var(--border);
+  background: var(--state-disabled-bg); color: var(--state-disabled-fg);
+  cursor: not-allowed; border-color: var(--state-disabled-border);
 }
 
 /* Numbers in a field are tabular so a column of hours lines up. */
@@ -410,13 +444,19 @@ textarea {
   line-height: var(--lh-body);
   resize: vertical;
 }
-textarea[readonly] { background: var(--surface-2); color: var(--text-secondary); }
+/* Readonly is the SAME well as disabled with FULL-STRENGTH text: you can read
+   and copy it, you just cannot type into it. The well says "inert", the text
+   colour says which kind of inert — --text-secondary at 6.14:1 (light) and
+   9.38:1 (dark) against --state-disabled-fg's 4.3:1. */
+textarea[readonly], input[readonly] {
+  background: var(--state-readonly-bg); color: var(--text-secondary);
+}
 
 /* Checkboxes and radios. accent-color themes the native control in both
    themes, which keeps the platform's own focus, hover and indeterminate
    behaviour instead of reimplementing it on a pseudo-element. */
 input[type="checkbox"], input[type="radio"] {
-  accent-color: var(--accent);
+  accent-color: var(--control-checked);
   width: var(--checkbox-size); height: var(--checkbox-size);
   margin: 0; flex: none; cursor: pointer;
 }
@@ -506,7 +546,13 @@ input.input-narrow { width: var(--field-w-narrow); }
   color: var(--text-primary); background: var(--surface-2);
   border-color: var(--border-strong);
 }
-.chip-exported { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); background: var(--accent-subtle); }
+/* Sent. A status, not an action, so TIER 2 (§7a) — it used to take the
+   saturated accent, which put a second full-strength blue on the Export
+   screen beside the one primary button. */
+.chip-exported {
+  color: var(--accent-muted); background: var(--accent-muted-subtle);
+  border-color: color-mix(in srgb, var(--accent-muted) 45%, transparent);
+}
 /* finalized once, then unlocked — it looks done everywhere else, so say so */
 .chip-reverted { color: var(--attention); border-color: color-mix(in srgb, var(--attention) 45%, transparent); background: var(--attention-soft); }
 
@@ -560,7 +606,7 @@ table.tk td {
 }
 /* Row hover is always on, even for non-interactive rows — it is how a reader
    keeps their place scanning a wide table (Carbon's rule). */
-table.tk tr:hover td { background: var(--surface-2); }
+table.tk tr:hover td { background: var(--state-hover); }
 table.tk tr.clickable { cursor: pointer; }
 /* Numeric columns: any cell whose content is a figure should carry .tnum or
    .figure-*; this makes the common case free. */
@@ -616,8 +662,8 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
   .table-cards table.tk tbody tr:hover td { background: none; }
 }
 
-/* ---------------------------------------------------------------------------
-   Inline validation — a MESSAGE, sized to its message.
+/* ===========================================================================
+   VALIDATION MESSAGE — the primitive, three severities, two densities.
 
    The wave-0 critic: "validation messages render as full-bleed flat grey slabs
    roughly 900px wide with a small icon at the left ('Narrative is empty.').
@@ -625,39 +671,111 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
    and two stacked slabs on one card make the card look broken. The tiny
    coloured left edge is the only thing carrying severity."
 
-   Both halves are answered here. SHAPE: the row is inline-flex and the list
-   aligns to the start, so a five-word finding is a five-word chip and never a
-   900px bar. SEVERITY: a tint derived from the severity token plus text in
-   that same colour — Primer's InlineMessage model — instead of a grey field
-   with a 4px rule. Colour is still never the only channel: the icon in the
-   markup (⛔ / ⚠️) says the same thing, per component-notes §8.
+   THE SHAPE. A message is as wide as its message. The list is a flex column
+   with `align-items: flex-start`, and each item is `inline-flex` with
+   `width: fit-content`, so a five-word finding is a five-word chip. Nothing
+   here can stretch to the width of its container, which is what made the old
+   version read as a skeleton row.
 
-   Contrast of the coloured text on its own tint: light 4.89:1 (block) and
-   5.42:1 (warn); dark 5.55:1 and 6.90:1.
---------------------------------------------------------------------------- */
+   THE SEVERITIES. Three, because that is what the day-close gate actually
+   distinguishes (tokens.css §7c). The class names are `level-<level>` and the
+   levels come straight off the server's finding objects, so a new level is a
+   token pair here and nothing else:
+
+     .level-block  ⛔  this stops the day being finalized     red
+     .level-warn   ⚠️   finalizing works; look at this first   amber
+     .level-info   ℹ️   context; nothing is wrong              muted blue
+
+     `info` is the default — a bare .validation-item with no level class gets
+     it — so a finding whose level the server has not classified still renders
+     as a message rather than as an unstyled grey slab.
+
+   FOUR REDUNDANT CHANNELS, so colour is never load-bearing (WCAG 1.4.1):
+   the tint, the text colour, a 3px mark at the leading edge, and the icon the
+   markup supplies. A colour-blind reader gets the icon and the mark; a
+   greyscale reader gets the icon, the mark and the tint's lightness.
+
+   TWO DENSITIES.
+     default            a message in the body of a card or a dialog
+     .validation-list.compact  a row of findings under a list item — smaller
+                        type, tighter box; this is the form used inside the
+                        day list and the close-out sheet
+     .validation-inline a single finding sitting beside a field: no fill at
+                        all, just the icon and the coloured text, so it reads
+                        as an annotation on the field rather than as a block
+
+   Contrast of the coloured text on its own tint:
+     block  light 4.89:1  dark 5.55:1
+     warn   light 5.42:1  dark 6.90:1
+     info   light 6.67:1  dark 7.93:1
+   ========================================================================= */
 .validation-list {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: var(--space-1); margin: var(--space-2) 0;
+  /* The list must not stretch either, or a single item inside a grid cell
+     inherits the cell's width and the slab comes back. */
+  max-width: 100%;
 }
 .validation-item {
-  display: inline-flex; gap: var(--space-2); align-items: baseline;
-  max-width: 100%;
+  /* `width: fit-content` alongside inline-flex: inline-flex alone still
+     stretches when the list is a flex/grid child with `align-items: stretch`
+     upstream, and the old rule relied on the list's alignment to save it. */
+  display: inline-flex; width: fit-content; max-width: 100%;
+  gap: var(--space-2); align-items: baseline;
   padding: var(--space-1) var(--space-3);
+  padding-left: calc(var(--space-3) + var(--valid-mark-w));
   border-radius: var(--radius-sm);
   font-size: var(--fs-label); line-height: var(--lh-label);
-  background: var(--surface-2); color: var(--text-secondary);
+  /* The leading severity mark. A border-image-free inset shadow, so it hugs
+     the rounded corner instead of squaring it off. */
+  box-shadow: inset var(--valid-mark-w) 0 0 var(--valid-mark, var(--valid-info-mark));
+  background: var(--valid-bg, var(--valid-info-bg));
+  color: var(--valid-fg, var(--valid-info-fg));
 }
 .validation-item.level-block {
-  background: var(--status-critical-soft); color: var(--status-critical);
+  --valid-bg: var(--valid-block-bg);
+  --valid-fg: var(--valid-block-fg);
+  --valid-mark: var(--valid-block-mark);
 }
 .validation-item.level-warn {
-  background: var(--attention-soft); color: var(--attention);
+  --valid-bg: var(--valid-warn-bg);
+  --valid-fg: var(--valid-warn-fg);
+  --valid-mark: var(--valid-warn-mark);
 }
-.validation-icon { flex: none; }
+.validation-item.level-info {
+  --valid-bg: var(--valid-info-bg);
+  --valid-fg: var(--valid-info-fg);
+  --valid-mark: var(--valid-info-mark);
+}
+/* The icon slot. Fixed width so a block message and a warn message beside it
+   line their text up, and never allowed to shrink or wrap away — it is the
+   channel that carries severity when colour cannot. */
+.validation-icon {
+  flex: none; width: var(--icon-md);
+  font-size: var(--fs-caption); line-height: inherit;
+  text-align: center;
+}
+
+/* Compact — the form used under a list row. */
 .validation-list.compact .validation-item {
   padding: var(--space-0-5) var(--space-2);
+  padding-left: calc(var(--space-2) + var(--valid-mark-w));
   font-size: var(--fs-caption); line-height: var(--lh-caption);
 }
+
+/* Inline — an annotation on a field. No fill, no mark; the icon and the
+   colour carry it, and it sits on the field's own background so it cannot
+   read as a separate block. */
+.validation-inline {
+  display: inline-flex; width: fit-content; max-width: 100%;
+  gap: var(--space-1); align-items: baseline;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  padding: 0; background: none; box-shadow: none;
+  color: var(--valid-fg, var(--valid-info-fg));
+}
+.validation-inline.level-block { --valid-fg: var(--valid-block-fg); }
+.validation-inline.level-warn { --valid-fg: var(--valid-warn-fg); }
+.validation-inline.level-info { --valid-fg: var(--valid-info-fg); }
 
 /* ---------------------------------------------------------------------------
    Client/matter picker (a shared combobox, not an editor-only control)
@@ -680,31 +798,63 @@ table.tk td[align="right"], table.tk th[align="right"] { font-variant-numeric: t
   display: flex; gap: var(--gap-inline); align-items: center;
   transition: background-color var(--dur-fast) var(--ease-standard);
 }
-/* Pointer hover — a hint, not a commitment. */
-.cmpicker-item:hover { background: var(--surface-2); }
+/* POINTER HOVER — a hint, not a commitment.
+   This is the rule the critic measured, and it was the app's clearest example
+   of "dark is one design, not a filter". It used to read `background:
+   var(--surface-2)`, a step of the SURFACE ramp. Measured on the rendered
+   pixels, that gave:
+       light  menu rgb(255,255,255) → row rgb(233,231,225)   1.24:1  fine
+       dark   menu rgb(35,35,32)    → row rgb(38,38,34)      1.04:1  invisible
+   Three values out of 255 — because the light surface ramp happens to have a
+   wide gap at that step and the dark ramp does not. --state-hover is a real
+   state token with its own value per theme (tokens.css §7b): 1.32:1 against
+   the light menu, 1.31:1 against the dark one.
 
-/* THE ACTIVE OPTION — what Enter will select. It carries its own token
-   because the generic hover surface could not: the wave-0 critic measured the
-   dark menu at rgb(35,35,32) against a highlighted row of rgb(38,38,34), "a
-   3/255 step", so on the app's fastest and most-used input, arrow-keying
-   through matters told a dark-theme user nothing. --option-active is a real
-   band in both themes (see tokens.css §7) and the bar at the leading edge is
-   the second, colour-free channel — the same shape cue the sidebar's active
-   row uses. Ordered after :hover so the keyboard's idea of "active" wins over
-   whatever the pointer happens to be resting on. */
+   It matters most HERE. The client/matter picker is the app's fastest and
+   most-used input, and NewCmModal's client list (cmpicker.js:282) has no
+   keyboard navigation at all, so :hover is the only state it can ever show. */
+.cmpicker-item:hover { background: var(--state-hover); }
+
+/* THE ACTIVE OPTION — what Enter will select. A moving cursor, not a settled
+   choice, so it out-ranks the pointer hover that may be sitting under it
+   (1.42:1 light / 1.55:1 against the dark menu panel, against hover's 1.32 /
+   1.31) and it is ordered after :hover here so the keyboard always wins.
+
+   Colour is not the only channel: the bar at the leading edge carries the
+   same information with no colour vision at all — the same shape cue the
+   sidebar's active row uses. */
 .cmpicker-item.hover {
   background: var(--option-active);
   color: var(--text-primary);
 }
 .cmpicker-item.hover::before {
   content: ''; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1);
-  width: var(--border-w-thick);
+  width: var(--state-mark-w);
   border-radius: var(--radius-pill);
   background: var(--option-active-mark);
 }
 /* Meta text on the active row: the muted grey is tuned for the menu surface,
-   not for the highlight, where it drops to 3.2:1. One step up restores it. */
+   not for the highlight, where it drops to 3.1:1. One step up restores it
+   (5.34:1 light, 4.93:1 dark). */
 .cmpicker-item.hover .client, .cmpicker-item.hover .num { color: var(--text-secondary); }
+
+/* THE SETTLED CHOICE — an option that IS the current value, as opposed to the
+   one the cursor is on. Keyed off the ARIA attribute rather than a private
+   class so any listbox in the app gets it for free, and so the visual state
+   and the accessibility state cannot drift apart. Quieter than
+   --option-active (tier 2 mark, not tier 1) because "this is already
+   selected" is information, not an action. */
+[role="option"][aria-selected="true"], .is-selected {
+  position: relative;
+  background: var(--state-selected);
+  color: var(--state-selected-fg);
+}
+[role="option"][aria-selected="true"]::before, .is-selected::before {
+  content: ''; position: absolute; left: 0; top: var(--space-1); bottom: var(--space-1);
+  width: var(--state-mark-w);
+  border-radius: var(--radius-pill);
+  background: var(--state-selected-mark);
+}
 /* NAME FIRST, CODE SECOND — the wave-0 critic found this inverted at every
    width: "Acme lease dispute" collapsed to "Acm…" while "100001-000012" kept
    its full 13 characters. The cause is a flexbox detail: `overflow: hidden`
@@ -783,12 +933,15 @@ kbd {
 --------------------------------------------------------------------------- */
 .icon { vertical-align: var(--icon-nudge); flex: none; }
 
+/* A page-level "working…" indicator is the app's LIVE state, so it takes
+   --live (tier 2), not the action accent. The in-button spinner is different:
+   it inherits --btn-fg, so it is already the right colour on every variant. */
 .spinner {
   width: var(--spinner-size); height: var(--spinner-size);
   border-radius: var(--radius-circle);
   margin: var(--space-7) auto;
-  border: var(--border-w-thick) solid var(--surface-3);
-  border-top-color: var(--accent);
+  border: var(--border-w-thick) solid var(--meter-track);
+  border-top-color: var(--live);
   animation: spin calc(var(--dur-slow) * 3) linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -828,8 +981,13 @@ kbd {
   outline: var(--focus-w) solid var(--focus-outer);
   outline-offset: var(--focus-offset);
 }
+/* .ovl-panel is excluded on purpose: it is focusable only as the primitive's
+   fallback target (a dialog with no meaningful first control opens on its own
+   panel rather than on the ✕), and a halo drawn round the whole sheet reads as
+   an error state. shell.css already suppresses its outline; this suppresses the
+   halo, which would otherwise out-specify the panel's elevation shadow. */
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
-textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible {
+textarea:focus-visible, summary:focus-visible, [tabindex]:focus-visible:not(.ovl-panel) {
   box-shadow: var(--focus-halo);
 }
 /* Beats every variant's own box-shadow (including the ghost's `none`). */
@@ -908,6 +1066,21 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { border-color
   table.tk td, table.tk th { padding: var(--space-3); }
   /* Row-action buttons wrap rather than overflow once each one is 44 wide. */
   .row, .row-end { row-gap: var(--space-2); }
+
+  /* A LINK IN PROSE is a control too, and the harness measures it as one: the
+     "time.example.com" link in Settings → Remote came in at 108.2×15 and was
+     the only reason `uishots --strict` exited 1 for the whole wave.
+
+     Vertical padding on an INLINE box is the fix that costs nothing: it grows
+     the region that accepts a finger (and the box getBoundingClientRect
+     reports) without entering the line box, so the paragraph's rhythm is
+     unchanged — the one thing a prose link must not disturb. Sized from 1em
+     rather than a line-height token so it clears 44 at any type size the
+     surrounding text uses. Anything already shaped like a control is excluded;
+     it has a real box from the rules above. */
+  p a:not(.btn), li a:not(.btn), .muted a:not(.btn), .field-hint a:not(.btn) {
+    padding-block: calc((var(--tap-min) - 1em) / 2);
+  }
 }
 
 /* --- Tier 2: the phone layout (≤767px) — real 44×44 boxes ---------------- */
@@ -928,6 +1101,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { border-color
      that they own a box. */
   .star, .timer-clock, .week-day-btn {
     display: inline-flex; align-items: center; justify-content: center;
+  }
+
+  /* Two more, from inside the entry editor: the ✕ that drops a task code
+     (measured 10×10 — the smallest target in the app) and a narrative
+     suggestion chip (211.7×22). Neither had ever been measured, because the
+     screenshot harness never actually opened the existing-entry editor — its
+     click missed and the failure was swallowed by a `.catch(() => {})`, so
+     four shots of an empty day view stood in for that dialog for two waves
+     (fixed in scripts/uishots.mjs). A tap target you cannot photograph is
+     still a tap target. */
+  .task-code-chip button, .editor-suggest-chips button {
+    min-height: var(--control-h-touch);
+    min-width: var(--tap-min);
+    align-items: center; justify-content: center;
   }
 
   /* Segmented controls (grouping · Day/Week/Month/Range · export status).
@@ -971,25 +1158,25 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { border-color
   }
   input[type="radio"]::before { border-radius: var(--radius-circle); }
   input[type="checkbox"]:checked::before {
-    background-color: var(--accent);
+    background-color: var(--control-checked);
     background-image: var(--check-mark);
     background-position: center;
     background-size: var(--icon-md);
     background-repeat: no-repeat;
-    border-color: var(--accent);
+    border-color: var(--control-checked);
   }
   input[type="checkbox"]:indeterminate::before {
-    background: var(--accent); border-color: var(--accent);
+    background: var(--control-checked); border-color: var(--control-checked);
   }
   input[type="radio"]:checked::before {
-    background: var(--accent); border-color: var(--accent);
+    background: var(--control-checked); border-color: var(--control-checked);
     box-shadow: inset 0 0 0 var(--space-1) var(--surface-1);
   }
   input[type="checkbox"]:disabled::before, input[type="radio"]:disabled::before {
-    background: var(--surface-2); border-color: var(--border);
+    background: var(--state-disabled-bg); border-color: var(--state-disabled-border);
   }
   input[type="checkbox"]:checked:disabled::before, input[type="radio"]:checked:disabled::before {
-    background: var(--surface-3);
+    background: var(--state-disabled-border);
   }
 }
 

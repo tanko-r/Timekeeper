@@ -620,8 +620,23 @@ export function EntryEditor({ spec, settings, onClose }) {
 
   const validation = entry ? entry.validation : [];
 
+  // initialFocus: a NEW entry opens on the client/matter picker (its own
+  // autoFocus, which the primitive leaves alone). An EXISTING one opens on the
+  // narrative — fixing the wording is what you opened it for, and the
+  // primitive's generic fallback would otherwise start you on the date field.
+  // Never the ✕; see the initial-focus block in components/overlay.js.
+  //
+  // Written as a JS comment rather than the `${/* … */''}` form used elsewhere
+  // in this file ON PURPOSE: this is the ROOT of the returned tree, and an
+  // empty string beside the <Modal> turns that root from one element into an
+  // array. React then reconciles the loading render (a bare <Modal>) against a
+  // list, remounts the whole dialog when `local` arrives, and the second mount
+  // captures the FIRST dialog's panel as its opener — so closing the editor
+  // restored focus to a detached node and dropped the keyboard user on <body>.
+  // The overlay fences catch it; it cost a round trip to find.
   return html`
     <${Modal} wide=${true} onClose=${flushAndClose}
+      initialFocus=${entry ? '.narrative-preview textarea' : null}
       title=${finalized ? 'Time entry (finalized)' : entry ? 'Edit time entry' : 'New time entry'}>
       <div class="entry-head-grid">
         <${Field} label="Date">
@@ -813,7 +828,12 @@ export function EntryEditor({ spec, settings, onClose }) {
               </table></div>`}
         </details>` : null}
 
-      <div class="row" style=${{ marginTop: '16px' }}>
+      ${/* The dialog's action row, not a generic .row: .ovl-actions is what the
+            phone sheet pins above the safe-area inset (see overlays.css), and
+            it carries the same 16px top margin as a token instead of an inline
+            style. Its own margin-top is --gap-block, so the hardcoded value
+            goes with it. */''}
+      <div class="ovl-actions">
         ${entry && !finalized ? html`
           <button class="btn btn-ghost" onClick=${() => setConfirmDelete(true)}><${Icon} name="trash" size=${16} /> Delete</button>` : null}
         <span class="saving-dot">
