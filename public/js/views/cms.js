@@ -1,8 +1,9 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useAsync, Spinner, ErrorBox, emitToast, BillableBadge, fmtStamp, Icon,
-  clientLabel, React, ContextMenu, Confirm,
+  html, useState, useEffect, useRef, useAsync, Spinner, ErrorBox, emitToast, BillableBadge,
+  fmtStamp, Icon, clientLabel, React, createPortal, Overlay, Confirm,
 } from '/js/ui.js';
+import { useDismissLayer } from '/js/components/overlay.js';
 import { NewCmModal } from '/js/components/cmpicker.js';
 import { CustomFieldsModal } from '/js/components/customfields.js';
 import { TimerImport } from '/js/components/timerimport.js';
@@ -32,6 +33,9 @@ import { EmptyState } from '/js/components/entrylist.js';
 //   and `table-cards` restacks each row into a two-line card below 768px:
 //   line 1 is star · name · ⋯, line 2 is number · billing · entries · last
 //   used. No horizontal scroller, nothing off-screen.
+//
+//   THE MENU BEHIND THE ⋯ (this wave). Moving five capabilities behind an
+//   overflow only works if the overflow itself does. See ActionMenu below.
 
 export function CmsView(props) {
   return html`
@@ -47,7 +51,7 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
   const [editing, setEditing] = useState(null); // 'new' | cm
   const [fieldsFor, setFieldsFor] = useState(null); // { owner: {client_id}|{matter_id}, title }
   const [importing, setImporting] = useState(false);
-  const [menu, setMenu] = useState(null); // { x, y, cm } | { x, y, group }
+  const [menu, setMenu] = useState(null); // { anchor, cm } | { anchor, group } | { anchor, list }
   const [deleting, setDeleting] = useState(null);
 
   const { loading, data, error, reload } = useAsync(
@@ -166,10 +170,24 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
     },
   ];
 
-  const openMenu = (ev, payload) => {
-    const r = ev.currentTarget.getBoundingClientRect();
-    setMenu({ x: Math.max(8, r.right - 260), y: r.bottom + 2, ...payload });
-  };
+  const listMenuItems = () => [
+    { label: 'Import matters from CSV…', icon: 'download', onClick: () => setImporting(true) },
+    { label: 'Download matter list (CSV)', icon: 'export', onClick: exportCsv },
+  ];
+
+  // The trigger itself is what the menu anchors to and what focus goes back to
+  // when it closes, so it is what gets stored — not a pair of coordinates.
+  const openMenu = (ev, payload) => setMenu({ anchor: ev.currentTarget, ...payload });
+
+  // A sheet covers the row you tapped, so it has to name its subject.
+  const menuTitle = !menu ? ''
+    : menu.cm ? (menu.cm.short_name || menu.cm.cm_number)
+      : menu.group ? (clientLabel(menu.group) || `Client ${menu.group.client_number}`)
+        : 'Matter list';
+  const menuItems = !menu ? []
+    : menu.cm ? matterMenuItems(menu.cm)
+      : menu.group ? clientMenuItems(menu.group)
+        : listMenuItems();
 
   const matterCount = rows.length;
   const clientCount = clientGroups.length;
@@ -305,13 +323,8 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
     </section>
 
     ${menu ? html`
-      <${ContextMenu} x=${menu.x} y=${menu.y} onClose=${() => setMenu(null)}
-        items=${menu.cm ? matterMenuItems(menu.cm)
-          : menu.group ? clientMenuItems(menu.group)
-            : [
-              { label: 'Import matters from CSV…', icon: 'download', onClick: () => setImporting(true) },
-              { label: 'Download matter list (CSV)', icon: 'export', onClick: exportCsv },
-            ]} />` : null}
+      <${ActionMenu} anchor=${menu.anchor} title=${menuTitle} items=${menuItems}
+        onClose=${() => setMenu(null)} />` : null}
 
     ${editing ? html`
       <${NewCmModal} existing=${editing === 'new' ? null : editing}
@@ -329,6 +342,178 @@ export function CmsSection({ refreshKey, bumpRefresh }) {
         onConfirm=${() => del(deleting)}
         onClose=${() => setDeleting(null)} />` : null}
   `;
+}
+
+// ---------------------------------------------------------------------------
+// THE ROW OVERFLOW — one menu, two real shapes
+// ---------------------------------------------------------------------------
+//
+// E8 moved five capabilities behind a "⋯" here, which is only an improvement if
+// the thing behind the ⋯ works. The critic measured the shared `ContextMenu`
+// this file used to call and found it did not:
+//
+//   * every row in it is 28 CSS px tall (measured at 390×844: matter rows
+//     291×28, client rows 239×28, header rows 230×28) while the triggers are a
+//     correct 44×44 — so the ONLY touch path to Edit matter, Custom fields,
+//     Archive matter, Turn off task billing, Import matters from CSV and
+//     Download matter list was half the touch floor. The --strict fence never
+//     saw it, because it photographs the page at rest and never opens a menu.
+//   * it declares `role="menu"` and does no focus management: Enter on the ⋯
+//     opened it with focus still on the trigger, ArrowDown did nothing, and Tab
+//     walked on to the NEXT ROW's favourite star with the menu still standing.
+//     A keyboard user could open the menu and never reach an item in it.
+//
+// So this area brings its own, built to the shape each pointer actually wants —
+// the same split the section switcher above it makes, and the same one the
+// overlay primitive makes for dialogs:
+//
+//   below 768px  a modal bottom sheet through the SHARED Overlay primitive, so
+//                the scrim, the focus trap, the scroll lock, Escape, the
+//                grabber and the safe-area inset all come from the one place
+//                they live. Rows are 48px (Material 3's list-item-in-a-sheet),
+//                titled with the matter or client they act on — because a sheet
+//                covers the row you tapped and has to say what it is about.
+//   at ≥768px    an anchored popover on the WAI-ARIA menu-button pattern
+//                (Primer ActionMenu, Polaris ActionList): focus moves to the
+//                first enabled item on open, ↑/↓ wrap, Home/End jump, Esc or
+//                Tab closes and hands focus back to the ⋯ that opened it.
+//
+// It also measures itself before it paints. The shared menu's clamp assumed
+// 34px rows, so any change to row height could push a menu opened near the
+// bottom of the window off the screen; this one asks the DOM how tall it is and
+// flips above its trigger when it has to.
+//
+// `items` is the same shape ContextMenu takes — {label, icon?, onClick,
+// disabled?, danger?, hr?} — so the three menus above are unchanged.
+
+const PHONE_Q = '(max-width: 767px)';
+
+function useIsPhone() {
+  const [phone, setPhone] = useState(
+    () => !!(window.matchMedia && window.matchMedia(PHONE_Q).matches));
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const mq = window.matchMedia(PHONE_Q);
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return phone;
+}
+
+function ActionMenu(props) {
+  const phone = useIsPhone();
+  return phone ? html`<${ActionSheet} ...${props} />` : html`<${ActionPopover} ...${props} />`;
+}
+
+function ActionSheet({ title, items, onClose }) {
+  return html`
+    <${Overlay} title=${title} size="sm" className="act-sheet" onClose=${() => onClose()}>
+      <div class="act-list">
+        ${items.map((item, i) => (item.hr
+          ? html`<div key=${i} class="act-sep" role="separator"></div>`
+          : html`
+            <button key=${i} type="button" disabled=${item.disabled}
+              class=${'act-row' + (item.danger ? ' danger' : '')}
+              onClick=${() => { onClose(); item.onClick(); }}>
+              <span class="act-ico">
+                ${item.icon ? html`<${Icon} name=${item.icon} size=${18} />` : null}
+              </span>
+              <span class="act-label">${item.label}</span>
+            </button>`))}
+      </div>
+    <//>`;
+}
+
+function ActionPopover({ items, anchor, onClose }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  // Escape goes through the shared dismissal stack rather than a private
+  // listener, so a menu opened from inside a dialog still closes itself first
+  // and leaves the dialog standing (overlay.js, useDismissLayer).
+  useDismissLayer(true, () => onClose(), ref);
+
+  // First paint is anchored from the trigger alone — the menu has to be on
+  // screen and focusable before it can be measured. The layout effect below
+  // then corrects it, before the browser paints, so nothing flashes.
+  const guess = useRef(null);
+  if (!guess.current) {
+    const r = anchor ? anchor.getBoundingClientRect() : { right: 280, bottom: 8 };
+    guess.current = { left: Math.max(8, r.right - 264), top: r.bottom + 4 };
+  }
+
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !anchor) return;
+    const r = anchor.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const PAD = 8;
+    const left = Math.min(Math.max(PAD, r.right - w), Math.max(PAD, window.innerWidth - w - PAD));
+    const below = r.bottom + 4;
+    const above = r.top - h - 4;
+    const top = below + h <= window.innerHeight - PAD ? below
+      : above >= PAD ? above
+        : Math.max(PAD, window.innerHeight - h - PAD);
+    setPos((p) => (p && p.left === left && p.top === top ? p : { left, top }));
+  }, [anchor, items.length]);
+
+  // The menu-button contract: focus in on open, focus back to the trigger on
+  // close, however it closed.
+  useEffect(() => {
+    const el = ref.current;
+    const first = el && el.querySelector('.act-item:not([disabled])');
+    if (first || el) (first || el).focus({ preventScroll: true });
+    return () => {
+      if (anchor && anchor.isConnected && typeof anchor.focus === 'function') {
+        anchor.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const away = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('contextmenu', away);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('contextmenu', away);
+    };
+  }, [onClose]);
+
+  const onKeyDown = (e) => {
+    const el = ref.current;
+    if (!el) return;
+    const rows = [...el.querySelectorAll('.act-item:not([disabled])')];
+    if (rows.length === 0) return;
+    const i = rows.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); rows[i < 0 ? 0 : (i + 1) % rows.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); rows[i <= 0 ? rows.length - 1 : i - 1].focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); rows[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); rows[rows.length - 1].focus(); }
+    // Tab out of a menu closes it (Primer, Polaris, WAI-ARIA APG all agree) —
+    // it must never leave an open menu behind while focus walks the page.
+    else if (e.key === 'Tab') { e.preventDefault(); onClose(); }
+  };
+
+  const p = pos || guess.current;
+  return createPortal(html`
+    <div class="act-menu" ref=${ref} role="menu" aria-orientation="vertical" tabIndex=${-1}
+      style=${{ left: `${p.left}px`, top: `${p.top}px` }} onKeyDown=${onKeyDown}>
+      ${items.map((item, i) => (item.hr
+        ? html`<div key=${i} class="act-sep" role="separator"></div>`
+        : html`
+          <button key=${i} type="button" role="menuitem" tabIndex=${-1}
+            class=${'act-item' + (item.danger ? ' danger' : '')}
+            disabled=${item.disabled}
+            onClick=${() => { onClose(); item.onClick(); }}>
+            <span class="act-ico">
+              ${item.icon ? html`<${Icon} name=${item.icon} size=${16} />` : null}
+            </span>
+            <span class="act-label">${item.label}</span>
+          </button>`))}
+    </div>`, document.body);
 }
 
 // Inline client naming — the minimal affordance from spec §3.3 ("a visible

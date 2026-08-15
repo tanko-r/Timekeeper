@@ -1,5 +1,5 @@
 // THE ENTRIES LEDGER — every entry ever recorded, filterable, bulk-editable,
-// exportable. Formerly "Search".
+// exportable. Formerly "Search", and, since this wave, formerly "Export" too.
 //
 // The teardown (§10, §A) found that this screen was mis-named into invisibility:
 // with empty filters it is already "all 23 entries · 44.8h", i.e. the app's
@@ -8,25 +8,44 @@
 // three download buttons, on its own top-level destination and its own phone
 // bottom-bar slot, for a job done once a day.
 //
-// So this file owns the ledger, and exports the pieces Export reuses:
+// THE LAST WAVE MOVED THE COLUMN AND THE CHIP AND LEFT THE PAGE STANDING. The
+// standing critic measured what was left: 28 interactive controls above the
+// fold on a 900px desktop viewport, the first and only table row at y=486, and
+// on a phone "roughly 994px of controls" before the single row the page was
+// about. So Export is not a page any more, in any viewport:
 //
-//   LedgerHead        the page header + the one figure-of-the-moment
-//   RangeControls     presets + From/To — one range vocabulary for both modes
+//   Export…            an action in this ledger's header and in its bulk bar
+//   the format choice  a dialog over the ledger (the shared overlay primitive)
+//   range and status   THE LEDGER'S OWN FILTER CHIPS — there is no second
+//                      filter UI, because there was never a second question
+//   #/entries/export…  the ledger, with the chips that deep link asks for
+//
+// What this file exports:
+//
+//   LedgerHead        the page header, one figure, and the counts you act on
+//   RangeControls     presets + From/To — one range vocabulary for the screen
 //   LedgerSelection   the selection bar and every bulk action, with a touch path
-//   LedgerTable       THE row renderer, shared by both modes, cards on a phone
-//
-// views/exportview.js is now a thin surface over those four: same head, same
-// rows, same bulk actions, different filters and its own download actions.
-// Nothing about the export deep-link contract changed — see the route table in
-// app.js; #/export[/<filter>[/<from>]] still lands on the export surface with
-// its filter and its start date applied.
-import { api } from '/js/api.js';
+//   LedgerTable       THE row renderer, cards + sticky day headers on a phone
+//   ExportDialog      the format choice, and nothing else
+//   SearchView        the ledger itself; views/exportview.js re-exports it as
+//                     ExportView so the two routes are the SAME component (a
+//                     wrapper would remount the ledger and throw away the very
+//                     filter chips the dialog reads its scope from)
+import { api, downloadText } from '/js/api.js';
 import {
   html, React, useState, useEffect, useRef, useAsync, Spinner, ErrorBox, Icon,
   fmtHours, fmtStamp, todayStr, addDays, emitToast, markJustFinalized,
   BillableBadge, StatusChip, Modal, Confirm, ContextMenu,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
+// The shared overlay primitive, used directly rather than through ui.js's
+// Modal for one reason: Modal fixes the panel's className, and this dialog
+// needs one more class on it (see .export-modal-instant in ledger.css — a
+// dialog the ROUTE opened is the destination, not a response to a click on the
+// screen behind it, so it does not slide in over that screen). Everything else
+// — portal, scrim, focus trap, Escape, scroll lock, phone bottom-sheet shape —
+// is the primitive's, exactly as it is for every other dialog in the app.
+import { Overlay } from '/js/components/overlay.js';
 // The dashboard's row component owns both of these, and they are the reason
 // this list is not a second implementation of "an entry": InlineNarrative is
 // the app's fastest narrative path (click the text, edit in place, ghost-text
@@ -55,29 +74,54 @@ function Figure({ hours, increment }) {
     </span>`;
 }
 
-// The shared page header: title, the screen's actions (right, one primary
-// last — .page-head-actions gives that its phone layout for free), and the
-// figure on its own line below.
-export function LedgerHead({ title, count, hours, increment, note, actions }) {
+// Compact day label for a range summary and a day-group header. Deliberately
+// not fmtDateLong: "Sat, Aug 15, 2026" twice over is a line and a half of a
+// phone dialog spent on two dates that are almost always in this year.
+function dayLabel(dateStr, { withYear = false } = {}) {
+  if (!dateStr) return '';
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+    ...(withYear || y !== new Date().getFullYear() ? { year: 'numeric' } : {}),
+  });
+}
+
+function rangeLabel(from, to) {
+  const sameYear = from.slice(0, 4) === to.slice(0, 4);
+  if (from === to) return dayLabel(from);
+  return `${dayLabel(from, { withYear: !sameYear })} – ${dayLabel(to)}`;
+}
+
+// The shared page header. The figure rides on the title's line (it is the
+// answer to the title, not a second heading), the actions sit right, and the
+// line below is the one a lawyer can act on — see COUNTS YOU CAN ACT ON in
+// SearchView.
+export function LedgerHead({ title, count, hours, increment, note, actions, stats }) {
   return html`
     <div class="page-head ledger-head">
-      <h1>${title}</h1>
+      <div class="ledger-head-title">
+        <h1>${title}</h1>
+        <${Figure} hours=${hours} increment=${increment} />
+      </div>
       <div class="spacer"></div>
       ${actions ? html`<div class="page-head-actions">${actions}</div>` : null}
       <div class="page-head-tools ledger-figures">
-        <${Figure} hours=${hours} increment=${increment} />
         <span class="ledger-figure-cap">
           ${count} ${count === 1 ? 'entry' : 'entries'}${note ? ` · ${note}` : ''}
         </span>
+        ${(stats || []).map((s) => html`
+          <button key=${s.key} type="button" class=${`ledger-stat ledger-stat-${s.key}`}
+            onClick=${s.onClick} title=${s.title}>
+            <span class="ledger-stat-n">${s.n}</span> ${s.label}
+          </button>`)}
       </div>
     </div>`;
 }
 
 // ---------------------------------------------------------------------------
-// Date range — one vocabulary, both modes. The presets are the fast path and
-// the two inputs are the ground truth; shell.css's .filter-presets /
-// .date-range own the responsive grouping (a group may wrap, the things inside
-// one never wrap away from each other).
+// Date range — the presets are the fast path and the two inputs are the ground
+// truth; shell.css's .filter-presets / .date-range own the responsive grouping
+// (a group may wrap, the things inside one never wrap away from each other).
 // ---------------------------------------------------------------------------
 export const RANGE_PRESETS = [
   ['Today', () => [todayStr(), todayStr()]],
@@ -134,20 +178,18 @@ function TriCheckbox({ checked, indeterminate, onChange, label }) {
 // ---------------------------------------------------------------------------
 // SELECTION AND BULK ACTIONS — and the touch path the teardown found missing.
 //
-// Before: a checkbox column with no persistent action bar, the bar appearing
-// only after a selection and pinned `position: sticky; top: 8px` (which
-// runbar.css flagged: it would hide under the running-timer bar the moment a
-// timer started). And on a phone the header row of a `.table-cards` table is
-// display:none, so select-all had no control at all.
+// An explicit "Select all N" button inside the bar (reachable at every width),
+// a "Select" toggle that turns the row checkboxes on for a thumb, an explicit
+// Done that leaves selection mode, and a bar that sticks to the TOP under the
+// runbar on a desktop and to the BOTTOM above the navigation bar on a phone.
 //
-// Now: an explicit "Select all N" button inside the bar (reachable at every
-// width), a "Select" toggle that turns the row checkboxes on for a thumb, an
-// explicit Done that leaves selection mode, and a bar that sticks to the TOP
-// under the runbar on a desktop and to the BOTTOM above the navigation bar on
-// a phone — where the thumb is, and where the rows you are ticking are.
+// EXPORT LIVES HERE NOW. The standing critic: "The bulk bar offers Finalize,
+// Unlock, Reassign matter, Delete, Done — no Export… there is no way to export
+// the entries you just picked out." There is one, and it opens the same dialog
+// the header opens, scoped to the selection.
 // ---------------------------------------------------------------------------
 export function LedgerSelection({
-  entries, selected, setSelected, selecting, setSelecting, bumpRefresh,
+  entries, selected, setSelected, selecting, setSelecting, bumpRefresh, onExport,
 }) {
   const [reassigning, setReassigning] = useState(false);
   const [warnGate, setWarnGate] = useState(null);
@@ -220,6 +262,11 @@ export function LedgerSelection({
         <div class="ledger-bulk-actions">
           <button type="button" class="btn btn-sm" disabled=${n === 0} onClick=${() => bulk('finalize')}>
             <${Icon} name="lock" size=${14} /> Finalize</button>
+          ${onExport ? html`
+            <button type="button" class="btn btn-sm ledger-bulk-export" disabled=${n === 0}
+              aria-haspopup="dialog" onClick=${onExport}
+              title="Choose a file format for the entries you have selected">
+              <${Icon} name="export" size=${14} /> Export…</button>` : null}
           <button type="button" class="btn btn-sm" disabled=${n === 0} onClick=${() => bulk('unlock')}>
             <${Icon} name="unlock" size=${14} /> Unlock</button>
           <button type="button" class="btn btn-sm" disabled=${n === 0} onClick=${() => setReassigning(true)}>
@@ -235,16 +282,20 @@ export function LedgerSelection({
 }
 
 // ---------------------------------------------------------------------------
-// THE LEDGER ROW — one renderer, both modes, both viewports.
+// THE LEDGER ROW — one renderer, both viewports.
 //
 // It is still a <table> in the DOM, because a ledger on a desktop genuinely is
-// a table (Attio's own product screen is a table; the reference bar for
-// scanning many rows is aligned columns) — but base.css's `.table-cards`
-// turns every row into a CARD below 768px, and ledger.css says what this
-// table's columns mean when they stack. So the measured failure the teardown
-// recorded — "the desktop table is 839px wide inside a 356px scroller… Hours
-// is entirely off-screen and Narrative is cut mid-word" — cannot recur: there
-// is no sideways scroller on a phone at all.
+// a table — but base.css's `.table-cards` turns every row into a CARD below
+// 768px, and ledger.css says what this table's columns mean when they stack.
+//
+// DAY GROUPS. The standing critic on the phone list: "5,082px of undifferen-
+// tiated cards for 23 entries with no date grouping, no month header and no
+// running subtotal — every card repeats the same three-line shape at the same
+// visual weight." The rows arrive sorted by date, so a group header row goes in
+// ahead of each new date carrying that day's total (Attio's tasks list does
+// exactly this with Today/Upcoming/Completed). It is a real <tr> so the table
+// stays a table for a screen reader, and on a phone it sticks under the run bar
+// while you scroll its day.
 //
 // Cells carry data-col rather than relying on :nth-child, so a column that is
 // present in one mode and absent in another cannot silently shift the phone
@@ -252,19 +303,22 @@ export function LedgerSelection({
 //
 // Actions: ONE labelled overflow per row (teardown E8), plus the matter name
 // as the row's open affordance — exactly the shape the dashboard's entry row
-// uses, so a row means the same thing on both screens. Nothing was dropped:
-// view/edit, finalize one, unlock, copy to today and delete are all in the
-// menu, which is a real button with a real 44px target rather than five
-// unlabelled ghost glyphs identified only by a pointer-only `title`.
+// uses, so a row means the same thing on both screens.
 // ---------------------------------------------------------------------------
 export function LedgerTable({
-  entries, increment = 0.1, mode = 'ledger', openEditor, onChanged,
+  entries, increment = 0.1, openEditor, onChanged,
   selected, onToggle, onSelectAll, selecting = false,
 }) {
   const [menu, setMenu] = useState(null);
   const [deleting, setDeleting] = useState(null);
   const allSelected = entries.length > 0 && entries.every((e) => selected.has(e.id));
   const someSelected = entries.some((e) => selected.has(e.id));
+
+  // Total per day, for the group header. One pass, keyed by the date string.
+  const dayTotals = new Map();
+  for (const e of entries) {
+    dayTotals.set(e.date, (dayTotals.get(e.date) || 0) + (Number(e.total) || 0));
+  }
 
   async function finalize(entry) {
     try {
@@ -320,6 +374,8 @@ export function LedgerTable({
       : html`<span class="muted">pending</span>`;
   };
 
+  let lastDate = null;
+
   return html`
     <${React.Fragment}>
       <div class="card table-wrap table-cards ledger-wrap">
@@ -341,51 +397,63 @@ export function LedgerTable({
             </tr>
           </thead>
           <tbody>
-            ${entries.map((e) => html`
-              <tr key=${e.id} class=${e.cm ? '' : 'row-blocked'}>
-                <td data-col="select">
-                  <input type="checkbox" checked=${selected.has(e.id)}
-                    aria-label=${`Select the ${e.date} entry${e.cm ? ` for ${e.cm.short_name}` : ''}`}
-                    onChange=${() => onToggle(e.id)} />
-                </td>
-                <td data-col="date" class="mono small">${e.date}</td>
-                <td data-col="cm">
-                  ${e.cm ? html`
-                    <button type="button" class="ledger-open" title="Open this entry"
-                      onClick=${() => openEditor({ id: e.id })}>${e.cm.short_name}</button>
-                    <span class="muted mono small ledger-cm-number">${e.cm.cm_number}</span>` : html`
-                    <span class="muted ledger-nomatter">
-                      No matter yet${mode === 'export' ? ' — can’t export' : ''}
-                    </span>
-                    <button type="button" class="btn btn-sm"
-                      title="Assign a client/matter — required before this entry can finalize or export"
-                      onClick=${() => openEditor({ id: e.id })}>Assign matter</button>`}
-                </td>
-                <td data-col="narrative">
-                  <${InlineNarrative} entry=${e} onChanged=${onChanged} />
-                </td>
-                <td data-col="status">
-                  <div class="ledger-chipset">
-                    ${e.billable ? null : html`<${BillableBadge} billable=${0} />`}
-                    <${StatusChip} entry=${e} />
-                    ${e.status === 'draft' && e.ever_finalized ? html`
-                      <span class="chip chip-reverted" title=${'Finalized once, then unlocked'
-                        + (e.exported_at ? ` — and already exported ${fmtStamp(e.exported_at)}` : '')}>
-                        <${Icon} name="unlock" size=${12} /> unlocked</span>` : null}
-                  </div>
-                </td>
-                <td data-col="hours" class="ledger-hours">${fmtHours(e.total, increment)}</td>
-                <td data-col="exported" class="small">${exportCell(e)}</td>
-                <td data-col="actions">
-                  <button type="button" class="btn btn-ghost btn-sm btn-icon ledger-more"
-                    title="More actions for this entry" aria-label="More actions for this entry"
-                    aria-haspopup="menu"
-                    onClick=${(ev) => {
-                      const r = ev.currentTarget.getBoundingClientRect();
-                      setMenu({ x: r.left, y: r.bottom + 2, entry: e });
-                    }}><${Icon} name="more" size=${16} /></button>
-                </td>
-              </tr>`)}
+            ${entries.flatMap((e) => {
+              const rows = [];
+              if (e.date !== lastDate) {
+                lastDate = e.date;
+                rows.push(html`
+                  <tr key=${`day-${e.date}`} class="ledger-daybreak">
+                    <th colspan="8" scope="colgroup">
+                      <span class="ledger-daybreak-date">${dayLabel(e.date)}</span>
+                      <span class="ledger-daybreak-total">${fmtHours(dayTotals.get(e.date), increment)}h</span>
+                    </th>
+                  </tr>`);
+              }
+              rows.push(html`
+                <tr key=${e.id} class=${e.cm ? '' : 'row-blocked'}>
+                  <td data-col="select">
+                    <input type="checkbox" checked=${selected.has(e.id)}
+                      aria-label=${`Select the ${e.date} entry${e.cm ? ` for ${e.cm.short_name}` : ''}`}
+                      onChange=${() => onToggle(e.id)} />
+                  </td>
+                  <td data-col="date" class="mono small">${e.date}</td>
+                  <td data-col="cm">
+                    ${e.cm ? html`
+                      <button type="button" class="ledger-open" title="Open this entry"
+                        onClick=${() => openEditor({ id: e.id })}>${e.cm.short_name}</button>
+                      <span class="muted mono small ledger-cm-number">${e.cm.cm_number}</span>` : html`
+                      <span class="muted ledger-nomatter">No matter yet — can’t export</span>
+                      <button type="button" class="btn btn-sm"
+                        title="Assign a client/matter — required before this entry can finalize or export"
+                        onClick=${() => openEditor({ id: e.id })}>Assign matter</button>`}
+                  </td>
+                  <td data-col="narrative">
+                    <${InlineNarrative} entry=${e} onChanged=${onChanged} />
+                  </td>
+                  <td data-col="status">
+                    <div class="ledger-chipset">
+                      ${e.billable ? null : html`<${BillableBadge} billable=${0} />`}
+                      <${StatusChip} entry=${e} />
+                      ${e.status === 'draft' && e.ever_finalized ? html`
+                        <span class="chip chip-reverted" title=${'Finalized once, then unlocked'
+                          + (e.exported_at ? ` — and already exported ${fmtStamp(e.exported_at)}` : '')}>
+                          <${Icon} name="unlock" size=${12} /> unlocked</span>` : null}
+                    </div>
+                  </td>
+                  <td data-col="hours" class="ledger-hours">${fmtHours(e.total, increment)}</td>
+                  <td data-col="exported" class="small">${exportCell(e)}</td>
+                  <td data-col="actions">
+                    <button type="button" class="btn btn-ghost btn-sm btn-icon ledger-more"
+                      title="More actions for this entry" aria-label="More actions for this entry"
+                      aria-haspopup="menu"
+                      onClick=${(ev) => {
+                        const r = ev.currentTarget.getBoundingClientRect();
+                        setMenu({ x: r.left, y: r.bottom + 2, entry: e });
+                      }}><${Icon} name="more" size=${16} /></button>
+                  </td>
+                </tr>`);
+              return rows;
+            })}
           </tbody>
         </table>
       </div>
@@ -400,11 +468,302 @@ export function LedgerTable({
     <//>`;
 }
 
+// ===========================================================================
+// EXPORT — THE DIALOG THAT REPLACED THE PAGE
+//
+// The page carried fifteen controls to move one row: a 4-item status segmented
+// control, 5 presets, 2 date inputs, an "Include drafts" checkbox and 3
+// download buttons, above a copy of this very table. Every one of those
+// questions except "which file?" is a question the ledger behind this dialog
+// already answers with its filter chips, so this dialog asks only that one.
+//
+// TWO RULES IT KEEPS, because the last version broke both:
+//
+//   1. IT NEVER CLAIMS A COUNT IT HAS NOT BEEN TOLD. Everything on screen —
+//      the entry count, the hours, the range — comes from the same
+//      /api/export/preview call that the download itself is built from, with
+//      the same arguments. The old page could say "3.8 h · 4 entries · 4 ready
+//      to send" beside a sentence reading "it cannot export until it is
+//      finalized"; there is no second sentence here to contradict the number.
+//
+//   2. IT NEVER WRITES A BLANK BILLING LINE. `narrative_empty` is a *block*
+//      in lib/validation.js, so a finalized entry always has a narrative and
+//      only an included DRAFT can be blank. The old page wrote three of those
+//      into a .TIM with an empty na= field. Here, a blank narrative in scope
+//      disables the two controls that make a file, says so in the button's own
+//      accessible name, and offers the way out (leave the drafts out, or go
+//      and write the narrative).
+//
+// "Copy as text" is never blocked: it renders "(no narrative)" in plain sight
+// and marks nothing as sent, which is the honest way to look at unfinished
+// time.
+// ===========================================================================
+
+const FORMATS = [
+  {
+    key: 'text',
+    label: 'Copy as text',
+    icon: 'clipboard',
+    hint: 'A readable summary on the clipboard. Nothing is marked as sent.',
+    makesFile: false,
+  },
+  {
+    key: 'csv',
+    label: 'Download CSV',
+    icon: 'download',
+    hint: 'The same entries as a spreadsheet, one row per task line.',
+    makesFile: true,
+  },
+  {
+    key: 'tim',
+    label: 'Download .TIM',
+    icon: 'export',
+    hint: 'The DTE Axiom / TimeSaver import file. Constants live in Settings → .TIM export.',
+    makesFile: true,
+    primary: true,
+  },
+];
+
+// What the file will hold, in the app's own words, for each server-side rule.
+const SCOPE_WORDS = {
+  unfinalized: 'every entry still a draft',
+  unexported: 'every finalized entry never sent',
+  either: 'everything still owed something — unfinalized or never sent',
+};
+
+// One sentence, and — where there is one — the control that answers it. The
+// control is a real .btn on its own line rather than a link inside the prose:
+// the harness measures a link in a paragraph as an interactive element, and a
+// 44px target is not something to buy back with padding tricks inside a dialog
+// a thumb has to use.
+function Note({ tone, actionLabel, onAction, children }) {
+  return html`
+    <div class=${`export-note${tone ? ` export-note-${tone}` : ''}`}>
+      <p>${children}</p>
+      ${actionLabel ? html`
+        <button type="button" class="btn btn-sm" onClick=${onAction}>${actionLabel}</button>` : null}
+    </div>`;
+}
+
+export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }) {
+  const [includeDrafts, setIncludeDrafts] = useState(!!scope.includeDrafts);
+  const [busy, setBusy] = useState(false);
+  const { from, to, attention } = scope;
+  const drafting = attention ? null : includeDrafts;
+
+  const attQs = attention ? `&attention=${attention}` : '';
+  const { loading, data, error } = useAsync(
+    () => api.get(`/api/export/preview?from=${from}&to=${to}&includeDrafts=${includeDrafts ? 1 : 0}${attQs}`),
+    [from, to, attention, includeDrafts]);
+
+  // The preview returns every row in range (matterless included, so the count
+  // of time that cannot leave is visible); the rows that become a file are the
+  // ones with a client/matter, and `count` is their number.
+  const rows = data ? data.entries : [];
+  const willWrite = rows.filter((e) => e.cm);
+  const ready = data ? data.count : 0;
+  const hours = willWrite.reduce((a, e) => a + (Number(e.total) || 0), 0);
+  const blank = willWrite.filter((e) => !String(e.narrative || '').trim());
+  const drafts = willWrite.filter((e) => e.status === 'draft');
+  const unassociated = data ? data.unassociated : 0;
+
+  // Does the file hold exactly what the caller pointed at? Only a selection can
+  // disagree, and it must say so rather than quietly widening.
+  const picked = scope.ids || null;
+  const exact = !picked || (picked.length === willWrite.length
+    && willWrite.every((e) => picked.includes(e.id)));
+
+  async function run(format) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const body = { from, to, includeDrafts, attention, ...(format === 'text' ? { markExported: false } : {}) };
+      const r = await api.post('/api/export', body);
+      if (r.count === 0) { emitToast('Nothing in that range to send.'); return; }
+      if (format === 'text') {
+        await navigator.clipboard.writeText(r.text);
+        emitToast('Plain-text summary copied to the clipboard');
+      } else {
+        const range = `${from}${from !== to ? `_${to}` : ''}`;
+        if (format === 'tim') {
+          downloadText(`time_${range.replace(/-/g, '')}.TIM`, r.tim, 'text/plain');
+        } else {
+          downloadText(`timekeeper-${range}.csv`, r.csv);
+        }
+        emitToast(`${r.count} ${r.count === 1 ? 'entry' : 'entries'} written to a ${format === 'tim' ? '.TIM' : 'CSV'} file`);
+      }
+      onDone();
+      onClose();
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const blockedReason = blank.length > 0
+    ? `${blank.length} of ${blank.length === 1 ? 'these entries has' : 'these entries have'} no narrative — a blank billing line cannot go to the billing system.`
+    : ready === 0 ? 'Nothing in this range is ready to send.' : null;
+
+  const scopeWord = attention
+    ? SCOPE_WORDS[attention]
+    : (includeDrafts ? 'every entry, drafts included' : 'every finalized entry');
+
+  return html`
+    <${Overlay} title="Export" onClose=${() => onClose()} size="md"
+      initialFocus=".export-format"
+      className=${`modal export-modal${scope.fromRoute ? ' export-modal-instant' : ''}`}>
+      ${error ? html`<${ErrorBox} error=${error} />` : null}
+      ${loading && !data ? html`<${Spinner} />` : html`
+        <${React.Fragment}>
+          <p class="export-scope">
+            <strong class="export-scope-count">
+              ${ready} ${ready === 1 ? 'entry' : 'entries'} · ${fmtHours(hours, increment)} h
+            </strong>
+            <span class="export-scope-rule">
+              ${scopeWord}, ${rangeLabel(from, to)}
+            </span>
+          </p>
+
+          ${!exact ? html`
+            <${Note}>
+              You picked ${picked.length} ${picked.length === 1 ? 'entry' : 'entries'};
+              a file is written from a date range, so this one covers
+              ${' '}${ready} — ${scopeWord} between those two dates.
+            <//>` : null}
+
+          ${(scope.caveats || []).length > 0 ? html`
+            <${Note}>
+              ${(scope.caveats || []).join(' and ')} ${(scope.caveats || []).length === 1 ? 'does' : 'do'}
+              ${' '}not travel into a file: a file is a date range plus a status.
+            <//>` : null}
+
+          ${drafting === false ? html`
+            <${Note} actionLabel="Include drafts" onAction=${() => setIncludeDrafts(true)}>
+              Drafts are left out of the file — they are not finalized.
+            <//>` : null}
+          ${drafting === true ? html`
+            <${Note} actionLabel="Leave drafts out" onAction=${() => setIncludeDrafts(false)}>
+              ${drafts.length} ${drafts.length === 1 ? 'draft is' : 'drafts are'} included.
+              A draft goes into the file but is never stamped exported.
+            <//>` : null}
+
+          ${blank.length > 0 ? html`
+            <${Note} tone="blocked"
+              actionLabel=${onShowDrafts ? 'Show them in the ledger' : null}
+              onAction=${onShowDrafts ? () => { onClose(); onShowDrafts(from, to); } : null}>
+              <strong>${blank.length} ${blank.length === 1 ? 'entry has' : 'entries have'} no narrative.</strong>
+              ${' '}A .TIM or CSV line with an empty narrative reaches the billing system as a blank
+              bill, so no file is written until ${blank.length === 1 ? 'it has' : 'they have'} one.
+            <//>` : null}
+
+          ${unassociated > 0 ? html`
+            <${Note} tone="blocked">
+              ${unassociated} ${unassociated === 1 ? 'entry in this range has' : 'entries in this range have'} no
+              client/matter, so ${unassociated === 1 ? 'it is' : 'they are'} not in the file — assign one from the ledger.
+            <//>` : null}
+
+          <div class="export-formats" role="group" aria-label="File format">
+            ${FORMATS.map((f) => {
+              const off = !data || ready === 0 || busy
+                || (f.makesFile && blank.length > 0);
+              const why = f.makesFile && blank.length > 0 ? blockedReason
+                : ready === 0 ? 'Nothing in this range is ready to send.' : null;
+              return html`
+                <button key=${f.key} type="button"
+                  class=${`export-format${f.primary ? ' is-primary' : ''}`}
+                  disabled=${off} aria-label=${why ? `${f.label} — unavailable. ${why}` : f.label}
+                  title=${why || f.hint}
+                  onClick=${() => run(f.key)}>
+                  <${Icon} name=${f.icon} size=${18} />
+                  <span class="export-format-text">
+                    <span class="export-format-name">
+                      ${f.label}
+                      ${ready > 0 ? html`<span class="export-format-count">${ready}</span>` : null}
+                    </span>
+                    <span class="export-format-hint">${why || f.hint}</span>
+                  </span>
+                </button>`;
+            })}
+          </div>
+
+          <p class="export-foot muted small">
+            Downloading a file stamps each finalized entry as exported; you can re-export any time.
+            Range and status come from the ledger’s filters behind this dialog.
+          </p>
+        <//>`}
+    <//>`;
+}
+
 // ---------------------------------------------------------------------------
 // THE LEDGER ITSELF
 // ---------------------------------------------------------------------------
 
 const EMPTY_FILTERS = { q: '', cm: null, from: '', to: '', task: '', billable: '', status: '', exported: '' };
+
+// #/entries/export[/<filter>[/<from>]] — and its pre-canonical form #/export…,
+// which app.js rewrites in an effect, i.e. one frame after this renders.
+//
+// The route is read from the hash rather than taken as a prop because BOTH
+// routes are this same component (see views/exportview.js): a wrapper
+// component would give React a different element type at the same position,
+// remounting the ledger and discarding the filter chips whose whole job now is
+// to tell the export dialog what to write.
+function exportRouteOf(hash) {
+  const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (parts[0] === 'export') return { filter: parts[1] || 'all', from: parts[2] || null };
+  if (parts[0] === 'entries' && parts[1] === 'export') return { filter: parts[2] || 'all', from: parts[3] || null };
+  return null;
+}
+
+// The deep-link contract, expressed as ledger chips. Every filter the old
+// Export page's segmented control offered is one of these; §12 asked for the
+// link to keep working and point at "the ledger with that chip applied".
+const FILTER_CHIPS = {
+  all: {},
+  unfinalized: { status: 'draft', exported: '' },
+  unexported: { status: 'finalized', exported: 'no' },
+  either: { status: '', exported: 'no' },
+};
+
+// …and the same mapping read backwards: what the server must be asked for, to
+// write the entries the ledger is currently showing. This is the only place
+// that decides it, so the dialog's summary and its download cannot disagree.
+function attentionOf(filters) {
+  if (filters.status === 'draft') return 'unfinalized';
+  if (filters.status === 'finalized' && filters.exported === 'no') return 'unexported';
+  if (!filters.status && filters.exported === 'no') return 'either';
+  return null;
+}
+
+// Which of the ledger's filters cannot become part of a file. Named out loud
+// rather than silently dropped.
+function caveatsOf(filters) {
+  const c = [];
+  if (filters.q) c.push('the search text');
+  if (filters.cm) c.push('the client/matter filter');
+  if (filters.task) c.push('the task filter');
+  if (filters.billable !== '') c.push('the billable filter');
+  if (filters.exported === 'yes') c.push('the “already exported” filter');
+  // A draft that was exported, then unlocked, keeps its stale stamp: the ledger
+  // can hide it and the server's "unfinalized" rule cannot.
+  if (filters.status === 'draft' && filters.exported === 'no') c.push('the “not exported yet” filter');
+  return c;
+}
+
+function scopeFor(filters, list, { ids = null, useListDates = false } = {}) {
+  const dates = list.map((e) => e.date).filter(Boolean).sort();
+  const first = dates[0] || todayStr();
+  const last = dates[dates.length - 1] || todayStr();
+  return {
+    from: useListDates ? first : (filters.from || first),
+    to: useListDates ? last : (filters.to || last),
+    attention: attentionOf(filters),
+    includeDrafts: list.some((e) => e.status === 'draft') && !attentionOf(filters) && !!ids,
+    caveats: caveatsOf(filters),
+    ids,
+  };
+}
 
 export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const increment = settings?.rounding?.increment || 0.1;
@@ -413,8 +772,16 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const [taskCodes, setTaskCodes] = useState([]);
+  const [exportScope, setExportScope] = useState(null);
+  const [route, setRoute] = useState(() => exportRouteOf(location.hash));
 
   useEffect(() => { api.get('/api/task-codes?includeInactive=1').then(setTaskCodes).catch(() => {}); }, []);
+
+  useEffect(() => {
+    const onHash = () => setRoute(exportRouteOf(location.hash));
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
 
   const qs = (() => {
     const p = new URLSearchParams();
@@ -449,12 +816,75 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
   });
   const allSelected = entries.length > 0 && entries.every((e) => selected.has(e.id));
 
+  // THE DEEP LINK, AND WHERE THE DIALOG COMES UP.
+  //
+  // #/entries/export        → the ledger, unfiltered, with the dialog open.
+  //                           This is the navigation item's target: "Export"
+  //                           is a thing you do, and doing it is one tap.
+  // #/entries/export/<f>…   → the ledger with that filter's chips applied and
+  //                           NO dialog. These links come from the dashboard's
+  //                           stalled-time callout, whose button says *Review*;
+  //                           opening a download dialog over the list someone
+  //                           came to read would be answering a question they
+  //                           did not ask. Export… is right there in the head.
+  const routeKey = route ? `${route.filter}:${route.from || ''}` : '';
+  useEffect(() => {
+    // A deep link carries a filter: apply it as chips and leave the list to be
+    // read. Bare #/entries/export carries none, so it changes nothing about
+    // what is on screen and simply opens the dialog over it.
+    const deep = !!route && (route.filter !== 'all' || !!route.from);
+    if (deep) {
+      const next = { ...EMPTY_FILTERS, ...(FILTER_CHIPS[route.filter] || {}) };
+      if (route.from) { next.from = route.from; next.to = todayStr(); }
+      setFilters(next);
+    }
+    if (route && !deep) setExportScope({ pending: true, fromRoute: true });
+    else setExportScope((s) => (s && s.fromRoute ? null : s));
+  }, [routeKey]);
+
+  // A route-opened dialog has no range until the ledger's rows have landed, so
+  // it opens `pending` and takes its scope from the list a moment later.
+  useEffect(() => {
+    if (!exportScope || !exportScope.pending || loading) return;
+    setExportScope({ ...scopeFor(filters, entries), fromRoute: true });
+  }, [exportScope && exportScope.pending, loading, entries.length]);
+
+  function closeExport() {
+    const wasRoute = exportScope && exportScope.fromRoute;
+    setExportScope(null);
+    // Leave the export route behind, or the navigation item that opened this
+    // becomes a dead control: tapping "Export" again would not change the hash
+    // and nothing would reopen. A push, not a replace, so Back reopens it.
+    if (wasRoute && exportRouteOf(location.hash)) location.hash = '#/entries';
+  }
+
+  // COUNTS YOU CAN ACT ON, in place of "everything ever recorded". The two
+  // numbers a lawyer does something about are the drafts that still need a
+  // narrative and the finalized time that has never been sent; each one is a
+  // control that applies its own filter chip.
+  const draftCount = entries.filter((e) => e.status === 'draft').length;
+  const unsentCount = entries.filter((e) => e.status === 'finalized' && !e.exported_at).length;
+  const stats = [];
+  if (draftCount > 0 && filters.status !== 'draft') {
+    stats.push({
+      key: 'unfinalized', n: draftCount, label: 'unfinalized',
+      title: 'Show only the entries that are still drafts',
+      onClick: () => set({ status: 'draft', exported: '' }),
+    });
+  }
+  if (unsentCount > 0 && !(filters.status === 'finalized' && filters.exported === 'no')) {
+    stats.push({
+      key: 'unsent', n: unsentCount, label: 'not sent',
+      title: 'Show only the finalized entries that have never been exported',
+      onClick: () => set({ status: 'finalized', exported: 'no' }),
+    });
+  }
+
   // ACTIVE FILTERS ARE CHIPS, NOT A PERMANENT WALL OF CONTROLS.
-  // Before: six filter controls, always expanded, above the fold, on every
-  // visit — on a screen whose default answer is "everything". Attio, Linear
-  // and Notion all answer this the same way: the search box is always there,
-  // and a filter you have actually applied becomes a chip you can see and
-  // remove. The controls themselves live one tap away behind "Filters".
+  // Attio, Linear and Notion all answer this the same way: the search box is
+  // always there, and a filter you have actually applied becomes a chip you
+  // can see and remove. The controls themselves live one tap away behind
+  // "Filters".
   const chips = [];
   if (filters.cm) chips.push(['cm', filters.cm.short_name, () => set({ cm: null })]);
   if (filters.from) chips.push(['from', `From ${filters.from}`, () => set({ from: '' })]);
@@ -471,9 +901,17 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
   }
   const filtered = chips.length > 0 || !!filters.q;
 
+  const headActions = html`
+    <button type="button" class="btn ledger-export-btn" aria-haspopup="dialog"
+      disabled=${entries.length === 0}
+      title="Choose a file format for the entries this ledger is showing"
+      onClick=${() => setExportScope(scopeFor(filters, entries))}>
+      <${Icon} name="export" size=${16} /> Export…
+    </button>`;
+
   return html`
     <${LedgerHead} title="Entries" count=${entries.length} hours=${total} increment=${increment}
-      note=${filtered ? 'matching these filters' : 'everything ever recorded'} />
+      note=${filtered ? 'matching these filters' : null} actions=${headActions} stats=${stats} />
 
     <div class="ledger-toolbar">
       <div class="ledger-search-wrap">
@@ -556,7 +994,11 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
       </div>` : null}
 
     <${LedgerSelection} entries=${entries} selected=${selected} setSelected=${setSelected}
-      selecting=${selecting} setSelecting=${setSelecting} bumpRefresh=${bumpRefresh} />
+      selecting=${selecting} setSelecting=${setSelecting} bumpRefresh=${bumpRefresh}
+      onExport=${() => setExportScope(scopeFor(
+        filters, entries.filter((e) => selected.has(e.id)),
+        { ids: [...selected], useListDates: true },
+      ))} />
 
     ${error ? html`<${ErrorBox} error=${error} />`
       : loading && !data ? html`<${Spinner} />`
@@ -571,9 +1013,14 @@ export function SearchView({ settings, openEditor, refreshKey, bumpRefresh }) {
                 actionLabel="Add an entry" onAction=${() => openEditor({ template: {} })} />`}
           </div>`
           : html`
-            <${LedgerTable} entries=${entries} increment=${increment} mode="ledger"
+            <${LedgerTable} entries=${entries} increment=${increment}
               openEditor=${openEditor} onChanged=${bumpRefresh}
               selected=${selected} onToggle=${toggle} selecting=${selecting}
               onSelectAll=${() => setSelected(allSelected ? new Set() : new Set(entries.map((e) => e.id)))} />`}
+
+    ${exportScope && !exportScope.pending ? html`
+      <${ExportDialog} scope=${exportScope} increment=${increment}
+        onClose=${closeExport} onDone=${bumpRefresh}
+        onShowDrafts=${(f, t) => setFilters({ ...EMPTY_FILTERS, from: f, to: t, status: 'draft' })} />` : null}
   `;
 }

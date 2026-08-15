@@ -73,9 +73,20 @@
   padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
   border-top: var(--border-w) solid var(--border-subtle);
   min-width: 0;
+  /* A row scrolled into view (the attention line's "N need a narrative", a
+     just-created timer, the roving focus) has to clear BOTH pieces of fixed
+     chrome, or it lands under the run bar at the top or under the bottom bar
+     — which is exactly how the first row of the list ended up 34px tall with
+     its text cut mid-word. --runbar-total is 0 when nothing is running, so
+     this is unconditional. */
+  scroll-margin-top: calc(var(--runbar-total) + var(--space-6));
+  scroll-margin-bottom: calc(var(--shell-nav-total) + var(--space-6));
   transition: background var(--dur-fast) var(--ease-standard),
               box-shadow var(--dur-fast) var(--ease-standard);
 }
+/* …and the list itself, so "scroll to the top of today's work" clears the
+   section heading instead of parking it under the bar. */
+.today-list, .today-head { scroll-margin-top: calc(var(--runbar-total) + var(--space-6)); }
 .today-list > .timer-section:first-child .work-rows > .work-row:first-child { border-top: 0; }
 .work-row[draggable="true"] { cursor: grab; }
 .work-row[draggable="true"]:active { cursor: grabbing; }
@@ -155,6 +166,18 @@
 .work-hint { margin: 0; }
 .work-tasks { margin-top: var(--space-1); }
 
+/* A matter with more than one entry today: one line each, behind its own
+   hours, so merging the rows never hides a narrative. */
+.work-entry { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
+.work-entry + .work-entry { margin-top: var(--space-1); }
+.work-entry > *:last-child { flex: 1 1 auto; min-width: 0; }
+.work-entry-h {
+  flex: none; width: 3.2rem; text-align: right;
+  font-family: var(--font-clock); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm); color: var(--figure-quiet);
+  padding-top: var(--space-px);
+}
+
 .timer-flag { flex: none; display: inline-flex; color: var(--text-muted); }
 /* "running a long time — still working?" is an attention signal, so it takes
    the ONE attention hue rather than a third orange of its own (tokens.css §7) */
@@ -177,13 +200,48 @@
 }
 .timer-stop-btn:hover { background: color-mix(in srgb, var(--live) 26%, var(--surface-1)); }
 
-/* --- figures --- */
+/* --- figures ---
+   A FIGURE HAS NO HUE (tokens.css §7a, tier 3): rank comes from size, weight
+   and tabular figures, and the saturated accent is left to the one thing on
+   the screen you act on. The only exception is the counter that is actually
+   moving, which takes --live because "right now" is a state, not a number. */
 .work-figures { flex: none; display: flex; align-items: baseline; gap: var(--space-2); margin-left: auto; }
 .timer-clock-pair { display: flex; align-items: baseline; gap: var(--space-1); flex: none; }
+/* THE LIVE CLOCK, ON THE RUNNING ROW ONLY.
+   The wave critic read this column as "two unlabelled numbers with different
+   dotted underlines and no header" — 00:00:00 beside 0.0 on a timer that was
+   not running said the same nothing twice. HH:MM:SS now appears only while the
+   clock is actually ticking, where its format is unmistakably a clock and the
+   decimal beside it is unmistakably hours. It is still the tap target that
+   opens the clock editor, so nothing was demoted to a tooltip. */
 .timer-clock-raw {
   font-family: var(--font-clock);
   font-size: var(--fs-num-sm); color: var(--text-muted); font-variant-numeric: tabular-nums;
+  border: 0; background: none; padding: 0 var(--space-1); border-radius: var(--radius-xs);
+  cursor: text; flex: none;
 }
+button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-primary); }
+/* THE WORD THAT ENDS THE AMBIGUITY. On the one row shape where two decimal
+   figures are both true — the day's record and a clock that has parted company
+   with it — the smaller one is labelled, so the pair can never be read as an
+   unexplained "0.1 2.7". */
+.figure-clock { display: inline-flex; align-items: baseline; gap: var(--space-1); flex: none; }
+/* Lowercase on purpose: the app's uppercase micro style marks a SECTION
+   heading, and this is a unit beside a number ("clock 0.0"), which is the one
+   thing that stops the pair reading as an unexplained "0.1 2.7". */
+.figure-tag {
+  flex: none; color: var(--text-muted);
+  font-size: var(--fs-caption); line-height: var(--lh-caption); font-weight: var(--fw-caption);
+}
+/* The day panel's figure is a reading, not a control — so it takes the
+   recorded figure's size and weight and NONE of its dotted underline, which is
+   this app's promise that a thing can be edited in place. */
+.work-hours-static {
+  font-family: var(--font-clock); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-num-lg); font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg);
+  color: var(--figure); white-space: nowrap; flex: none;
+}
+.work-hours-static.active { color: var(--live); }
 .timer-clock, .work-hours {
   font-family: var(--font-clock);
   font-size: var(--fs-num-md); font-weight: var(--fw-num-md); font-variant-numeric: tabular-nums;
@@ -191,8 +249,29 @@
   border: 0; background: none; color: var(--figure); cursor: text;
   padding: 0 var(--space-1); border-radius: var(--radius-xs); flex: none;
 }
-.work-hours { cursor: default; }
-.timer-clock:hover { background: var(--surface-2); }
+/* TAP-EDITABLE, AND IT SAYS SO. Both figures are buttons; a persistent dotted
+   underline is the affordance a pointer-only :hover tint never was. */
+.timer-clock, .work-hours {
+  text-decoration: underline; text-decoration-style: dotted;
+  text-decoration-color: var(--border-strong); text-underline-offset: 4px;
+}
+.timer-clock:hover, .work-hours:hover { background: var(--surface-2); text-decoration-color: var(--accent); }
+
+/* THE RECORDED FIGURE IS THE ROW'S NUMBER. It only exists on a row that has
+   recorded time today, and it is the same size wherever it appears — a matter
+   row with no timer states its hours exactly as loudly as one with. */
+.work-hours { font-size: var(--fs-num-lg); font-weight: var(--fw-num-lg); letter-spacing: var(--ls-num-lg); }
+
+/* TWO TRUE NUMBERS ON ONE ROW. Where a matter's recorded hours have parted
+   company with its clock, the recorded figure is the one that matters and the
+   clock steps down a size — never two figures shouting the same rank. */
+.work-figures.dual .timer-clock {
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
+  color: var(--figure-quiet); letter-spacing: var(--ls-num-sm);
+}
+/* a clock at zero next to a real recorded figure is eight characters of noise */
+.work-figures.dual .timer-clock-raw.zero { display: none; }
+
 /* the counter takes the live accent only while it is actually counting */
 .work-row.running .timer-clock { color: var(--live-strong); }
 .work-row.running .timer-clock-raw { color: var(--live); opacity: 0.8; }
@@ -201,6 +280,11 @@
   width: 4rem; font-size: var(--fs-num-md); font-weight: var(--fw-num-md);
   padding: var(--space-px) var(--space-1); text-align: center; flex: none;
 }
+/* The open figure editor: the field with a ±0.1 pill either side. These are
+   what replaced the four ±0.1/±0.2 rows in the row menu — the same adjustment,
+   on the number it adjusts, and the first version of it a thumb can reach. */
+.figure-edit { display: flex; align-items: center; gap: var(--space-1); flex: none; }
+.figure-step { flex: none; padding: 0 var(--space-2); font-variant-numeric: tabular-nums; }
 
 /* --- the one overflow --- */
 /* PERSISTENT, not hover-revealed. Carbon: "for mobile and touch devices the
@@ -262,20 +346,31 @@
    00:00:00 beside it: eight characters that say the same thing as the 0.0 next
    to them, while the matter name is what a lawyer reads to identify a row. */
 @media (max-width: 767px) {
+  /* 32px of air above a section heading is right on a page you read and wrong
+     on the one screen where the heading's job is to get out of the way of the
+     first row of work. */
+  .today-head { margin: var(--space-2) 0 var(--space-1); }
   .timer-clock-raw.zero { display: none; }
   .work-row { padding: var(--space-1) var(--space-2) var(--space-2) var(--space-3); gap: var(--space-1) var(--space-2); }
   /* The name keeps a readable minimum; a non-billable badge or an "Assign
      matter" prompt wraps under it rather than truncating "Firm administration"
      to "Firm admini…". Conditional chrome: only the rows that need the extra
      line get it. */
-  .work-head { flex: 1 1 5rem; }
+  /* 4rem, not 5: flexbox WRAPS before it shrinks, so the hypothetical widths
+     of [Start] [name] [figures] [⋯] have to add up under the row's content
+     box (336px at 390) or the ⋯ drops onto a line of its own — which is what
+     it did on the Calendar day panel's running row. The name still grows into
+     whatever is left over. */
+  .work-head { flex: 1 1 4rem; }
   .work-toggle { padding-left: var(--space-2); padding-right: var(--space-2); }
   /* The matter name is what a lawyer reads to identify a row, so at 390px it
      WRAPS rather than truncating — "Acme — lease disp…" and
      "Northgate — diligen…" are not identifications. Only the rows with long
-     names pay the second line. */
+     names pay the second line. 8ch, not 12: at 12 the ⋯ on a RUNNING row was
+     pushed onto a line of its own once [Stop] [name] [00:00:07] [2.7] had to
+     share 358px. */
   .timer-name {
-    min-width: 12ch; white-space: normal; overflow: visible; text-overflow: clip;
+    min-width: 8ch; white-space: normal; overflow: visible; text-overflow: clip;
     line-height: var(--lh-body);
   }
   /* The matter NUMBER is what gets keyed into the billing system at export
@@ -285,7 +380,59 @@
   .work-cm { display: none; }
   .timer-search { max-width: none; }
   .filter-pill { min-height: var(--tap-min); }
+  /* base.css's phone tier lists the controls it knows by name; the recorded-
+     hours figure is new, and it is a real target now that it is editable. */
+  .work-hours, .figure-step {
+    min-height: var(--control-h-touch); min-width: var(--tap-min);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  /* NEVER MORE THAN TWO FIGURES ON A ROW, and it is structural now rather
+     than a CSS amputation of a third one: HH:MM:SS renders only while the
+     clock runs, and the decimal clock only when it has parted company with
+     the record and is carrying something. */
+  .timer-clock-raw { font-size: var(--fs-num-sm); min-height: var(--control-h-touch); display: inline-flex; align-items: center; }
+
+  /* ONE FIGURE PER ROW ON A PHONE, and it is arithmetic rather than taste.
+     A 390px row holds [Start 68] [name ≥126] [figures] [⋯ 44] with 24px of
+     gaps: 138px is left for the figures, and two touch-sized numbers plus
+     their label need 126 — which is why the ⋯ was being pushed onto a line of
+     its own. So where the clock and the record have parted company the phone
+     states the RECORD, which is the number a lawyer bills.
+
+     The clock did not become unreachable by thumb — it became reachable for
+     the first time: it was hidden at this width before this wave too, with no
+     touch path at all, and Edit timer → "Clock now" is one now. */
+  .work-figures.dual .figure-clock { display: none; }
 }
+
+/* ---------- the Edit-timer dialog's "This timer" section ----------
+   Six rows moved here out of the row menu (see rowMenuItems in timergrid.js):
+   Duplicate, Move up, Move down, Pin to float window, New entry (zero clock)
+   and Delete. They were 28px popover rows; here they are ordinary buttons, and
+   at phone width base.css gives each of them a real 44×44 box inside the
+   overlay's bottom sheet. A rule and a small caption separate them from the
+   FIELDS above — Apple's grouped-list convention: the destructive and
+   structural actions sit in their own group, below the thing they act on. */
+.timer-lifecycle {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-2); padding-top: var(--space-3);
+  border-top: var(--border-w) solid var(--border);
+}
+.timer-lifecycle-head {
+  margin: 0;
+  font-size: var(--fs-micro); line-height: var(--lh-micro); font-weight: var(--fw-micro);
+  letter-spacing: var(--ls-micro); text-transform: uppercase; color: var(--text-muted);
+}
+.timer-lifecycle-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--gap-inline); }
+.timer-lifecycle-clock { display: flex; align-items: center; gap: var(--gap-inline); }
+.timer-lifecycle-clock input { width: 6rem; font-variant-numeric: tabular-nums; }
+.timer-lifecycle-pos {
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold);
+  margin-right: auto;
+}
+.timer-lifecycle-delete { color: var(--status-critical); }
+.timer-lifecycle-delete:hover { border-color: var(--status-critical); background: var(--status-critical-soft); }
 
 /* ---------- CSV timer import (list ⋯ menu → Import timers from CSV) ---------- */
 .import-map {

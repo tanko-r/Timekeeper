@@ -56,8 +56,14 @@
   /* A 44px touch row plus a little air; on a phone the row itself is the
      44px minimum plus its own padding, so the bar is a step taller. */
   --runbar-h: calc(var(--tap-min) + var(--space-1));
+  /* The RESTING bar carries one figure and no control, so it is a strip, not
+     a bar — a running timer must always be visibly taller than a quiet day. */
+  --runbar-rest-h: calc(var(--control-h-sm) + var(--space-1));
   --runbar-safe-t: env(safe-area-inset-top, 0px);
   --runbar-total: 0px;
+}
+:root.tk-runbar {
+  --runbar-total: calc(var(--runbar-rest-h) + var(--border-w) + var(--runbar-safe-t));
 }
 :root.tk-running {
   --runbar-total: calc(var(--runbar-h) + var(--border-w) + var(--runbar-safe-t));
@@ -106,13 +112,33 @@
 
 .runbar-gap { flex: 1 1 auto; }
 
+/* The day's filed total. A FIGURE HAS NO HUE (tokens.css §7a tier 3) — it
+   ranks by weight and tabular figures against the word beside it, and leaves
+   the accent to the one thing on the screen you act on. */
+.runbar-total {
+  flex: none; display: inline-flex; align-items: baseline; gap: var(--gap-tight);
+  color: var(--figure);
+}
+.runbar-total strong {
+  font-size: var(--fs-num-md); font-weight: var(--fw-num-md);
+  letter-spacing: var(--ls-num-md); font-variant-numeric: tabular-nums;
+}
+
 .runbar-stop { flex: none; font-weight: var(--fw-semibold); }
 .runbar-stop:hover { border-color: var(--border-strong); }
 .runbar-pop { flex: none; }
 
+/* The resting strip: one figure, no controls, no live dot, and a quieter
+   surface so a running timer is unmistakably the louder of the two states. */
+.runbar.resting {
+  height: calc(var(--runbar-rest-h) + var(--runbar-safe-t));
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
 /* Room for the bar. Mirrors shell.css's own .main padding steps, and only ever
    changes the top one. */
-.tk-running .main { padding-top: calc(var(--runbar-total) + var(--space-6)); }
+.tk-runbar .main { padding-top: calc(var(--runbar-total) + var(--space-6)); }
 
 @media (min-width: 768px) and (max-width: 1023px) {
   .runbar { left: var(--shell-rail-w); }
@@ -125,17 +151,29 @@
   /* The Stop button is a real 44px target here (base.css tier 2), so the bar
      grows to hold it rather than clipping it. */
   :root { --runbar-h: calc(var(--control-h-touch) + var(--space-2)); }
-  .tk-running .main { padding-top: calc(var(--runbar-total) + var(--space-5)); }
+  .tk-runbar .main { padding-top: calc(var(--runbar-total) + var(--space-5)); }
+  /* THE PHONE SPENDS NOTHING ON A QUIET DAY. Below 768px the day's filed total
+     is the bottom bar's leading label, so the resting strip has nothing left
+     to say — it stands down entirely and takes its offset with it. Measured
+     before this: three fixed bars, 173px, 20.5% of a 390×844 phone. Now it is
+     60px idle and 112px with a timer running. */
+  :root.tk-runbar:not(.tk-running) { --runbar-total: 0px; }
+  .runbar.resting { display: none; }
+  .runbar-total { display: none; }
   /* Document picture-in-picture is a desktop-Chrome capability; the control
      for it has no business taking a thumb-sized slot on a phone that cannot
      use it. It stays in Settings → Tools on every platform. */
   .runbar-pop { display: none; }
 }
 
-/* WHO OWNS WHAT, so the two bars never say the same thing twice: this bar owns
-   the LIVE CLOCK and Stop, on every screen; the dashboard's day footer
-   (components/todayfooter.js) owns the day's filed total and "Close the day",
-   on the one screen where a day is being closed. That split is the teardown's
-   own (§7, §E4) and both modules were written to it in this wave — there is no
-   CSS here suppressing anything the footer renders, and there should never
-   need to be. */
+/* WHO OWNS THE DAY'S NUMBER, so no two bars ever say it twice:
+     ≤767px  the BOTTOM BAR — its leading label, on every screen, always
+             visible, with "Close the day" as its trailing action. The day
+             footer is not rendered at this width and this bar's total is
+             hidden.
+     ≥768px  the day footer on the dashboard (where a day is closed), and THIS
+             BAR everywhere else — which is the hole the teardown measured
+             (§7, §D1): navigate off the dashboard and the figure a lawyer
+             manages his day by existed nowhere at all. app.js passes
+             showTotal only where the footer is not.
+   The LIVE CLOCK and Stop are this bar's alone, at every width. */

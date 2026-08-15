@@ -623,10 +623,262 @@
   .cms-table table.tk tbody tr.client-row td:nth-child(3) { order: 0; flex: 1 1 100%; }
   /* Six things do not fit one 358px line. "Fields" is the one with a home
      elsewhere — it is the first item of the ⋯ menu right beside it — so it is
-     the one that goes, and the header lands on two tight lines. The remaining
-     ⋯ follows the chip rather than being flung to the right margin, so a long
-     client name pushes it onto the next line without leaving a hole. */
+     the one that goes, and the header lands on two tight lines: name · chip · ⋯
+     above, client number below.
+
+     The ⋯ has to stop taking part in that wrap. As a plain wrapping flex row
+     the items reflow in source order — name, chip, ⋯ — so the moment a client
+     name got long enough ("Northgate Partners" does it at 390px) the ⋯ dropped
+     to a line of its own with a hole beside it. Lifting it out of the flow and
+     pinning it to the top-right corner (with its width reserved as padding, so
+     nothing can run underneath it) leaves the name and the chip to wrap in the
+     space that is left: one line when they fit, two when they do not, and the
+     ⋯ where a thumb expects it either way. The min-height is the pinned
+     button's own 44px — an absolutely positioned child cannot hold the row
+     open by itself. */
   .cms-fields-btn { display: none; }
-  .client-row-tools { margin-left: 0; }
-  .client-row-inner { gap: var(--space-1); }
+  .client-row-inner {
+    position: relative;
+    min-height: var(--tap-min);
+    padding-right: calc(var(--tap-min) + var(--space-1));
+    gap: var(--space-1) var(--space-2);
+  }
+  .client-row-inner > .client-row-tools {
+    position: absolute; top: 0; right: 0;
+    margin-left: 0;
+  }
+  .client-row-inner .client-name-cell { min-width: 0; }
+  .client-row-inner .client-name-cell strong {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+}
+
+/* ===========================================================================
+   THE ROW OVERFLOW — the menu behind every "⋯" in this area
+   =========================================================================
+
+   E8 moved five capabilities behind a ⋯ here. The critic then measured what
+   was behind it and found the move had only half landed: the triggers are a
+   correct 44×44, and every ROW in the menu was 28 CSS px — matter rows 291×28,
+   client rows 239×28, header rows 230×28, on a 390×844 phone, as the only
+   touch path to Edit matter, Custom fields, Archive matter, Turn off task
+   billing, Import matters from CSV and Download matter list.
+
+   views/cms.js now renders its own menu in the shape each pointer wants (see
+   the long note there). This is what it looks like:
+
+     .act-menu / .act-item   the ≥768px anchored popover — Primer ActionMenu's
+                             proportions, and a permanent :focus tint, because
+                             the roving focus IS this component's selection
+                             indicator and it must be visible however the menu
+                             was opened.
+     .act-sheet / .act-row   the phone bottom sheet, riding on the shared
+                             overlay primitive, so everything except the rows
+                             themselves comes from one place. 48px rows —
+                             Material 3's list item inside a modal sheet, and
+                             4px of headroom over the touch floor.
+--------------------------------------------------------------------------- */
+
+.act-menu {
+  position: fixed; z-index: var(--z-menu);
+  min-width: 240px; max-width: min(360px, calc(100vw - 2 * var(--space-2)));
+  max-height: min(480px, calc(100vh - 2 * var(--space-2)));
+  overflow-y: auto;
+  padding: var(--space-1);
+  background: var(--surface-raised);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+.act-menu:focus { outline: none; }
+
+.act-item, .act-row {
+  display: flex; align-items: center;
+  width: 100%;
+  border: 0;
+  background: none; color: var(--text-primary);
+  font-family: inherit;
+  letter-spacing: var(--ls-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.act-item {
+  gap: var(--space-2);
+  min-height: var(--control-h-md);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-label); line-height: var(--lh-body);
+  font-weight: var(--fw-regular);
+}
+.act-item:hover:not(:disabled) { background: var(--state-hover); }
+/* Not :focus-visible. Focus lands here only because this component put it
+   here, so the ring is the menu's active-item marker and has to show whether
+   the menu was opened by Enter or by a click. */
+.act-item:focus {
+  background: var(--state-hover);
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: calc(-1 * var(--focus-w));
+}
+.act-item:disabled, .act-row:disabled { opacity: 0.55; cursor: default; }
+.act-item.danger, .act-row.danger { color: var(--danger); }
+
+.act-ico {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--icon-md);
+  color: var(--text-muted);
+}
+.act-item.danger .act-ico, .act-row.danger .act-ico { color: currentColor; }
+.act-label { min-width: 0; }
+
+.act-sep {
+  border-top: var(--border-w) solid var(--border-subtle);
+  margin: var(--space-1) var(--space-2);
+}
+
+/* A tablet is a coarse pointer wide enough to get the popover rather than the
+   sheet, so the popover has to meet the floor too. */
+@media (pointer: coarse) {
+  .act-item { min-height: var(--tap-min); padding: var(--space-2); }
+  .act-ico { width: var(--icon-lg); }
+}
+
+.act-sheet .act-list { display: flex; flex-direction: column; gap: var(--space-px); }
+.act-sheet .act-sep { margin-inline: 0; }
+.act-row {
+  gap: var(--space-3);
+  min-height: var(--control-h-xl);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: var(--fw-medium);
+}
+.act-row:hover:not(:disabled) { background: var(--state-hover); }
+.act-row:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: calc(-1 * var(--focus-w));
+  background: var(--state-hover);
+}
+.act-row .act-ico { width: var(--icon-lg); }
+
+/* ---------------------------------------------------------------------------
+   THE ONE <input type="file"> IN THE APP
+
+   It is the CSV import sheet Clients & matters opens, and the critic measured
+   it at 253×21 CSS px: half the touch floor, and the only control anywhere in
+   the settings surface that was not in the design system — a raw native
+   "Choose File" button sitting in a dialog whose own Close button is a correct
+   44×44.
+
+   The markup belongs to components/timerimport.js, which this wave does not
+   own, so the control is dressed rather than replaced. That turns out to be
+   the better answer anyway: `::file-selector-button` is a real box, so the
+   native button takes the same tokens every other button in the app takes, the
+   file name keeps showing beside it for free, and there is no hidden input to
+   keep in sync with a fake label. Scoped to a dialog panel because that is
+   where the only one lives — if a second ever appears on a page, it wants this
+   too, and this rule should move to base.css with it.
+--------------------------------------------------------------------------- */
+
+/* Not a flex container: the file NAME is anonymous shadow text, not a flex
+   item, so flex only moves the button and leaves the name where it was (it
+   overflowed the box and read as a single clipped "N"). Normal flow, with the
+   pseudo-element as an inline-block, is what actually lays the two out. */
+.ovl-panel input[type="file"] {
+  display: block;
+  width: 100%; min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-w) dashed var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--control-h-md);
+  cursor: pointer;
+}
+.ovl-panel input[type="file"]::file-selector-button {
+  display: inline-block;
+  margin-right: var(--space-3);
+  min-height: var(--control-h-md);
+  padding: 0 var(--space-4);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-semibold);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.ovl-panel input[type="file"]:hover::file-selector-button {
+  background: var(--state-hover);
+  border-color: var(--border-strong);
+}
+.ovl-panel input[type="file"]:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+  box-shadow: var(--focus-halo);
+}
+@media (max-width: 767px) {
+  /* On a phone the button takes the whole line at the sheet's own button
+     height (--control-h-xl, the same 48px every primary in a bottom sheet
+     gets), and the file name reads underneath it rather than being squeezed
+     into whatever is left of 358px. `display: block` is what puts the name on
+     its own line — see the note above. */
+  .ovl-panel input[type="file"] {
+    padding: var(--space-3);
+    line-height: var(--lh-label);
+  }
+  .ovl-panel input[type="file"]::file-selector-button {
+    display: block;
+    width: 100%;
+    min-height: var(--control-h-xl);
+    margin: 0 0 var(--space-2);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   TOOLS — the four actions that are verbs, not settings
+
+   A labelled action list rather than `.set-row`: every one of these does
+   something and has no value to set, so label-left / control-right would print
+   the same word twice. `Run /todo` renders shell.css's `.navlink` (it is the
+   same component the sidebar used, so its armed and agent-live states come
+   along unchanged) — hence the child-of-a-class selector, which out-specifies
+   `.navlink` for shape while leaving `.navlink.armed` and `.navlink.agent-live`
+   to win on colour, and which also stands down the sidebar RAIL rules that
+   would otherwise turn these into centred icon columns between 768 and 1023px.
+--------------------------------------------------------------------------- */
+
+.set-tools { display: flex; flex-direction: column; gap: var(--space-2); }
+.set-tools > button {
+  display: flex; flex-direction: row;
+  align-items: center; justify-content: flex-start;
+  gap: var(--gap-inline);
+  width: 100%; min-height: var(--tap-min);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-1); color: var(--text-primary);
+  font-family: inherit;
+  font-size: var(--fs-body); line-height: var(--lh-body);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-body);
+  text-align: left; cursor: pointer;
+  transition: var(--transition-control);
+}
+.set-tools > button svg {
+  flex: none;
+  width: var(--icon-lg); height: var(--icon-lg);
+  color: var(--text-muted);
+}
+.set-tools > button:hover:not(:disabled) {
+  background: var(--state-hover);
+  border-color: var(--border-strong);
+}
+.set-tools > button:disabled { opacity: 0.6; cursor: default; }
+.set-tools > button:focus-visible {
+  outline: var(--focus-w) solid var(--focus-outer);
+  outline-offset: var(--focus-offset);
+  box-shadow: var(--focus-halo);
 }

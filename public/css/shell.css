@@ -356,6 +356,46 @@
 .btn-kbd { margin-left: var(--space-1); }
 @media (max-width: 767px) { .btn-kbd { display: none; } }
 
+/* THE DAY HEADER IS ONE BAND.
+   The generic rules above give a page header a title line and an actions line,
+   which is right for a screen whose header is chrome. The Today screen's
+   header is not chrome — it is the date and the app's most frequent verb, and
+   spending two full-width rows (104px measured at 390px) on them pushed the
+   day's work under the fold. So this one header keeps everything on one line
+   at every width: no flex break, a primary that takes only the room it needs,
+   and a title that drops its year on a phone. */
+.day-head h1 .dh-short { display: none; }
+@media (max-width: 1023px) {
+  /* deliberately more specific than the generic `.page-head > .spacer` break
+     further down this file, which is what turns every other header into two
+     rows below the desktop width */
+  .page-head.day-head > .spacer { flex: 1 1 auto; height: auto; margin: 0; }
+}
+@media (max-width: 767px) {
+  /* ONE LINE, DETERMINISTICALLY. It was one line only while the five controls
+     and the date happened to add up to less than 358px, and at 390px they add
+     up to about 353 — so a font-metric wobble put the primary on a second row
+     and cost 48px of the first screen, which the wave critic measured as part
+     of the 46% of the phone spent on chrome. `nowrap` plus a title that can
+     shrink makes the header 44px at every width; the date steps down one type
+     size, which is enough that it never actually has to truncate. */
+  .page-head.day-head {
+    flex-wrap: nowrap; gap: var(--space-1); margin-bottom: var(--space-3);
+  }
+  .day-head h1 {
+    font-size: var(--fs-heading); line-height: var(--lh-heading);
+    flex: 0 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .day-head h1 .dh-long { display: none; }
+  .day-head h1 .dh-short { display: inline; }
+  .day-head .page-head-actions { flex: 0 0 auto; }
+  .day-head .page-head-actions > .btn-primary { flex: 0 0 auto; }
+  .day-head .day-quick .dq-long { display: none; }
+  .day-head .day-quick .dq-short { display: inline; }
+}
+.day-quick .dq-short { display: none; }
+
 /* ---------------------------------------------------------------------------
    Filter bar + date range — the shape a screen uses to say "show me this much
    of the data". Export's filters and the day view's custom range are the two
@@ -450,6 +490,33 @@
 .botnav-capture:hover .botnav-ind { background: var(--accent-hover); }
 .botnav-capture:active .botnav-ind { background: var(--accent-active); }
 .botnav-capture .botnav-label { color: var(--text-primary); font-weight: var(--fw-semibold); }
+
+/* The bar's LEADING TEXT SLOT — the day's filed total, which used to need a
+   whole second fixed bar 61px tall directly above this one. It is a status
+   readout, not a control: no tap target, no hue, and it ranks by weight and
+   tabular figures the way every other figure in the app does (tokens.css
+   §7a tier 3). */
+.botnav-total {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-0-5);
+  padding: var(--space-1) var(--space-1);
+  color: var(--figure);
+}
+.botnav-total strong {
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm);
+  letter-spacing: var(--ls-num-sm); font-variant-numeric: tabular-nums;
+  line-height: var(--lh-num-sm);
+}
+.botnav-total-cap {
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  letter-spacing: var(--ls-caption); color: var(--text-muted);
+}
+/* …and the TRAILING ACTION. It is the day's commit, so it reads as a
+   destination-shaped slot rather than a second filled surface competing with
+   the capture control. */
+.botnav-close .botnav-ind { color: var(--text-secondary); }
+.botnav-close:hover .botnav-ind { background: var(--state-hover); color: var(--text-primary); }
 
 /* Settings → Tools: the three actions that left the navigation. They are the
    same .navlink rows they were in the sidebar, so the armed/agent-live states
@@ -832,11 +899,28 @@
     border-top: var(--border-w) solid var(--border);
   }
 
-  /* Bars owned by other modules, moved out of the navigation bar's way. The
-     selectors are deliberately more specific than their own, because those
-     modules load after this one. */
-  .shell .today-footer { left: 0; right: 0; bottom: var(--shell-nav-total); }
+  /* THREE FIXED BARS ON A PHONE, MEASURED: run bar 0→52, day footer 722→783,
+     bottom navigation 784→844 — 173px, 20.5% of the screen, and the reason
+     exactly 34px of the first row of the day's work was visible, cut
+     mid-word. The teardown's instruction was to MERGE the footer into the
+     bottom-navigation region rather than stack a second bar above it, so
+     below 768px the footer does not render at all: its filed total is this
+     bar's leading label and its "Close the day" is this bar's trailing
+     action, both above in this file. Nothing was lost — both are now on
+     EVERY screen instead of only the dashboard. */
+  .shell .today-footer { display: none; }
   #root .toast-host { bottom: calc(var(--shell-nav-total) + var(--space-3)); }
+
+  /* Seven slots in 390px: the total, four destinations, capture, close. The
+     destinations share what is left evenly and the two ends take only what
+     they need. */
+  .botnav-item { padding-inline: 0; }
+  .botnav-ind { width: var(--space-9); height: var(--space-6); }
+  .botnav-label {
+    font-size: var(--fs-micro); line-height: var(--lh-micro);
+    letter-spacing: var(--ls-micro);
+  }
+  .botnav-total { padding-inline: var(--space-2) var(--space-1); }
 
   /* Page header: the title keeps its own line (break above), and the actions
      share the lines below, growing to fill them — a lone primary action ends

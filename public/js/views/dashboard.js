@@ -1,8 +1,9 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  fmtDateFull, addDays, todayStr, emitToast, Confirm, ContextMenu, Icon,
+  html, React, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
+  fmtDateFull, addDays, todayStr, emitToast, Confirm, Icon,
 } from '/js/ui.js';
+import { ActionMenu, usePhone } from '/js/components/entrylist.js';
 import { TodayList } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
@@ -10,6 +11,15 @@ import { CloseOut } from '/js/components/closeout.js';
 import { SummaryModal } from '/js/components/summary.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
 import { nav } from '/js/app.js';
+
+// The date without its year — a phone's header has room for one of the two,
+// and "2026" is not the half a lawyer keying today's time is reading.
+function fmtDateShort(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
 
 // Monday of the ISO week containing `dateStr`.
 function mondayOf(dateStr) {
@@ -25,6 +35,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   const [closeOut, setCloseOut] = useState(false);
   const [summary, setSummary] = useState(null);
   const [dayMenu, setDayMenu] = useState(null);
+  const [attnMenu, setAttnMenu] = useState(null);
+  const phone = usePhone();
 
   // WEEK TO DATE (teardown D6: "the number a lawyer actually manages — am I on
   // pace this week — appears nowhere on the screen he lives on"). One extra
@@ -156,40 +168,88 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     : null;
 
   const hasStale = alerts.unfinalized.count > 0 || alerts.reverted.count > 0;
-  const quietItems = [
+  // ONE BAND, ONE LINE. The wave critic measured the phone's first screen and
+  // found 338px of header, meter and attention before the first row of work —
+  // 46% of a 390×844 viewport — of which this block was an amber banner ROW
+  // plus a second row of backlog links. The teardown's §C sketch is a single
+  // attention line ("2 need a narrative · 17 finalized entries not yet
+  // exported") and that is what this is now: one band, every count a real link
+  // to exactly what it counts, the stale-time warning first and carrying the
+  // band's amber rail because unfinalized time on a day that is already over
+  // is the most expensive failure mode in legal billing (teardown D3).
+  //
+  // Nothing lost: the Review button became the warning's own text-as-link (it
+  // opened the same filtered ledger), and the detail that used to be a second
+  // line — oldest date, hours — is in each link's tooltip and on the page it
+  // opens.
+  const attnItems = [
+    alerts.unfinalized.count > 0 ? {
+      key: 'unfinalized',
+      stale: true,
+      label: `${alerts.unfinalized.count} ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} not finalized · ${fmtHours(alerts.unfinalized.hours)}h`,
+      sheetLabel: `Review ${alerts.unfinalized.count} unfinalized ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} on earlier days`,
+      icon: 'alert',
+      title: `Oldest ${alerts.unfinalized.oldest} — time recorded on a day that is already over`,
+      onClick: () => nav(attentionLink('unfinalized', alerts.unfinalized)),
+    } : null,
+    alerts.reverted.count > 0 ? {
+      key: 'reverted',
+      stale: true,
+      label: `${alerts.reverted.count} unlocked after finalizing · ${fmtHours(alerts.reverted.hours)}h`,
+      sheetLabel: `Review ${alerts.reverted.count} unlocked after finalizing`,
+      icon: 'unlock',
+      title: 'Still reads as done everywhere else',
+      onClick: () => nav(attentionLink('unfinalized', alerts.reverted)),
+    } : null,
     needNarrative.length > 0 ? {
       key: 'narr',
+      icon: 'edit',
       label: `${needNarrative.length} ${needNarrative.length === 1 ? 'entry needs' : 'entries need'} a narrative`,
       title: 'Jump to the first one and start typing',
       onClick: () => jumpToEntry(needNarrative[0].id),
     } : null,
     needMatter.length > 0 ? {
       key: 'matter',
+      icon: 'folder',
       label: `${needMatter.length} without a matter`,
       title: 'Open the first one and assign its client/matter',
       onClick: () => openEditor({ id: needMatter[0].id }),
     } : null,
     otherInvalid.length > 0 ? {
       key: 'valid',
+      icon: 'alert',
       label: `${otherInvalid.length} with validation findings`,
       title: otherInvalid[0].codes.join(', '),
       onClick: () => openEditor({ id: otherInvalid[0].id }),
     } : null,
     alerts.unexported.count > 0 ? {
       key: 'unexported',
+      icon: 'export',
       label: `${alerts.unexported.count} finalized, not yet exported · ${fmtHours(alerts.unexported.hours)}h`,
       title: `Oldest ${alerts.unexported.oldest} — finalized but never sent`,
       onClick: () => nav(attentionLink('unexported', alerts.unexported)),
     } : null,
   ].filter(Boolean);
+  const attnMenuItems = attnItems.map((it) => ({
+    label: it.sheetLabel || it.label, icon: it.icon, onClick: it.onClick,
+  }));
 
   return html`
     <div class="dashboard-view">
+    ${/* ONE BAND, NOT TWO. The date navigation and the day's one primary
+          action shared a header that broke into two full-width rows on a
+          phone — 104px of it — before a single number or row of work. They
+          are one line now, and the title drops its year at 390px, which is
+          the only part of the date a lawyer keying today's time does not
+          need. */''}
     <div class="page-head day-head">
       <button class="btn btn-icon" title="Previous day ([) — past days keep everything recorded on them"
         aria-label="Previous day"
         onClick=${() => nav(`#/day/${addDays(d.date, -1)}`)}><${Icon} name="chevronLeft" size=${16} /></button>
-      <h1>${fmtDateLong(d.date)}</h1>
+      <h1>
+        <span class="dh-long">${fmtDateLong(d.date)}</span>
+        <span class="dh-short" aria-hidden="true">${fmtDateShort(d.date)}</span>
+      </h1>
       <button class="btn btn-icon" title="Next day (])" aria-label="Next day"
         onClick=${() => nav(`#/day/${addDays(d.date, 1)}`)}><${Icon} name="chevronRight" size=${16} /></button>
       ${/* The day's rare actions — new entry, summary, finalize, export — sit
@@ -209,7 +269,10 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <div class="page-head-actions">
         <button class="btn btn-primary day-quick" title="Quick start — a timer running now; assign the matter after the call"
           onClick=${() => window.dispatchEvent(new CustomEvent('tk:quick-timer'))}>
-          <${Icon} name="play" size=${16} /> Quick start</button>
+          <${Icon} name="play" size=${16} />
+          <span class="dq-long">Quick start</span>
+          <span class="dq-short" aria-hidden="true">Quick</span>
+        </button>
       </div>
     </div>
 
@@ -218,41 +281,41 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     <${TargetMeter} billable=${d.today.billable} nonbillable=${d.today.nonbillable}
       target=${d.today.target} total=${d.today.total} week=${weekData} />
 
-    ${hasStale || quietItems.length > 0 ? html`
-      <div class="attn">
-        ${alerts.unfinalized.count > 0 ? html`
-          <div class="attn-stale" role="status">
-            <${Icon} name="alert" size=${18} />
-            <div class="attn-stale-text">
-              <strong>${`${alerts.unfinalized.count} ${alerts.unfinalized.count === 1 ? 'entry' : 'entries'} on earlier days ${alerts.unfinalized.count === 1 ? 'is' : 'are'} not finalized`}</strong>
-              <span class="muted small">${`${fmtHours(alerts.unfinalized.hours)}h · oldest ${alerts.unfinalized.oldest} — time recorded on a day that is already over`}</span>
-            </div>
-            <button class="btn btn-sm attn-action"
-              onClick=${() => nav(attentionLink('unfinalized', alerts.unfinalized))}>Review</button>
-          </div>` : null}
-        ${alerts.reverted.count > 0 ? html`
-          <div class="attn-stale" role="status">
-            <${Icon} name="unlock" size=${18} />
-            <div class="attn-stale-text">
-              <strong>${`${alerts.reverted.count} unlocked after finalizing`}</strong>
-              <span class="muted small">${`${fmtHours(alerts.reverted.hours)}h — still reads as done everywhere else`}</span>
-            </div>
-            <button class="btn btn-sm attn-action"
-              onClick=${() => nav(attentionLink('unfinalized', alerts.reverted))}>Review</button>
-          </div>` : null}
-        ${quietItems.length > 0 ? html`
-          <p class="attn-line">
-            ${quietItems.map((it) => html`
-              <button key=${it.key} class="attn-link" title=${it.title} onClick=${it.onClick}>${it.label}</button>`)}
-          </p>` : null}
+    ${/* ATTENTION, IN ONE 44px BAND.
+          On a phone it is the most urgent item as a direct link plus "+N more"
+          — one tap to the thing that matters, one tap deeper to a 48px sheet
+          row for each of the rest. On a desktop, where the line has 1400px to
+          play with, every count is inline. Either way it is ONE band, not a
+          banner row above a link row. */''}
+    ${attnItems.length > 0 ? html`
+      <div class=${'attn' + (hasStale ? ' attn-warn' : '')} role="status">
+        <${Icon} name=${attnItems[0].icon} size=${16} className="attn-icon" />
+        <p class="attn-line">
+          ${(phone ? attnItems.slice(0, 1) : attnItems).map((it, i) => html`
+            <${React.Fragment} key=${it.key}>
+              ${i > 0 ? html`<span class="attn-dot" aria-hidden="true">·</span>` : null}
+              <button class=${'attn-link' + (it.stale ? ' attn-link-stale' : '')}
+                title=${it.title} onClick=${it.onClick}>${it.label}</button>
+            <//>`)}
+        </p>
+        ${phone && attnItems.length > 1 ? html`
+          <button class="btn btn-sm attn-more" title="Everything else that needs attention today"
+            onClick=${(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setAttnMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
+            }}>+${attnItems.length - 1} more</button>` : null}
       </div>` : null}
 
     <${TodayList} settings=${settings} entries=${d.entries} onEntryChanged=${bumpRefresh}
       openEditor=${openEditor} />
 
     ${dayMenu ? html`
-      <${ContextMenu} x=${dayMenu.x} y=${dayMenu.y} items=${dayMenuItems}
+      <${ActionMenu} x=${dayMenu.x} y=${dayMenu.y} title="Day actions" items=${dayMenuItems}
         onClose=${() => setDayMenu(null)} />` : null}
+
+    ${attnMenu ? html`
+      <${ActionMenu} x=${attnMenu.x} y=${attnMenu.y} title="Needs attention" items=${attnMenuItems}
+        onClose=${() => setAttnMenu(null)} />` : null}
 
     ${warnGate ? html`
       <${Confirm} title="Finalize with warnings?" confirmLabel="Finalize anyway"

@@ -113,10 +113,11 @@ table.tk tr.client-row td {
       day it used to open is `.day-panel` right below the grid.
    =========================================================================== */
 
-/* The screen's own stacking context, so the phone can put the picture first.
-   On a phone the aggregate belongs UNDER the thing it aggregates: the grid is
-   what a thumb came for, the strip is what it reads afterwards. Order only
-   moves non-interactive blocks, so DOM order and focus order still agree. */
+/* Grid, legend, selected day — in that order, at every width. The phone used
+   to reorder this column to push the period strip below the day's entries;
+   the strip is part of the page header now (see THE PERIOD STRIP below), so
+   there is nothing left to reorder and DOM order, paint order and focus order
+   are the same order again. */
 .cal-view { display: flex; flex-direction: column; gap: var(--space-5); }
 /* the shared .panel rule carries a margin-top for stacked dashboard panels;
    inside this column the gap does that job */
@@ -249,7 +250,8 @@ table.tk tr.client-row td {
   gap: var(--space-2); margin-bottom: var(--space-3);
 }
 .day-panel-head h2 {
-  margin: 0;
+  margin: 0; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--fs-heading); line-height: var(--lh-heading);
   font-weight: var(--fw-heading); letter-spacing: var(--ls-heading);
 }
@@ -260,6 +262,33 @@ table.tk tr.client-row td {
   gap: var(--space-2); margin-bottom: var(--space-3);
 }
 .day-panel-scope .seg { margin-left: 0; }
+
+/* ---------- the day-actions overflow, as a phone bottom sheet ----------
+   The desktop popover's rows are 28px tall (`.ctx-item`, overlays.css) —
+   correct for a pointer, and the whole affordance for Summary, Finalize day
+   and Download CSV under a thumb. These rows are the full width of the sheet
+   and a full touch target tall, which is what Material 3's menu-on-a-phone
+   and Apple's action sheet both are. The primitive underneath is the app's
+   ONE overlay (views/calendar.js) — nothing here re-declares a backdrop, a
+   trap or a panel; this styles rows inside one. */
+.sheet-menu { display: flex; flex-direction: column; }
+.sheet-item {
+  display: flex; align-items: center; gap: var(--space-3);
+  width: auto; min-height: var(--control-h-touch);
+  margin: 0 calc(var(--space-4) * -1);
+  padding: var(--space-2) var(--space-4);
+  border: 0; background: none; color: var(--text-primary);
+  font: inherit; font-size: var(--fs-body); line-height: var(--lh-body);
+  text-align: left; cursor: pointer;
+}
+.sheet-item + .sheet-item { border-top: var(--border-w) solid var(--border-subtle); }
+/* The row runs edge to edge of the sheet, so an outset focus ring would be
+   drawn half outside the panel and read as a rule across the whole screen.
+   Same inversion the bottom navigation's items use (shell.css). */
+.sheet-item:focus-visible { outline-offset: calc(var(--focus-offset) * -1); }
+.sheet-item:hover { background: var(--state-hover); }
+.sheet-item:active { background: var(--state-selected); }
+.sheet-item svg { flex: none; color: var(--text-secondary); }
 
 /* ===========================================================================
    THE PERIOD STRIP — what used to be the Stats screen's four boxed tiles.
@@ -277,6 +306,16 @@ table.tk tr.client-row td {
   border: var(--border-w) solid var(--border); border-radius: var(--radius);
   padding: var(--space-4) var(--space-5);
 }
+/* IT IS PART OF THE PAGE HEADER NOW, on every surface. The wave critic found
+   the same three numbers under the desktop Calendar's title, under the mobile
+   Statistics title, and at the very BOTTOM of the mobile Calendar — y≈2200 of
+   a 2470px page, below all five entry rows. `.cal-head` is a wrapping flex
+   row, so the strip claims its own full-width line under the period controls
+   and cannot drift again. */
+.cal-head > .period-strip { flex: 1 1 100%; margin-top: var(--space-2); }
+/* The phone's one-line form; the tiles are the desktop's. Exactly one of the
+   two is ever displayed, so no figure is announced twice. */
+.period-line { display: none; }
 .stat-tile { min-width: 0; }
 .stat-tile + .stat-tile {
   border-left: var(--border-w) solid var(--border-subtle);
@@ -330,21 +369,73 @@ table.tk tr.client-row td {
    on its own row, which also gives the seven day cells the width they need to
    clear the touch floor: 390 − 32 gutter − 24 gaps = 47.7px each. */
 @media (max-width: 767px) {
-  /* THE PICTURE FIRST. Before this the phone spent ~620 of its first 844px on
-     chrome — a title row, a full-width Month/Week slab, the section chips, a
-     legend, a hint and a totals line — before one calendar cell appeared. */
-  .cal-view[data-section="calendar"] > .cal-grid,
-  .cal-view[data-section="calendar"] > .week-strip,
-  .cal-view[data-section="calendar"] > .spinner { order: 1; }
-  .cal-view[data-section="calendar"] > .cal-legend { order: 2; }
-  .cal-view[data-section="calendar"] > .day-panel { order: 3; }
-  .cal-view[data-section="calendar"] > .period-strip { order: 4; }
   .cal-view { gap: var(--space-4); }
 
+  /* THE SECOND HEADER ROW EARNS ITS KEEP.
+     Measured before this at 390×844: 277px — 33% of the viewport — above the
+     first calendar cell, of which 106px was the header: a title row, then a
+     second row holding nothing but a 115px Month|Week switch. Meanwhile the
+     period's three figures sat at y≈2200, below every entry row.
+     Both faults have one fix. shell.css's `.spacer` break keeps the title on
+     its own line (that rule is right — a title should not share a line with
+     page actions); the row it breaks to now carries the period's figures on
+     the left and the view switch on the right, so the screen gains three
+     numbers and 233px of page for six pixels of header.
+
+     What is left above the grid after this is 52px of run bar and a 60px
+     `Calendar | Statistics` chip strip, both rendered by the shell — see the
+     report for the measurement. */
+  .cal-head > h1 {
+    min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   /* A two-state view switch is not a primary control; it does not earn the
      full-width row base.css gives a segmented control on a phone. Left where
-     it is, it costs one 44px row instead of ninety pixels. */
+     it is, it costs one 44px row instead of ninety pixels. `order` puts it
+     after the figures on that row — the reading is content, the switch is the
+     trailing control — without moving it in the DOM, where it belongs beside
+     the period it switches. */
   .cal-head .seg { flex: 0 1 auto; margin-left: 0; }
+  .cal-head[data-section="calendar"] .seg { order: 1; }
+
+  /* THE PERIOD'S FIGURES, ON ONE LINE, STILL IN THE HEADER.
+     The three stacked tiles are 233px tall on a phone — a screen, not a
+     header — so the Calendar section reads them as one wrapping line of
+     figure+caption pairs, sharing the switch's row. Statistics keeps the full
+     stack on its own line: there the numbers are the subject, not the
+     preamble. Both sit in the same place, which is the half of this the
+     critic actually measured. */
+  .cal-head > .period-strip { margin-top: var(--space-1); }
+  .cal-head[data-section="calendar"] > .period-strip {
+    flex: 1 1 var(--space-10); min-width: 0; margin-top: 0;
+    display: block; background: none; border: 0; padding: 0;
+  }
+  .cal-head[data-section="calendar"] .stat-tile { display: none; }
+  /* A WRAPPING ROW OF ATOMS. Each reading is `nowrap`, so "2 days not closed"
+     can never break into "2 days" / "not closed"; the row wraps BETWEEN
+     readings instead. It has to be a flex row to do that: htm emits no
+     whitespace text nodes between the spans, so in normal inline flow there is
+     no break opportunity between them at all and the line overran its box and
+     ran under the Month|Week switch beside it (measured: 305px of text in a
+     235px box).
+     The figures rank by weight, colour and tabular figures rather than by a
+     larger size, which is what keeps each line-box at 17px, so the whole
+     reading fits inside the 46px that switch already costs. */
+  .cal-head[data-section="calendar"] .period-line {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 0 var(--space-1); margin: 0;
+    font-size: var(--fs-label); line-height: var(--lh-label);
+    color: var(--text-secondary);
+  }
+  .period-line > span { white-space: nowrap; }
+  .period-line > span + span::before {
+    content: '·'; margin-right: var(--space-1); color: var(--text-muted);
+  }
+  .period-line .period-fig {
+    color: var(--figure);
+    font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+  }
+  .period-line .period-warn { color: var(--attention); font-weight: var(--fw-semibold); }
 
   .cal-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); }
   .cal-total-head { display: none; }
@@ -412,13 +503,50 @@ table.tk tr.client-row td {
   .bar-value { grid-area: 1 / 2 / 2 / 3; }
   .bar-track { grid-area: 2 / 1 / 3 / 3; height: 10px; }
 
-  /* The day panel's header on a phone: the date on its own line with its two
-     arrows, the reading under it, and the actions on a line of their own with
-     the one primary last — the same three-line shape .page-head takes. */
-  .day-panel-head { row-gap: var(--space-3); }
-  .day-panel-sum { flex: 1 1 100%; }
-  .day-panel-head .spacer { flex: 0 0 100%; height: 0; margin: 0; }
-  .day-panel-menu { margin-left: auto; }
+  /* ===== THE SELECTED DAY, ON A PHONE =====================================
+     THE HEAD IS PINNED. Selecting a day now scrolls this panel under the run
+     bar (views/calendar.js), and from that moment the entries are the thing
+     that scrolls — so the date you are looking at, what it adds up to, its
+     overflow and its one primary action stay put above them. Without this,
+     two entries in, the panel is an unlabelled list of narratives.
+
+     Two lines, not the three it used to take, because a pinned bar spends the
+     screen permanently:
+       line 1   ‹  Friday, August 14  ›              ⋯
+       line 2   5 entries · 4.4h billable · 5.5h     [ + New entry ]
+     DOM order is unchanged (the overflow still follows the reading, where it
+     reads); `order` alone moves it up, so focus order still matches the page.
+
+     `top` is the run bar's own offset contract (runbar.css): --runbar-total
+     is 0px whenever no timer is running, so this is unconditional. z-index is
+     --z-sticky (90), which is UNDER --z-nav (95) — the run bar and the bottom
+     navigation both paint over it, and every dialog (--z-overlay, 300) covers
+     all three. */
+  /* WHERE A TAPPED DAY LANDS. views/calendar.js calls scrollIntoView on this
+     panel; the offset is stated here, once, so the browser resolves it at
+     scroll time against whatever the run bar is doing at that moment. */
+  .day-panel { scroll-margin-top: calc(var(--runbar-total) + var(--space-2)); }
+
+  .day-panel-head {
+    position: sticky; top: var(--runbar-total); z-index: var(--z-sticky);
+    /* The full-width `.spacer` break costs the row gap TWICE (it is a line of
+       its own, zero pixels tall), so the gap is the small step here and the
+       band still measures two rows, not two rows plus sixteen pixels. */
+    row-gap: var(--space-1);
+    margin: calc(var(--space-3) * -1) calc(var(--space-4) * -1) var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--surface-1);
+    border-bottom: var(--border-w) solid var(--border);
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .day-panel-menu { order: 1; margin-left: auto; }
+  .day-panel-head .spacer { order: 2; flex: 0 0 100%; height: 0; margin: 0; }
+  /* `flex-basis: 0`, not `auto`: with its natural width as the basis the
+     reading alone was wider than the band, so it claimed a whole line and
+     pushed "New entry" onto a third one. It shares line two and wraps inside
+     the width it is left. */
+  .day-panel-sum { order: 3; flex: 1 1 0; min-width: 0; }
+  .day-panel-head .btn-primary { order: 4; }
 }
 
 /* ---------- login ---------- */
@@ -430,10 +558,15 @@ table.tk tr.client-row td {
 /* dashboard panels: bounding boxes around the timer area and the day's
    entries (visual cueing). Same treatment as .card; inner timer/entry cards
    drop to the page tone so they still read as separate objects inside. */
+/* Tokenised (the raw 1px / 14px / 16px / 16px were four hardcoded values
+   outside tokens.css). The padding is load-bearing beyond this rule: the day
+   panel's pinned head on a phone cancels it with negative margins to span the
+   card, so the two must be stated in the same units. */
 .panel {
-  background: var(--surface-1); border: 1px solid var(--border);
-  border-radius: var(--radius); padding: 14px 16px 16px;
-  box-shadow: var(--shadow); margin-top: 16px;
+  background: var(--surface-1); border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  box-shadow: var(--shadow); margin-top: var(--space-4);
 }
 .panel > .section-title:first-child { margin-top: 0; }
 .panel .timer-card, .panel .entry-card { background: var(--surface-0); }

@@ -1,7 +1,7 @@
 import { api, downloadText } from '/js/api.js';
 import {
-  html, useState, useEffect, useCallback, useAsync, Spinner, ErrorBox, fmtHours,
-  fmtDateLong, fmtDateFull, addDays, todayStr, emitToast, Icon, Confirm, ContextMenu,
+  html, useState, useEffect, useRef, useCallback, useAsync, Spinner, ErrorBox, fmtHours,
+  fmtDateLong, fmtDateFull, addDays, todayStr, emitToast, Icon, Confirm, ContextMenu, Overlay,
 } from '/js/ui.js';
 import { rangeFor, shiftAnchor } from '/js/lib/daterange.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
@@ -22,8 +22,9 @@ import { SummaryModal } from '/js/components/summary.js';
 //   which days are not closed  a marked corner on any day still carrying a
 //                            draft, named in the legend and in every cell's
 //                            accessible name (never colour alone).
-//   where the month went     the period strip above the grid, and the two
-//                            bar lists in the Statistics section.
+//   where the month went     the period strip, which is part of the PAGE
+//                            HEADER on both sections and both viewports, and
+//                            the two bar lists in the Statistics section.
 //
 // IT ABSORBED TWO SCREENS.
 //
@@ -105,6 +106,26 @@ function Hours({ value, size = 'md' }) {
   return html`<span class=${`figure-${size} tnum`}>${whole}<span class="figure-frac">${frac}h</span></span>`;
 }
 
+// PHONE OR NOT, as a fact the render can branch on rather than a guess. The
+// two places this screen has to know: the day-actions overflow (a popover on a
+// desktop, a bottom sheet under a thumb) and whether selecting a day should
+// scroll its panel into view. 767px is the app's one phone breakpoint —
+// overlay.js, base.css tier 1 and every module's media query use the same
+// number.
+const PHONE_MQ = '(max-width: 767px)';
+function usePhone() {
+  const [phone, setPhone] = useState(() => (typeof window.matchMedia === 'function'
+    ? window.matchMedia(PHONE_MQ).matches : false));
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia(PHONE_MQ);
+    const on = () => setPhone(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return phone;
+}
+
 // ---------------------------------------------------------------------------
 // The period strip — what used to be the four Stats tiles.
 //
@@ -113,11 +134,34 @@ function Hours({ value, size = 'md' }) {
 // of the old tiles (Total · Billable · Billable ratio · Days with time) in
 // three tiles instead of four, and adds the one number a lawyer actually
 // chases — how many days in this period still have drafts on them.
+//
+// IT LIVES IN THE PAGE HEADER, on every surface. The wave critic measured the
+// same three numbers in three different places: under the desktop Calendar's
+// title, under the mobile Statistics title, and at the very BOTTOM of the
+// mobile Calendar — y≈2200 of a 2470px page, below all five entry rows. Two
+// chips of one destination disagreeing about where their shared header lives
+// is the cross-screen inconsistency the teardown flagged in §8, so the strip
+// is now a child of `.cal-head` and cannot drift again.
+//
+// On a phone the Calendar section renders `.period-line` instead — the same
+// readings on one wrapping line, because the grid underneath is what the thumb
+// came for and 233px of stacked tiles above it is not a header, it is a
+// screen. Statistics keeps the full stack: there the numbers ARE the screen.
+// Exactly one of the two is ever displayed (views.css), so nothing is said
+// twice to a screen reader.
 // ---------------------------------------------------------------------------
 function PeriodStrip({ periodLabel, totals }) {
   const ratio = totals.total > 0 ? Math.round((totals.billable / totals.total) * 100) : 0;
   return html`
     <div class="stat-tiles period-strip">
+      ${/* No period word here: the <h1> two lines above says "August 2026". */''}
+      <p class="period-line">
+        <span><span class="period-fig">${fmtHours(totals.total)}h</span> total</span>
+        <span><span class="period-fig">${fmtHours(totals.billable)}h</span> billable</span>
+        <span class=${totals.draftDays > 0 ? 'period-warn' : ''}>${totals.draftDays === 0
+          ? 'all days closed'
+          : `${totals.draftDays} ${totals.draftDays === 1 ? 'day' : 'days'} not closed`}</span>
+      </p>
       <div class="stat-tile hero">
         <div class="k">Total ${periodLabel}</div>
         <div class="v"><${Hours} value=${totals.total} size="hero" /></div>
@@ -160,6 +204,40 @@ function BarList({ rows, labelKey, max, title }) {
 }
 
 // ---------------------------------------------------------------------------
+// THE DAY-ACTIONS OVERFLOW, in the shape each pointer deserves.
+//
+// The three capabilities Calendar absorbed from the deleted Day view — read
+// the day back as prose, finalize it without exporting, download it as CSV —
+// live behind one "⋯". On a desktop that is a menu popover anchored under its
+// trigger, which is what Primer's ActionMenu, Polaris's Popover and Fluent's
+// ContextualMenu all render. On a phone the same popover measured 230×28 rows
+// (the wave critic: "a 28px-tall row is the sole affordance for Summary,
+// Finalize day and Export") and rendered left-anchored at x=8 while its
+// trigger sat at x≈190, spilling past the panel and butting into the bottom
+// navigation.
+//
+// So below 768px it is a bottom sheet through the app's ONE overlay primitive
+// — Material 3's answer for a menu on a phone, and the reason it is built on
+// `Overlay` rather than on a second copy of `.ctx-menu`: the scrim, the focus
+// trap, the scroll lock, Escape, hardware Back and the safe-area inset all
+// come from the same place every other dialog in the app gets them, and the
+// shared `.ctx-item` primitive is left exactly as the entry-row menu needs it.
+// ---------------------------------------------------------------------------
+function DayActionsSheet({ items, onClose }) {
+  return html`
+    <${Overlay} title="Day actions" onClose=${() => onClose()} size="sm" className="day-actions">
+      <div class="sheet-menu">
+        ${items.filter((it) => !it.hr).map((it, i) => html`
+          <button key=${i} type="button" class="sheet-item"
+            onClick=${() => { onClose(); it.onClick(); }}>
+            <${Icon} name=${it.icon} size=${18} />
+            <span>${it.label}</span>
+          </button>`)}
+      </div>
+    <//>`;
+}
+
+// ---------------------------------------------------------------------------
 // The selected day — the whole of the old Day view, inline, no navigation.
 //
 // One primary action (New entry) and one "⋯" overflow, which is the answer
@@ -170,14 +248,14 @@ function BarList({ rows, labelKey, max, title }) {
 // ---------------------------------------------------------------------------
 function DayPanel({
   selected, scope, setScope, customFrom, customTo, setCustomFrom, setCustomTo,
-  entries, loading, settings, openEditor, bumpRefresh, onStep, onMenu, title,
+  entries, loading, settings, openEditor, bumpRefresh, onStep, onMenu, title, panelRef,
 }) {
   const total = entries.reduce((a, e) => a + e.total, 0);
   const billable = entries.reduce((a, e) => a + (e.billable ? e.total : 0), 0);
   const drafts = entries.filter((e) => e.status === 'draft').length;
 
   return html`
-    <section class="panel day-panel" aria-label=${`Entries — ${title}`}>
+    <section class="panel day-panel" ref=${panelRef} aria-label=${`Entries — ${title}`}>
       <div class="day-panel-head">
         <button class="btn btn-icon" title="Previous ([)" aria-label=${`Previous ${scope}`}
           onClick=${() => onStep(-1)}><${Icon} name="chevronLeft" size=${16} /></button>
@@ -191,11 +269,17 @@ function DayPanel({
           <span> · </span><span class="mono">${fmtHours(total)}h</span> total
         </span>
         <div class="spacer"></div>
+        ${/* Right-aligned UNDER its trigger, which is where a menu belongs and
+              where it was not: `r.left - 200` clamped to x=8 on a phone, so
+              the popover opened at the far edge of the screen from the button
+              that opened it. `.ctx-menu` is 240 wide (overlays.css), so its
+              right edge is the trigger's. On a phone this callback opens the
+              bottom sheet instead and the coordinates are ignored. */''}
         <button class="btn btn-icon day-panel-menu" aria-label="Day actions"
           title="Day actions — summary, finalize, download CSV"
           onClick=${(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            onMenu({ x: Math.max(8, r.left - 200), y: r.bottom + 4 });
+            onMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
           }}><${Icon} name="more" size=${16} /></button>
         <button class="btn btn-primary" title="Record time on this day by hand (n)"
           onClick=${() => openEditor({ template: { date: selected } })}>
@@ -260,6 +344,11 @@ export function CalendarView({
   const [dayMenu, setDayMenu] = useState(null);
   const [summary, setSummary] = useState(null);
   const [warnGate, setWarnGate] = useState(null);
+  const phone = usePhone();
+  const panelRef = useRef(null);
+  // Bumped by a tap on a day cell, and only by a tap: the effect that reads it
+  // must not fire on a `[`/`]` step, a deep link or a re-render.
+  const [revealPanel, setRevealPanel] = useState(0);
 
   // `#/day/<date>` is a DEEP LINK into this screen, not a screen of its own:
   // it lands with that day drawn and selected. Stepping with [ and ] moves the
@@ -394,10 +483,41 @@ export function CalendarView({
   // Single tap SELECTS. Nothing here behaves differently by click count any
   // more — the old onDoubleClick "open the day" accelerator was pointer-only
   // and the day it opened is this panel now.
+  //
+  // …AND ON A PHONE, SELECTING SHOWS YOU SOMETHING. Measured before this at
+  // 390×844: tapping Aug 12 left scrollY at 0, put the day panel's head at
+  // y≈790 — under a bottom navigation bar that starts at 784 — and its first
+  // entry at y=1002, 158px below the fold. The teardown's whole case for
+  // merging Day into Calendar was "select a day, entries appear below without
+  // a navigation"; on the device David actually uses they did not appear at
+  // all until he scrolled ~430px, and the only feedback a thumb got from the
+  // merge's core interaction was a 2px ring on a 48×60 cell.
   const pick = (date) => {
+    const opening = date !== selected;
     setSelected((cur) => (cur === date ? null : date));
     if (mode === 'month' && monthOf(date) !== monthOf(anchor)) setAnchor(date);
+    if (opening && phone) setRevealPanel((n) => n + 1);
   };
+
+  // The scroll itself, once the panel has been laid out with the new day in
+  // it. The run bar's height is NOT arithmetic here: `.day-panel` carries a
+  // `scroll-margin-top` of --runbar-total (views.css), so the browser resolves
+  // the offset at scroll time and a timer that starts or stops mid-gesture
+  // cannot leave the panel head under the bar. Two frames — one for React's
+  // commit, one for the layout it invalidates.
+  useEffect(() => {
+    if (!revealPanel) return undefined;
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        const el = panelRef.current;
+        if (!el) return;
+        const reduce = typeof window.matchMedia === 'function'
+          && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        el.scrollIntoView({ block: 'start', behavior: reduce ? 'auto' : 'smooth' });
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [revealPanel]);
 
   // [ and ] keep working exactly as they did on the day view: previous / next.
   // On Statistics they move the period, which is the only thing on screen.
@@ -472,9 +592,12 @@ export function CalendarView({
 
   if (error) return html`<${ErrorBox} error=${error} />`;
 
-  // ---- the head: one period control for the whole screen ----
+  // ---- the head: one period control, and the period's figures, for the whole
+  // screen. The strip is INSIDE the header on both sections and both viewports
+  // (see PeriodStrip): three numbers that describe the period cannot live in
+  // three different places on three surfaces. ----
   const head = html`
-    <div class="page-head cal-head">
+    <div class="page-head cal-head" data-section=${section}>
       <button class="btn btn-icon" title=${`Previous ${mode} ([)`} aria-label=${`Previous ${mode}`}
         onClick=${() => shiftPeriod(-1)}><${Icon} name="chevronLeft" size=${16} /></button>
       <h1>${headTitle}</h1>
@@ -488,6 +611,7 @@ export function CalendarView({
             title=${`Show the whole ${label.toLowerCase()}`}
             onClick=${() => { setStatsRange(null); setMode(v); }}>${label}</button>`)}
       </div>
+      <${PeriodStrip} periodLabel=${periodLabel} totals=${totals} />
     </div>`;
 
   // =========================================================================
@@ -501,7 +625,6 @@ export function CalendarView({
     return html`
       ${head}
       <div class="cal-view" data-section="stats">
-        <${PeriodStrip} periodLabel=${periodLabel} totals=${totals} />
         <div class="stats-range">
           ${statsRange ? html`
             <span class="date-range">
@@ -593,7 +716,6 @@ export function CalendarView({
   return html`
     ${head}
     <div class="cal-view" data-section="calendar">
-      <${PeriodStrip} periodLabel=${periodLabel} totals=${totals} />
       ${loading && !data ? html`<${Spinner} />` : mode === 'month' ? html`
         <div class="cal-grid">
           ${dowLabels(weekStart).map((d) => html`<div key=${d} class="cal-dow">${d}</div>`)}
@@ -660,11 +782,13 @@ export function CalendarView({
           setCustomFrom=${setCustomFrom} setCustomTo=${setCustomTo}
           entries=${panelEntries} loading=${panelLoading}
           settings=${settings} openEditor=${openEditor} bumpRefresh=${bumpRefresh}
-          onStep=${stepSelection} onMenu=${setDayMenu} title=${panelTitle} />` : null}
+          onStep=${stepSelection} onMenu=${setDayMenu} title=${panelTitle}
+          panelRef=${panelRef} />` : null}
     </div>
-    ${dayMenu ? html`
+    ${dayMenu ? (phone ? html`
+      <${DayActionsSheet} items=${dayMenuItems} onClose=${() => setDayMenu(null)} />` : html`
       <${ContextMenu} x=${dayMenu.x} y=${dayMenu.y} items=${dayMenuItems}
-        onClose=${() => setDayMenu(null)} />` : null}
+        onClose=${() => setDayMenu(null)} />`) : null}
     ${summary ? html`
       <${SummaryModal} text=${summary} title=${`Summary — ${summaryTitle}`}
         filename=${`timekeeper-summary-${panelRange.from}${panelRange.to !== panelRange.from ? `_${panelRange.to}` : ''}.txt`}

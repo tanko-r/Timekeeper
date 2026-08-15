@@ -1,13 +1,13 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
+  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, Field, Icon, clientLabel,
   BillableBadge, StatusChip, ValidationList, fmtStamp, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
-import { InlineNarrative, EmptyState } from '/js/components/entrylist.js';
+import { InlineNarrative, EmptyState, ActionMenu } from '/js/components/entrylist.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
@@ -57,6 +57,9 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   // A row whose narrative editor was opened from somewhere else (the "needs a
   // narrative" attention line, or the row menu) — it opens focused and typing.
   const [writingKey, setWritingKey] = useState(null);
+  // …and WHICH of that row's entries it is about. A matter row can carry more
+  // than one entry today, so "write the narrative for entry 42" has to name 42.
+  const [writeEntryId, setWriteEntryId] = useState(null);
   const dragId = useRef(null);
   // Trello-style relocation feedback (2026-08-05 feedback): the row being
   // dragged fades, and an empty slot opens in front of the row the drop will
@@ -308,6 +311,15 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     await reload();
   }, [reload, onEntryChanged]);
 
+  // The row with no timer has hours too, and they have to be adjustable by
+  // thumb — the same tap-to-edit contract the clock has had all along
+  // (teardown E1: Alt+↑/↓ is keyboard-only and fails the brief).
+  const entryTotalSet = useCallback(async (entry, hours) => {
+    await api.patch(`/api/entries/${entry.id}`, { total_override: hours });
+    onEntryChanged();
+    await reload();
+  }, [reload, onEntryChanged]);
+
   const fresh = useCallback(async (timer) => {
     await api.post(`/api/timers/${timer.id}/fresh`);
     emitToast('Clock zeroed — next stop files a new entry. Today’s entry kept.');
@@ -398,11 +410,19 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       setGridFilter('');
       setOnlyKey('');
       setActivityKey('');
-      const key = `e${id}`;
-      const timerKey = (timers || []).find((t) => t.linked_entry_id === id);
-      const target = timerKey ? `t${timerKey.id}` : key;
+      // Which ROW holds this entry, under the merged model: the timer that
+      // filed it, else the sole timer on its matter, else the matter's own
+      // row, else the entry's own row.
+      const entry = (entries || []).find((x) => x.id === id);
+      const owner = (timers || []).find((t) => t.linked_entry_id === id);
+      const cmId = entry && entry.cm ? entry.cm.id : null;
+      const onMatter = cmId ? (timers || []).filter((t) => t.cm_id === cmId) : [];
+      const target = owner ? `t${owner.id}`
+        : onMatter.length === 1 ? `t${onMatter[0].id}`
+          : cmId ? `m${cmId}` : `e${id}`;
       setFocusKey(target);
       setWritingKey(target);
+      setWriteEntryId(id);
       requestAnimationFrame(() => {
         document.querySelector(`.today-list .work-row[data-row-key="${target}"]`)
           ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -410,7 +430,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     };
     window.addEventListener('tk:focus-entry', onFocusEntry);
     return () => window.removeEventListener('tk:focus-entry', onFocusEntry);
-  }, [timers]); // eslint-disable-line
+  }, [timers, entries]); // eslint-disable-line
 
   // `/` opens the search bar — or, when it's already open and focus has
   // wandered off, refocuses the input directly.
@@ -489,8 +509,30 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
   // ---------- row menu ----------
 
+  // THE ROW MENU: SEVENTEEN ITEMS DOWN TO EIGHT (wave-2).
+  //
+  // The wave critic measured it at 390×844 and found the object the teardown
+  // §5 had named as the app's tell still standing: a 280×480 popover covering
+  // 57% of the phone, seventeen rows, internally scrolled, with its last two
+  // items ("Edit timer…", "Delete timer") below the viewport entirely. The
+  // previous pass had relabelled and reordered it; the COUNT was unchanged.
+  //
+  // The split is by subject, which is the only split that survives contact
+  // with a hurry. What a lawyer does to TODAY'S WORK stays here — stop it,
+  // start it as of a few minutes ago, open it, write its narrative, finalize
+  // it, copy it. What he does to the TIMER ITSELF — duplicate, group, reorder,
+  // pin, zero, delete — is timer maintenance, and it now lives in the
+  // Edit-timer dialog, which this menu still reaches in one row and which is
+  // where the timer's name, matter, task code, group and template already
+  // were. Nothing is gone; six rows became one row plus a dialog section, and
+  // every one of them is a 44px target there instead of a 28px one here.
+  //
+  // "Start at last stop" folded into the backdate chip row it belonged with
+  // rather than costing a row of its own.
   function rowMenuItems(row) {
-    const { timer, entry } = row;
+    const { timer } = row;
+    const entries = row.entries || [];
+    const focus = row.focus || null;
     const running = !!(timer && timer.running);
     const items = [];
     if (timer) {
@@ -501,39 +543,36 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         custom: () => html`
           <div class="ctx-inline">
             <span class="muted small">Start</span>
-            ${[1, 5, 10, 30, 60].map((m) => html`
+            ${[10, 30].map((m) => html`
               <button key=${m} class="btn btn-sm" disabled=${running}
-                onClick=${() => { setMenu(null); guard(start(timer, { minutesAgo: m })); }}>${m}m</button>`)}
-            <span class="muted small">ago</span>
+                title=${`Start as if it had begun ${m} minutes ago`}
+                onClick=${() => { setMenu(null); guard(start(timer, { minutesAgo: m })); }}>${m}m ago</button>`)}
+            <button class="btn btn-sm" disabled=${running || !timer.last_stopped_at}
+              title="Start as if it had begun the moment this timer last stopped"
+              onClick=${() => { setMenu(null); guard(start(timer, { atLastStop: true })); }}>at last stop</button>
           </div>`,
-      });
-      items.push({
-        label: 'Start at last stop',
-        icon: 'history',
-        disabled: running || !timer.last_stopped_at,
-        onClick: () => guard(start(timer, { atLastStop: true })),
       });
       items.push({ hr: true });
-      // FOUR menu rows became ONE (teardown §5): Alt+↑/↓ already nudges the
-      // focused row and the clock is directly editable, but neither of those
-      // is a touch path, so the nudges stay — as a single inline row.
-      items.push({
-        custom: () => html`
-          <div class="ctx-inline">
-            <span class="muted small">Clock</span>
-            ${[-0.2, -0.1, 0.1, 0.2].map((d) => html`
-              <button key=${d} class="btn btn-sm" title=${`${d > 0 ? '+' : '−'}${Math.abs(d)} h (${Math.round(Math.abs(d) * 60)} min)`}
-                onClick=${() => { setMenu(null); guard(clockDelta(timer, d)); }}>${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(1)}</button>`)}
-          </div>`,
-      });
-      items.push({ label: 'New entry (zero clock)', icon: 'refresh', onClick: () => guard(fresh(timer)) });
     }
-    const linked = entry || null;
+    const linked = focus;
     if (linked) {
-      items.push({ hr: true });
-      items.push({ label: 'Open entry…', icon: 'eye', onClick: () => openEditor({ id: linked.id }) });
+      // A matter can carry more than one entry today (one the timer filed, one
+      // keyed by hand). The row states the total; the menu opens them one by
+      // one rather than splitting the matter back into two rows.
+      if (entries.length > 1) {
+        for (const e of entries) {
+          const snippet = (e.narrative || '').trim().replace(/\s+/g, ' ').slice(0, 32);
+          items.push({
+            label: `Open ${fmtHours(e.total)}h${e.status === 'draft' ? '' : ` · ${e.status}`} — ${snippet || 'no narrative yet'}`,
+            icon: 'eye',
+            onClick: () => openEditor({ id: e.id }),
+          });
+        }
+      } else {
+        items.push({ label: 'Open entry…', icon: 'eye', onClick: () => openEditor({ id: linked.id }) });
+      }
       if (linked.status === 'draft') {
-        items.push({ label: 'Write narrative here', icon: 'edit', onClick: () => { setFocusKey(row.key); setWritingKey(row.key); } });
+        items.push({ label: 'Write narrative here', icon: 'edit', onClick: () => { setFocusKey(row.key); setWritingKey(row.key); setWriteEntryId(linked.id); } });
         items.push({ label: 'Finalize this entry', icon: 'lock', onClick: () => guard(finalizeEntry(linked)) });
       } else {
         items.push({ label: 'Unlock for editing', icon: 'unlock', onClick: () => guard(unlockEntry(linked)) });
@@ -549,47 +588,13 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     }
     if (timer) {
       items.push({ hr: true });
-      items.push({ label: 'Duplicate timer', icon: 'copy', onClick: () => guard(duplicate(timer)) });
-      items.push({
-        label: timer.pinned ? 'Unpin from float window' : 'Pin to float window',
-        icon: 'pin',
-        onClick: () => guard(api.patch(`/api/timers/${timer.id}`, { pinned: timer.pinned ? 0 : 1 }).then(reload)),
-      });
-      // "Move to group…" is the TOUCH equivalent of the drag-and-drop the
-      // desktop keeps; dragging is not a touch path (teardown E1).
-      items.push({
-        custom: () => html`
-          <div class="ctx-inline">
-            <span class="muted small">Group</span>
-            <select value=${timer.group_id ?? ''} onChange=${async (e) => {
-              setMenu(null);
-              await guard(api.patch(`/api/timers/${timer.id}`, {
-                group_id: e.target.value ? Number(e.target.value) : null,
-              }).then(reload));
-            }}>
-              <option value="">Ungrouped</option>
-              ${groups.map((g) => html`<option key=${g.id} value=${g.id}>${g.name}</option>`)}
-            </select>
-          </div>`,
-      });
-      // one row, not two — and the thumb equivalent of the desktop drag
-      items.push({
-        custom: () => html`
-          <div class="ctx-inline">
-            <span class="muted small">Move</span>
-            <button class="btn btn-sm" title="Move up in the list"
-              onClick=${() => { setMenu(null); guard(nudgeOrder(timer, -1)); }}><${Icon} name="chevronUp" size=${15} /></button>
-            <button class="btn btn-sm" title="Move down in the list"
-              onClick=${() => { setMenu(null); guard(nudgeOrder(timer, 1)); }}><${Icon} name="chevronDown" size=${15} /></button>
-          </div>`,
-      });
-      items.push({ hr: true });
+      // ONE ROW carries the whole of timer maintenance: duplicate, move to a
+      // group, reorder, pin to the float window, zero the clock, delete.
       items.push({ label: 'Edit timer…', icon: 'edit', onClick: () => setEditing(timer) });
-      items.push({ label: 'Delete timer', icon: 'trash', danger: true, onClick: () => setDeleting(timer) });
     }
     if (!timer && linked) {
       items.push({ hr: true });
-      items.push({ label: 'Start a timer on this entry', icon: 'play', onClick: () => guard(startForEntry(linked)) });
+      items.push({ label: 'Start a timer on this matter', icon: 'play', onClick: () => guard(startForEntry(linked)) });
       if (linked.status === 'draft') {
         items.push({ label: 'Delete entry', icon: 'trash', danger: true, onClick: () => setDeletingEntry(linked) });
       }
@@ -678,27 +683,105 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   const byGroupMode = grouping === 'group';
   const todayEntries = entries || [];
 
-  // ---------- the merged row model ----------
-  // One row per timer (carrying the entry it filled today, if any), plus one
-  // row for each of today's entries that no timer owns.
+  // ---------- the merged row model: KEYED BY MATTER ----------
+  // A timer and the entry it filled are the same work at two moments — and so
+  // are an entry keyed by hand and the timer that stands for the same matter.
+  // Before this pass the list still showed one matter twice, with two
+  // different numbers: "Acme lease dispute · 1.7 · finalized" and
+  // "Acme — lease dispute · 0.0". One matter, one row.
+  //
+  // THE THREE EDGE CASES, decided here so the next hand does not have to guess:
+  //
+  //   TWO TIMERS ON ONE MATTER — they stay TWO rows. A timer is a named work
+  //     stream the lawyer made ("Acme — research", "Acme — drafting"); folding
+  //     them together would hide one and leave it with no way to be started.
+  //     So an entry joins a matter's timer row only where that matter has
+  //     exactly ONE timer. Where it has several, an entry rides the timer that
+  //     actually filed it (linked_entry_id) and anything unlinked forms the
+  //     matter's own row beside them.
+  //
+  //   A QUICK TIMER WITH NO MATTER — its own row, keyed by the timer. Two
+  //     matterless timers are two different pieces of work and there is no key
+  //     that could merge them honestly. The row carries "Assign matter", and
+  //     the moment a matter is assigned it merges into that matter's row.
+  //
+  //   AN ENTRY ON A MATTER WITH NO TIMER — a matter row with no timer: today's
+  //     recorded hours, the row's state, the narrative, and a Start button that
+  //     creates/links one through /api/timers/start-for-entry. A MATTERLESS
+  //     entry keeps its own row, for the same reason a matterless timer does.
   const entriesById = new Map(todayEntries.map((e) => [e.id, e]));
+  const timersByCm = new Map();
+  for (const t of timers) {
+    if (!t.cm_id) continue;
+    if (!timersByCm.has(t.cm_id)) timersByCm.set(t.cm_id, []);
+    timersByCm.get(t.cm_id).push(t);
+  }
   const claimed = new Set();
   const timerRows = timers.map((t) => {
-    const entry = t.linked_entry_id ? entriesById.get(t.linked_entry_id) || null : null;
-    if (entry) claimed.add(entry.id);
-    return { key: `t${t.id}`, timer: t, entry };
+    const own = t.linked_entry_id ? entriesById.get(t.linked_entry_id) || null : null;
+    if (own) claimed.add(own.id);
+    return { key: `t${t.id}`, timer: t, entries: own ? [own] : [] };
   });
-  const entryRows = todayEntries.filter((e) => !claimed.has(e.id))
-    .map((e) => ({ key: `e${e.id}`, timer: null, entry: e }));
+  const rowByTimerId = new Map(timerRows.map((r) => [r.timer.id, r]));
+  // pass two: a matter's remaining entries join its SOLE timer's row
+  for (const e of todayEntries) {
+    if (claimed.has(e.id) || !e.cm) continue;
+    const ts = timersByCm.get(e.cm.id);
+    if (!ts || ts.length !== 1) continue;
+    rowByTimerId.get(ts[0].id).entries.push(e);
+    claimed.add(e.id);
+  }
+  // pass three: what no timer owns becomes a matter row (or its own row when
+  // there is no matter to key it by)
+  const entryRows = [];
+  const rowByCm = new Map();
+  for (const e of todayEntries) {
+    if (claimed.has(e.id)) continue;
+    if (!e.cm) { entryRows.push({ key: `e${e.id}`, timer: null, entries: [e] }); continue; }
+    if (!rowByCm.has(e.cm.id)) {
+      const row = { key: `m${e.cm.id}`, timer: null, entries: [] };
+      rowByCm.set(e.cm.id, row);
+      entryRows.push(row);
+    }
+    rowByCm.get(e.cm.id).entries.push(e);
+  }
   const allRows = [...timerRows, ...entryRows];
 
-  const rowName = (r) => (r.timer ? r.timer.name : (r.entry.cm ? r.entry.cm.short_name : 'No matter yet'));
+  // THE ENTRY A ROW SPEAKS FOR. A matter can carry several today — one the
+  // timer filled, one keyed by hand, an orphan a deleted timer left behind —
+  // and the row shows one narrative, so the choice has to be the one a lawyer
+  // would act on:
+  //   1. the entry something explicitly asked to write ("N need a narrative")
+  //   2. this timer's OWN entry, when it has anything on it — that is the one
+  //      the row's clock and its Start/Stop are about
+  //   3. otherwise the biggest real draft, because that is where the day's
+  //      work actually is — never a 0.0h leftover
+  //   4. …then any draft, then whatever is there
+  const substantive = (e) => !!(e.narrative || '').trim() || e.total > 0;
+  const focusEntryOf = (r) => {
+    const es = r.entries;
+    if (!es.length) return null;
+    const wanted = writeEntryId != null ? es.find((e) => e.id === writeEntryId) : null;
+    if (wanted) return wanted;
+    const linked = r.timer ? es.find((e) => e.id === r.timer.linked_entry_id) : null;
+    if (linked && substantive(linked)) return linked;
+    const drafts = es.filter((e) => e.status === 'draft' && substantive(e));
+    if (drafts.length) return drafts.slice().sort((a, b) => b.total - a.total)[0];
+    return linked || es.find((e) => e.status === 'draft') || es[0];
+  };
+  for (const r of allRows) r.focus = focusEntryOf(r);
+
+  const rowName = (r) => {
+    if (r.timer) return r.timer.name;
+    const e = r.entries[0];
+    return e && e.cm ? e.cm.short_name : 'No matter yet';
+  };
   const rowSecs = (r) => (r.timer ? liveElapsed(r.timer) : 0);
 
   const norm = gridFilter.trim().toLowerCase();
   const matchesFilter = (r) => !norm || [
     rowName(r), r.timer?.cm_short_name, r.timer?.client_name, r.timer?.client_number, r.timer?.cm_number,
-    r.entry?.cm?.short_name, r.entry?.cm?.cm_number, r.entry?.narrative,
+    ...r.entries.flatMap((e) => [e.cm?.short_name, e.cm?.cm_number, e.narrative]),
   ].some((v) => String(v || '').toLowerCase().includes(norm));
 
   const nowMs = Date.now();
@@ -708,9 +791,13 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   // timers that ran today — in the order the entries were created, which is
   // the order the day happened (hence the descending id term: the comparator
   // sorts this value high-to-low).
-  const rowActivityMs = (r) => (r.timer
-    ? lastActivityMs(r.timer, nowMs)
-    : dayStartMs + Math.max(0, 86000 - Math.min(r.entry.id || 0, 86000)));
+  const entryActivityMs = (e) => dayStartMs + Math.max(0, 86000 - Math.min(e.id || 0, 86000));
+  // A row ranks by the most recent thing that happened on it — the timer's own
+  // activity OR the entries it now carries, because a matter with 1.7h
+  // recorded and a timer that never ran today is still today's work.
+  const rowActivityMs = (r) => Math.max(
+    r.timer ? lastActivityMs(r.timer, nowMs) : 0,
+    r.entries.length ? Math.max(...r.entries.map(entryActivityMs)) : 0);
   const matchesActivity = (r) => !activityKey || !ACTIVITY[activityKey]
     || inWindow(rowActivityMs(r), ACTIVITY[activityKey]);
 
@@ -718,12 +805,12 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   // client number embedded in their matter number.
   const clientKeyOf = (r) => {
     if (r.timer) return r.timer.client_number || 'none';
-    const num = r.entry.cm?.cm_number || '';
+    const num = r.entries[0]?.cm?.cm_number || '';
     return num.split('-')[0] || 'none';
   };
   const clientLabelOf = (r) => (r.timer
     ? (clientLabel(r.timer) || 'No client')
-    : (r.entry.cm?.client_name || clientKeyOf(r) || 'No client'));
+    : (r.entries[0]?.cm?.client_name || clientKeyOf(r) || 'No client'));
 
   const shown = allRows.filter((r) => matchesFilter(r) && matchesActivity(r));
 
@@ -764,7 +851,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   // Order inside every section.
   const rowTier = (r) => {
     if (r.timer && r.timer.running) return 0;
-    if (r.entry || rowSecs(r) > 0) return 1;
+    if (r.entries.length > 0 || rowSecs(r) > 0) return 1;
     return 2;
   };
   const sortRows = (list) => {
@@ -843,13 +930,14 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       return undefined;
     }
 
+    const curFocus = focusEntryOf(cur);
     if (e.key === 'Enter' && e.shiftKey) {
       if (cur.timer) setEditing(cur.timer);
-      else if (cur.entry) openEditor({ id: cur.entry.id });
+      else if (curFocus) openEditor({ id: curFocus.id });
       return done();
     }
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-      const entryId = cur.entry?.id || cur.timer?.linked_entry_id;
+      const entryId = curFocus?.id || cur.timer?.linked_entry_id;
       if (entryId) openEditor({ id: entryId });
       else if (cur.timer) {
         openEditor({ template: { cm: { id: cur.timer.cm_id, cm_number: cur.timer.cm_number, short_name: cur.timer.cm_short_name, billable: cur.timer.cm_billable ?? 1 } } });
@@ -858,7 +946,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     }
     if (e.key === 'Enter' || e.key === ' ') {
       if (cur.timer) guard(cur.timer.running ? stop(cur.timer) : start(cur.timer));
-      else if (cur.entry) guard(startForEntry(cur.entry));
+      else if (curFocus) guard(startForEntry(curFocus));
       return done();
     }
   }
@@ -942,7 +1030,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       <button class="btn btn-sm today-menu-btn" title="List options — filter, group, order, import"
         aria-label="List options" onClick=${(e) => {
           const r = e.currentTarget.getBoundingClientRect();
-          setListMenu({ x: Math.max(8, r.right - 264), y: r.bottom + 4 });
+          setListMenu({ x: Math.max(8, r.right - 240), y: r.bottom + 4 });
         }}>
         <${Icon} name="more" size=${16} />
       </button>
@@ -1016,13 +1104,15 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
                     onToggleSelected=${() => r.timer && toggleSelected(r.timer.id)}
                     onSelect=${(e) => r.timer && selectCard(e, r.timer, list)}
                     tabbable=${tabbableKey === r.key} onFocusRow=${() => setFocusKey(r.key)}
-                    writing=${writingKey === r.key} onWritingDone=${() => setWritingKey(null)}
-                    onStart=${() => guard(r.timer ? start(r.timer) : startForEntry(r.entry))}
+                    writing=${writingKey === r.key}
+                    onWritingDone=${() => { setWritingKey(null); setWriteEntryId(null); }}
+                    onStart=${() => guard(r.timer ? start(r.timer) : startForEntry(r.focus))}
                     onStop=${() => r.timer && guard(stop(r.timer))}
-                    onSet=${(h) => r.timer && guard(clockSet(r.timer, h))}
+                    onSet=${(h) => guard(r.timer ? clockSet(r.timer, h) : entryTotalSet(r.focus, h))}
+                    onSetHours=${(h) => r.focus && guard(entryTotalSet(r.focus, h))}
                     onRename=${(name) => r.timer && guard(api.patch(`/api/timers/${r.timer.id}`, { name }).then(reload))}
-                    onOpenEntry=${() => r.entry && openEditor({ id: r.entry.id })}
-                    onAssignMatter=${() => (r.entry ? openEditor({ id: r.entry.id }) : setEditing(r.timer))}
+                    onOpenEntry=${() => r.focus && openEditor({ id: r.focus.id })}
+                    onAssignMatter=${() => (r.focus ? openEditor({ id: r.focus.id }) : setEditing(r.timer))}
                     onEntryChanged=${onEntryChanged}
                     onMenu=${(x, y) => {
                       if (r.timer && selected.size > 1 && selected.has(r.timer.id)) setMenu({ x, y, ids: [...selected] });
@@ -1049,16 +1139,28 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     </div>
 
     ${menu ? html`
-      <${ContextMenu} x=${menu.x} y=${menu.y}
+      <${ActionMenu} x=${menu.x} y=${menu.y}
+        title=${menu.ids ? `${menu.ids.length} timers` : (menu.row?.timer ? 'Timer actions' : 'Entry actions')}
         items=${menu.ids ? batchMenuItems(menu.ids) : rowMenuItems(menu.row)}
         onClose=${() => setMenu(null)} />` : null}
 
     ${listMenu ? html`
-      <${ContextMenu} x=${listMenu.x} y=${listMenu.y} items=${listMenuItems()}
+      <${ActionMenu} x=${listMenu.x} y=${listMenu.y} title="List options" items=${listMenuItems()}
         onClose=${() => setListMenu(null)} />` : null}
 
     ${editing ? html`
       <${TimerModal} timer=${editing === 'new' ? null : editing} taskCodes=${taskCodes} groups=${groups}
+        lifecycle=${editing === 'new' ? null : {
+          index: timers.findIndex((t) => t.id === editing.id),
+          count: timers.length,
+          clockHours: fmtTenths(liveElapsed(editing), roundMode),
+          onSetClock: (h) => guard(clockSet(editing, h)),
+          onMove: (dir) => guard(nudgeOrder(editing, dir)),
+          onDuplicate: () => { setEditing(null); guard(duplicate(editing)); },
+          onTogglePin: () => guard(api.patch(`/api/timers/${editing.id}`, { pinned: editing.pinned ? 0 : 1 }).then(reload)),
+          onFresh: () => { setEditing(null); guard(fresh(editing)); },
+          onDelete: () => { setEditing(null); setDeleting(editing); },
+        }}
         onDone=${async (saved) => {
           const wasNew = editing === 'new';
           setEditing(null);
@@ -1117,31 +1219,51 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 function WorkRow({
   row, secs, idleAfter, roundMode, canDrag = true, dragging = false,
   selectMode = false, selected = false, tabbable = false, writing = false,
-  onFocusRow, onSelect, onToggleSelected, onStart, onStop, onSet, onRename, onMenu,
+  onFocusRow, onSelect, onToggleSelected, onStart, onStop, onSet, onSetHours, onRename, onMenu,
   onOpenEntry, onAssignMatter, onEntryChanged, onWritingDone,
   onDragStart, onDragEnd, onDragOverRow, onDropOn,
 }) {
-  const { timer, entry } = row;
-  const [editingClock, setEditingClock] = useState(false);
+  const { timer } = row;
+  const entries = row.entries || [];
+  const entry = row.focus || null;          // the entry this row speaks for
+  const [editKind, setEditKind] = useState(null); // null | 'clock' | 'hours'
   const [clockText, setClockText] = useState('');
   const [editingName, setEditingName] = useState(false);
   const [nameText, setNameText] = useState('');
   const running = !!(timer && timer.running);
   const idle = running && secs > idleAfter;
 
-  // accumulated time today (elapsed > 0 or a linked entry) vs still-at-zero
-  const worked = !!(entry || secs > 0);
+  // The timer's own clock, in decimal hours — what a stop would file.
+  const tenths = timer ? Number(fmtTenths(secs, roundMode)) : null;
+  // TODAY'S RECORDED HOURS ON THIS MATTER. A running timer's entry does not
+  // catch up until it stops, so its share is read off the live clock.
+  const liveTotal = (e) => (running && timer.linked_entry_id === e.id ? tenths : e.total);
+  const filed = entries.reduce((a, e) => a + liveTotal(e), 0);
+
+  // accumulated time today (elapsed > 0 or an entry) vs still-at-zero
+  const worked = entries.length > 0 || secs > 0;
   const draft = !!entry && entry.status === 'draft';
   const needsNarrative = draft && !(entry.narrative || '').trim() && !running;
-  const noMatter = timer ? !timer.cm_id : !entry.cm;
+  const noMatter = timer ? !timer.cm_id : !(entry && entry.cm);
   // A finalized entry with no timer has nothing to start — say so rather than
   // firing a request that will 4xx.
   const canStart = !!timer || draft;
 
   function commitClock() {
-    setEditingClock(false);
+    const kind = editKind;
+    setEditKind(null);
     const h = Number(clockText);
-    if (Number.isFinite(h) && h >= 0) onSet(Math.round(h * 10) / 10);
+    if (!Number.isFinite(h) || h < 0) return;
+    const v = Math.round(h * 10) / 10;
+    if (kind === 'hours') onSetHours(v); else onSet(v);
+  }
+
+  // The ± pills edit the FIELD, not the record — one write on commit, so a
+  // run of taps is one request and Escape still abandons the whole thing.
+  function nudgeText(d) {
+    const cur = Number(clockText);
+    const next = Math.max(0, Math.round(((Number.isFinite(cur) ? cur : 0) + d) * 10) / 10);
+    setClockText(next.toFixed(1));
   }
 
   function commitName() {
@@ -1150,9 +1272,9 @@ function WorkRow({
     if (v && v !== timer.name) onRename(v);
   }
 
-  const name = timer ? timer.name : (entry.cm ? entry.cm.short_name : 'No matter yet');
-  const cmNumber = timer ? timer.cm_number : entry.cm?.cm_number;
-  const cmName = timer ? timer.cm_short_name : entry.cm?.short_name;
+  const name = timer ? timer.name : (entry && entry.cm ? entry.cm.short_name : 'No matter yet');
+  const cmNumber = timer ? timer.cm_number : entry?.cm?.cm_number;
+  const cmName = timer ? timer.cm_short_name : entry?.cm?.short_name;
 
   const rowTitle = timer
     ? (timer.cm_id
@@ -1162,30 +1284,51 @@ function WorkRow({
 
   // An inline edit is open, so the row must NOT be draggable: a draggable
   // ancestor swallows the mousedown-drag that selects text inside an input.
-  const editingText = editingName || editingClock;
+  const editingText = editingName || !!editKind;
   const draggable = canDrag && !editingText;
 
-  // the filed total only appears when it has drifted from the clock (a
-  // "New entry (zero clock)" leaves them apart) — otherwise it is the same
-  // number twice
-  const tenths = timer ? Number(fmtTenths(secs, roundMode)) : null;
-  const filedDiffers = !!(entry && timer && entry.total > 0 && Math.abs(entry.total - tenths) >= 0.05);
+  // TWO FIGURES OR ONE. Where the clock and the day's record agree — the
+  // ordinary case, because the timer filed the entry — the row states the
+  // number ONCE, as the clock, which is both. They only part company when time
+  // was recorded some other way (keyed by hand, a second entry on the matter,
+  // "New entry (zero clock)"), and then both are true and the row says both:
+  // the recorded hours as the figure that matters, the clock behind the word
+  // "clock", a size down.
+  const diverged = entries.length > 0 && (!timer || Math.abs(filed - tenths) >= 0.05);
+  const showFiled = !timer || diverged || running;
 
   const stateClass = running ? ' running' : needsNarrative ? ' needs-narrative' : worked ? ' worked' : '';
 
+  // A running timer's own entry is not "missing" a narrative — it is work in
+  // progress, and the server agrees (it is excluded from the attention
+  // buckets for exactly this reason).
+  const isLive = (e) => running && timer.linked_entry_id === e.id;
+
   const bodyContent = [];
-  if (entry && !(running && !(entry.narrative || '').trim())) {
+  if (entries.length > 1) {
+    // ONE MATTER, SEVERAL ENTRIES TODAY — one the timer filled, one keyed by
+    // hand, an orphan a deleted timer left behind. The row stays one row and
+    // shows them all, each behind its own hours, so nothing is hidden by the
+    // merge and every narrative is still editable in place.
+    for (const e of entries) {
+      bodyContent.push(html`
+        <div key=${`e${e.id}`} class="work-entry">
+          <span class="work-entry-h mono" title=${`${fmtHours(liveTotal(e))}h on this entry`}>${fmtHours(liveTotal(e))}h</span>
+          ${isLive(e) && !(e.narrative || '').trim()
+            ? html`<span class="muted small">running — files at the next stop</span>`
+            : html`<${InlineNarrative} entry=${e} onChanged=${onEntryChanged}
+                autoEdit=${writing && (!row.focus || row.focus.id === e.id)} onDone=${onWritingDone} />`}
+        </div>`);
+    }
+  } else if (entry && !(running && !(entry.narrative || '').trim())) {
     bodyContent.push(html`<${InlineNarrative} key="narr" entry=${entry} onChanged=${onEntryChanged}
       autoEdit=${writing} onDone=${onWritingDone} />`);
   } else if (worked && !entry) {
     bodyContent.push(html`<p key="hint" class="work-hint muted small">Time on the clock, nothing filed yet.</p>`);
   }
-  if (entry && entry.tasks.length > 1) {
+  if (entry && entries.length === 1 && entry.tasks.length > 1) {
     bodyContent.push(html`<div key="tasks" class="muted small work-tasks">
       ${entry.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration)}`).join(' · ')}</div>`);
-  }
-  if (filedDiffers) {
-    bodyContent.push(html`<div key="filed" class="muted small work-tasks">${fmtHours(entry.total)}h already filed on this entry</div>`);
   }
   if (draft && !running) {
     const findings = entry.validation.filter((f) => f.code !== 'narrative_empty' && f.code !== 'no_matter');
@@ -1265,28 +1408,72 @@ function WorkRow({
             attention buckets for exactly this reason. */''}
       ${bodyContent.length ? html`<div class="work-body">${bodyContent}</div>` : null}
 
-      <div class="work-figures">
-        ${timer ? (editingClock ? html`
-          <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
-            onInput=${(e) => setClockText(e.target.value)}
-            onBlur=${commitClock}
-            onKeyDown=${(e) => { if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditingClock(false); }} />` : html`
+      ${/* ONE NUMBER PER ROW, and it is the one a lawyer bills.
+            The wave critic read this column as "two unlabelled numbers with
+            different dotted underlines and no header" — 0.1 2.7, 0.0 1.7,
+            00:00:00 0.0 — with nothing saying that the small one is the timer
+            clock and the large one is the day's record on that matter. So:
+
+              ordinary row   ONE figure. The clock and the record agree because
+                             the timer filed the entry, so the row says it once.
+              running row    the live HH:MM:SS beside the day's record. Two
+                             figures in two different formats, one of them
+                             visibly ticking — never an ambiguous pair.
+              divergent row  the record, then the clock behind the WORD "clock",
+                             a size down. That case only exists where time was
+                             recorded some other way, and then both are true.
+
+            Every figure here stays tap-editable, with the ±0.1 pills beside the
+            field while it is open — Harvest's quick-add duration pills
+            (shots/refs-v2/harvest-new-time-entry.mobile.jpg) — which is what
+            replaced the four ±0.1/±0.2 rows in the ⋯ menu. */''}
+      <div class=${'work-figures' + (editKind ? ' editing-figure' : '') + (diverged && timer ? ' dual' : '')}>
+        ${editKind ? html`
+          <span class="figure-edit">
+            <button class="btn btn-sm figure-step" tabIndex=${-1} title="−0.1 h (6 min)"
+              onClick=${() => nudgeText(-0.1)}>−</button>
+            <input class="clock-input mono" autoFocus value=${clockText} inputMode="decimal"
+              aria-label=${editKind === 'clock' ? 'Clock, decimal hours' : 'Recorded hours'}
+              onInput=${(e) => setClockText(e.target.value)}
+              onBlur=${commitClock}
+              onKeyDown=${(e) => { e.stopPropagation(); if (e.key === 'Enter') commitClock(); if (e.key === 'Escape') setEditKind(null); }} />
+            <button class="btn btn-sm figure-step" tabIndex=${-1} title="+0.1 h (6 min)"
+              onClick=${() => nudgeText(0.1)}>+</button>
+          </span>` : html`
           <span class="timer-clock-pair">
-            <span class=${'timer-clock-raw mono' + (secs ? '' : ' zero')}>${fmtClock(secs)}</span>
-            <button class="timer-clock mono" tabIndex=${-1}
-              title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
-              onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditingClock(true); }}>
-              ${fmtTenths(secs, roundMode)}
-            </button>
-          </span>`) : html`
-          <span class="timer-clock-pair">
-            <span class="work-hours mono" title="Hours filed on this entry">${fmtHours(entry.total)}</span>
+            ${timer && running ? html`
+              <button class="timer-clock-raw mono" tabIndex=${-1}
+                title=${`${fmtClock(secs)} on the clock — click to edit (decimal hours)`}
+                onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
+                ${fmtClock(secs)}
+              </button>` : null}
+            ${showFiled ? html`
+              <button class="work-hours mono" tabIndex=${-1}
+                title=${`${fmtHours(filed)}h recorded on this matter today — click to edit`}
+                onClick=${() => { setClockText(fmtHours(entry ? liveTotal(entry) : filed)); setEditKind('hours'); }}>
+                ${fmtHours(filed)}
+              </button>` : null}
+            ${/* A zero clock beside a real recorded figure looks like noise,
+                  and hiding it was the first thing tried — but the clock is
+                  the row's only touch path to "put half an hour on this timer
+                  by hand", so hiding it takes a capability away rather than
+                  simplifying. The LABEL is the fix: "1.7  clock 0.0" says two
+                  true things, where "1.7 0.0" said neither. */''}
+            ${timer && !running ? html`
+              <span class=${'figure-clock' + (secs ? '' : ' zero')}>
+                ${diverged ? html`<span class="figure-tag">clock</span>` : null}
+                <button class=${'timer-clock mono' + (secs ? '' : ' zero')} tabIndex=${-1}
+                  title=${`${fmtClock(secs)} elapsed — click to edit (decimal hours)`}
+                  onClick=${() => { setClockText(fmtTenths(secs, roundMode)); setEditKind('clock'); }}>
+                  ${fmtTenths(secs, roundMode)}
+                </button>
+              </span>` : null}
           </span>`}
       </div>
 
       <button class="btn btn-ghost btn-sm timer-more" tabIndex=${-1}
         title=${timer ? 'Timer menu' : 'Entry menu'} aria-label=${timer ? 'Timer menu' : 'Entry menu'}
-        onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(Math.max(8, r.left - 200), r.bottom + 2); }}>
+        onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); onMenu(Math.max(8, r.right - 240), r.bottom + 2); }}>
         <${Icon} name="more" size=${15} />
       </button>
     </div>`;
@@ -1294,7 +1481,17 @@ function WorkRow({
 
 // ---------- modals ----------
 
-function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
+// THE EDIT-TIMER DIALOG — and the home of everything the row menu used to
+// carry about the timer itself (wave-2, see rowMenuItems above).
+//
+// Six rows left the row menu for this dialog: Duplicate, Move up, Move down,
+// Pin to float window, New entry (zero clock) and Delete. They were 28px-tall
+// popover rows; here they are real controls in the dialog that already owned
+// the timer's name, matter, task code, group and template, and at phone width
+// the shared overlay makes it a bottom sheet where base.css gives every one of
+// them a 44×44 box. `Move up/down` reports the timer's position rather than
+// asking the reader to watch a list they cannot see behind the scrim.
+function TimerModal({ timer, taskCodes, groups, lifecycle = null, onDone, onClose }) {
   const [name, setName] = useState(timer ? timer.name : '');
   const [cm, setCm] = useState(timer && timer.cm_id
     ? { id: timer.cm_id, cm_number: timer.cm_number, short_name: timer.cm_short_name } : null);
@@ -1302,6 +1499,15 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
   const [groupId, setGroupId] = useState(timer ? (timer.group_id ?? '') : '');
   const [template, setTemplate] = useState(timer ? (timer.narrative_template || '') : '');
   const [error, setError] = useState(null);
+  // The list behind the scrim is inert, so this dialog reports its own state
+  // rather than relying on the reader seeing the effect.
+  const [pos, setPos] = useState(lifecycle ? lifecycle.index : 0);
+  const [pinned, setPinned] = useState(timer ? !!timer.pinned : false);
+  // THE CLOCK, AS A FIELD. On a 390px row the decimal clock and the day's
+  // record cannot both be touch-sized figures, so where they disagree the row
+  // states the record (timers.css) — and this is the clock's touch path, which
+  // it did not have at that width before.
+  const [clock, setClock] = useState(lifecycle ? String(lifecycle.clockHours) : '');
 
   async function save() {
     try {
@@ -1313,6 +1519,10 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
       const saved = timer
         ? await api.patch(`/api/timers/${timer.id}`, body)
         : await api.post('/api/timers', body);
+      if (lifecycle && clock.trim() !== '' && Number(clock) !== Number(lifecycle.clockHours)) {
+        const h = Number(clock);
+        if (Number.isFinite(h) && h >= 0) await lifecycle.onSetClock(Math.round(h * 10) / 10);
+      }
       onDone(saved);
     } catch (err) { setError(err.message); }
   }
@@ -1348,6 +1558,43 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
             placeholder="e.g. Attend weekly all-hands call with Meridian and Calloway teams regarding"
             onInput=${(e) => setTemplate(e.target.value)}></textarea>
         <//>
+        ${lifecycle ? html`
+          <div class="timer-lifecycle">
+            <h4 class="timer-lifecycle-head">This timer</h4>
+            <div class="timer-lifecycle-row">
+              <label class="timer-lifecycle-clock">
+                <span class="muted small">Clock now (decimal hours)</span>
+                <input type="number" step="0.1" min="0" inputMode="decimal" value=${clock}
+                  onInput=${(e) => setClock(e.target.value)} />
+              </label>
+            </div>
+            <div class="timer-lifecycle-row">
+              <span class="muted small">Position in the list</span>
+              <span class="timer-lifecycle-pos mono">${pos + 1} of ${lifecycle.count}</span>
+              <button type="button" class="btn btn-sm" disabled=${pos <= 0}
+                title="Move up in the list"
+                onClick=${() => { lifecycle.onMove(-1); setPos((p) => Math.max(0, p - 1)); }}>
+                <${Icon} name="chevronUp" size=${15} /> Up</button>
+              <button type="button" class="btn btn-sm" disabled=${pos >= lifecycle.count - 1}
+                title="Move down in the list"
+                onClick=${() => { lifecycle.onMove(1); setPos((p) => Math.min(lifecycle.count - 1, p + 1)); }}>
+                <${Icon} name="chevronDown" size=${15} /> Down</button>
+            </div>
+            <div class="timer-lifecycle-row">
+              <button type="button" class="btn btn-sm" title="Make a copy of this timer"
+                onClick=${lifecycle.onDuplicate}><${Icon} name="copy" size=${15} /> Duplicate</button>
+              <button type="button" class="btn btn-sm"
+                title=${pinned ? 'Stop showing this timer in the always-on-top float window'
+                  : 'Always show this timer in the always-on-top float window'}
+                onClick=${() => { lifecycle.onTogglePin(); setPinned((p) => !p); }}>
+                <${Icon} name="pin" size=${15} /> ${pinned ? 'Unpin from float window' : 'Pin to float window'}</button>
+              <button type="button" class="btn btn-sm"
+                title="Zero the clock and keep today’s entry — the next stop files a new one"
+                onClick=${lifecycle.onFresh}><${Icon} name="refresh" size=${15} /> New entry (zero clock)</button>
+              <button type="button" class="btn btn-sm timer-lifecycle-delete" title="Delete this timer button (entries it created are kept)"
+                onClick=${lifecycle.onDelete}><${Icon} name="trash" size=${15} /> Delete timer</button>
+            </div>
+          </div>` : null}
         ${error ? html`<div class="error-box">${error}</div>` : null}
         <div class="row-end">
           <button type="button" class="btn" onClick=${onClose}>Cancel</button>

@@ -1,14 +1,15 @@
 /* ============================================================================
-   ledger.css — the Entries ledger, and Export as a mode of it.
+   ledger.css — the Entries ledger, and the Export dialog that used to be a
+   whole screen.
 
-   Owned by views/search.js (the ledger + the shared row renderer) and
-   views/exportview.js (the export filters + the download actions). It replaces
-   two screens that were the same list twice: a "Search" page whose real job
-   was "every entry ever recorded, in bulk", and an "Export" page that was that
-   same list plus two columns and three buttons.
+   Owned by views/search.js. It replaces two screens that were the same list
+   twice: a "Search" page whose real job was "every entry ever recorded, in
+   bulk", and an "Export" page that was that same list plus two columns and
+   fifteen controls.
 
-   Three findings from docs/ui/teardown.md §10 and §12 are answered here, and
-   each one is measured, not felt:
+   Findings from docs/ui/teardown.md §10 and §12, and from the standing
+   critic's re-measure of this screen, are answered here — each one measured,
+   not felt:
 
      1. "The desktop <table> is 839px wide inside a 356px scroller. The
         checkbox column — the least useful thing on a phone — is preserved at
@@ -24,8 +25,13 @@
         hide under the running-timer bar either.
 
      3. "Fifteen controls to move one row… above a table with ONE row in it."
-        The ledger's six always-expanded filters are one search box, one
-        "Filters" disclosure and a chip per filter you actually applied.
+        The export page is gone. Its one real question — which file? — is the
+        .export-* dialog at §3 below, over this ledger; its other fourteen
+        controls were the ledger's own filters asked a second time.
+
+     4. "5,082px of undifferentiated cards for 23 entries with no date
+        grouping, no month header and no running subtotal." §7: a sticky day
+        header per date, carrying that day's total.
 
    Every value below is a token or a composition of tokens, except content-
    relative column widths (ch / rem / %), which the design system deliberately
@@ -33,14 +39,26 @@
    ========================================================================== */
 
 /* ---------------------------------------------------------------------------
-   1. THE HEAD — one figure of the moment
+   1. THE HEAD — one figure of the moment, and two counts you can act on
+
    Mercury's big-number/small-decimal treatment (reference-analysis §1/§4),
-   used ONCE on this screen: how much time the current filter selects. The
-   count beside it is a caption, a full size step and weight class below it,
-   which is what makes the figure read as the answer.
+   used ONCE on this screen: how much time the current filter selects. It rides
+   on the title's line because it is the ANSWER to the title, not a second
+   heading — and because on a phone a hero number on its own line was 40px of
+   the 732px first screen spent saying what the line below it already says.
+
+   The caption line under them is no longer "23 entries · everything ever
+   recorded". The standing critic: "lift the count line to something a lawyer
+   acts on — the unfinalized and unexported counts, each a tap that applies its
+   filter chip." That is .ledger-stat.
 --------------------------------------------------------------------------- */
+.ledger-head-title {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
 .ledger-figures {
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2) var(--space-3);
 }
 .ledger-figure { display: inline-flex; align-items: baseline; gap: var(--space-1); }
@@ -61,6 +79,28 @@
   font-weight: var(--fw-caption); letter-spacing: var(--ls-caption);
   color: var(--text-muted);
 }
+
+/* A count that is also the filter for it. TIER 2 (tokens.css §7a): it changes
+   what you are looking at, so it is outlined, never filled. */
+.ledger-stat {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-0-5) var(--space-3);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-pill);
+  background: var(--surface-1); color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-medium); letter-spacing: var(--ls-label);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.ledger-stat:hover { border-color: var(--accent); color: var(--text-primary); }
+.ledger-stat-n {
+  font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+.ledger-stat-unfinalized .ledger-stat-n { color: var(--attention); }
+.ledger-stat-unsent .ledger-stat-n { color: var(--accent-muted-strong); }
 
 /* ---------------------------------------------------------------------------
    2. TOOLBAR — the search box is permanent; everything else is one tap away
@@ -91,7 +131,7 @@ input[type="search"].ledger-search {
   width: 100%;
   padding-left: calc(var(--space-3) * 2 + var(--icon-md));
 }
-.ledger-filter-btn, .ledger-select-btn { flex: none; }
+.ledger-filter-btn, .ledger-select-btn, .ledger-export-btn { flex: none; }
 .ledger-filter-count {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: var(--space-5); height: var(--space-5);
@@ -147,20 +187,124 @@ input[type="search"].ledger-search {
 .ledger-filter-range { margin-top: var(--gap-stack); }
 
 /* ---------------------------------------------------------------------------
-   3. EXPORT'S OWN FILTERS
+   3. THE EXPORT DIALOG — what is left of a whole screen
+
+   It asks the one question the ledger behind it cannot already answer: which
+   file? Range and status are the ledger's own chips, so there is no second
+   filter UI, and the count/hours/range on the first line come from the SAME
+   /api/export/preview call the download is built from — the old page could
+   print "4 ready to send" beside a sentence reading "it cannot export until it
+   is finalized", and there is nothing here for a number to contradict.
+
+   Three rows, not three toolbar buttons, because each format has to name the
+   file it makes: the teardown's labelling bug was four buttons across the app
+   saying "Export" and producing two different formats.
 --------------------------------------------------------------------------- */
-.ledger-field-row {
-  display: flex; align-items: center; flex-wrap: wrap;
-  gap: var(--gap-inline);
-  margin-bottom: var(--space-2);
+/* A DIALOG THAT IS THE DESTINATION DOES NOT SLIDE IN.
+   An entrance animation says "this came from what you just did on the screen
+   behind it". #/entries/export IS this dialog — the navigation item, the phone
+   tab and the dashboard's deep links all land here — so there is no gesture on
+   the page behind for it to answer, and 280ms of rise is 280ms before a lawyer
+   can press the button they navigated for. Opened from the ledger's own header
+   or bulk bar it animates like every other dialog in the app. */
+.ovl:has(> .export-modal-instant), .ovl-panel.export-modal-instant { animation: none; }
+
+.export-scope {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--gap-stack);
 }
-.ledger-seg { margin-left: 0; }
-.ledger-filter-note, .ledger-drafts-note { margin: 0 0 var(--gap-stack); }
-.ledger-drafts-note { flex: 1 1 100%; margin-bottom: 0; }
-.ledger-formats { margin: var(--gap-stack) 0 0; max-width: var(--maxw-prose); }
-.ledger-formats strong { color: var(--text-primary); font-weight: var(--fw-semibold); }
-.ledger-warn-draft { margin: var(--space-2) 0 0; color: var(--attention); }
-.ledger-warn-blocked { margin: var(--space-2) 0 0; color: var(--danger); }
+.export-scope-count {
+  font-size: var(--fs-num-md); line-height: var(--lh-num-md);
+  font-weight: var(--fw-num-md); letter-spacing: var(--ls-num-md);
+  font-variant-numeric: tabular-nums; color: var(--figure);
+}
+.export-scope-rule {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-muted);
+}
+
+/* One sentence, and the control that answers it. */
+.export-note {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: var(--space-2) var(--gap-inline);
+  margin-bottom: var(--gap-stack);
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  /* A full hairline as well as the thick edge: on the dark panel --surface-2
+     and --surface-raised are two steps apart, which is enough to read as a
+     block on white and not enough to read as one at all in dark. */
+  border: var(--border-w) solid var(--border);
+  border-left: var(--border-w-thick) solid var(--border-strong);
+  background: var(--surface-2);
+}
+.export-note > p {
+  flex: 1 1 14rem; margin: 0; min-width: 0;
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  color: var(--text-secondary);
+}
+.export-note > p strong { color: var(--text-primary); font-weight: var(--fw-semibold); }
+.export-note-blocked {
+  border-left-color: var(--valid-block-mark);
+  background: var(--valid-block-bg);
+}
+.export-note-blocked > p, .export-note-blocked > p strong { color: var(--valid-block-fg); }
+
+.export-formats {
+  display: grid; gap: var(--space-2);
+  margin-top: var(--gap-block);
+}
+.export-format {
+  display: flex; align-items: flex-start; gap: var(--gap-inline);
+  width: 100%; text-align: left;
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-w) solid var(--border-input);
+  border-radius: var(--radius-md);
+  background: var(--surface-1); color: var(--text-primary);
+  font-family: inherit; font-size: var(--fs-body); line-height: var(--lh-body);
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.export-format > svg { flex: none; margin-top: var(--icon-nudge); color: var(--text-muted); }
+.export-format:hover:not(:disabled) {
+  border-color: var(--accent); background: var(--surface-2);
+}
+.export-format:hover:not(:disabled) > svg { color: var(--accent); }
+/* TIER 1 (tokens.css §7a): exactly one recommended action in this dialog, and
+   it is the file that actually goes to the billing system. */
+.export-format.is-primary {
+  border-color: var(--accent); background: var(--accent-subtle);
+}
+.export-format.is-primary > svg { color: var(--accent); }
+.export-format:disabled {
+  border-color: var(--state-disabled-border);
+  background: var(--state-disabled-bg);
+  color: var(--state-disabled-fg);
+  cursor: not-allowed;
+}
+.export-format:disabled > svg { color: var(--state-disabled-fg); }
+.export-format-text { display: flex; flex-direction: column; gap: var(--space-0-5); min-width: 0; }
+.export-format-name {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-weight: var(--fw-semibold);
+}
+.export-format-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--space-5); padding: 0 var(--space-1);
+  border-radius: var(--radius-pill);
+  background: var(--accent-muted-soft); color: var(--accent-muted-strong);
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  font-weight: var(--fw-semibold); font-variant-numeric: tabular-nums;
+}
+.export-format:disabled .export-format-count {
+  background: transparent; color: inherit;
+}
+.export-format-hint {
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  font-weight: var(--fw-regular); color: var(--text-muted);
+}
+.export-format:disabled .export-format-hint { color: inherit; }
+.export-foot { margin: var(--gap-stack) 0 0; max-width: var(--maxw-prose); }
 
 /* ---------------------------------------------------------------------------
    4. SELECTION BAR — the batch zone, and its offset contract
@@ -264,6 +408,34 @@ input[type="search"].ledger-search {
 
 .ledger-empty { padding: 0; }
 
+/* ---------------------------------------------------------------------------
+   6. THE DAY GROUP HEADER
+
+   "5,082px of undifferentiated cards for 23 entries with no date grouping, no
+   month header and no running subtotal — every card repeats the same
+   three-line shape at the same visual weight." (Attio's tasks list groups its
+   rows under Today/Upcoming/Completed for the same reason.)
+
+   A real <tr><th colspan> so the table stays a table for a screen reader. The
+   total floats right rather than living in a flex box, because `display: flex`
+   on a table cell makes the engine wrap it in an anonymous cell and the
+   colspan stops spanning.
+--------------------------------------------------------------------------- */
+.ledger-table .ledger-daybreak > th {
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border-top: var(--border-w) solid var(--border);
+  border-bottom: var(--border-w) solid var(--border);
+  font-size: var(--fs-label); line-height: var(--lh-label);
+  letter-spacing: var(--ls-label);
+  font-weight: var(--fw-semibold); color: var(--text-secondary);
+}
+.ledger-table tbody tr.ledger-daybreak:first-child > th { border-top: 0; }
+.ledger-daybreak-total {
+  float: right;
+  font-variant-numeric: tabular-nums; color: var(--figure); font-weight: var(--fw-semibold);
+}
+
 /* The narrative is what you are searching FOR, so it can no longer be a
    nowrap ellipsis whose only reveal is a pointer-only `title`. Three lines on
    a desktop (enough to see the hit in context, few enough to keep the ledger
@@ -285,7 +457,7 @@ input[type="search"].ledger-search {
 }
 
 /* ---------------------------------------------------------------------------
-   6. THE ROW — phone (≤767px)
+   7. THE ROW — phone (≤767px)
 
    base.css's .table-cards does the generic half (header row gone, each row a
    flex card, cells become blocks, the sideways scroller stands down). This is
@@ -328,9 +500,16 @@ input[type="search"].ledger-search {
 
   .ledger-table td[data-col="narrative"] { order: 3; flex: 1 1 100%; }
 
+  /* The day header above the card says the date now, so a date on every card
+     in the group is a line of noise. Clipped rather than `display: none`: a
+     screen reader reading one row out of its group still gets it. */
   .ledger-table td[data-col="date"] {
-    order: 4; flex: none; align-self: center;
-    font-size: var(--fs-label); line-height: var(--lh-label); color: var(--text-muted);
+    position: absolute;
+    width: var(--space-px); height: var(--space-px);
+    margin: calc(var(--space-px) * -1);
+    padding: 0; border: 0;
+    overflow: hidden; white-space: nowrap;
+    clip-path: inset(50%);
   }
   .ledger-table td[data-col="status"] { order: 5; flex: 0 1 auto; align-self: center; }
   .ledger-table td[data-col="exported"] { order: 6; flex: 0 1 auto; align-self: center; }
@@ -340,12 +519,30 @@ input[type="search"].ledger-search {
   /* The column header that carried the unit is gone, so the figure carries it. */
   .ledger-table td[data-col="hours"]::after { content: 'h'; }
 
-  /* Touch floors for the controls this file introduces. base.css covers .btn,
-     inputs, selects and .seg from the design system; these are the three
-     text-styled controls that own their own box here. */
-  .ledger-open, .ledger-chip { min-height: var(--tap-min); display: inline-flex; align-items: center; }
+  /* The group header is the one thing on this list that must stay visible
+     while its own rows scroll — it carries the date every card just stopped
+     repeating, and the day's total. Offset by the runbar contract, same as the
+     selection bar. */
+  .table-cards table.tk tbody tr.ledger-daybreak {
+    display: block; padding: 0; border-bottom: 0;
+    position: sticky; top: var(--runbar-total);
+    z-index: var(--z-sticky);
+  }
+  .table-cards table.tk tbody tr.ledger-daybreak > th {
+    display: block;
+    padding: var(--space-2) var(--space-4);
+  }
 
-  /* Four batch actions in one wrapping row became four different row widths.
+  /* Touch floors for the controls this file introduces. base.css covers .btn,
+     inputs, selects and .seg from the design system; these are the text-styled
+     controls that own their own box here. */
+  .ledger-open, .ledger-chip, .ledger-stat {
+    min-height: var(--tap-min); min-width: var(--tap-min);
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .ledger-open { justify-content: flex-start; }
+
+  /* Five batch actions in one wrapping row become five different row widths.
      Two columns, equal width, in the order they read — the same answer
      shell.css gives the range presets. */
   .ledger-bulk-actions {
@@ -358,26 +555,28 @@ input[type="search"].ledger-search {
   .ledger-bulk-count { margin-right: auto; }
   .ledger-bulk-done { margin-left: 0; }
 
-  /* Four segments at 390px are four ~87px columns, and "Not finalized" needs
-     two lines in one of them. Two rows of two keeps every label on one line
-     and every target at the touch floor. */
-  .ledger-seg {
-    display: grid; grid-template-columns: 1fr 1fr;
-    width: 100%; flex: 1 1 100%;
-  }
-  .ledger-seg > button { border-left: 0; }
-  .ledger-seg > button:nth-child(2n) { border-left: var(--border-w) solid var(--border); }
-  .ledger-seg > button:nth-child(n + 3) { border-top: var(--border-w) solid var(--border); }
+  /* One row, not two. Search took the whole width and pushed Filters and
+     Select onto a band of their own, which is another 52px of preamble above
+     a list whose whole complaint was how far down it started. The field keeps
+     `min-width: 0` so it absorbs every pixel the two buttons do not need, and
+     the buttons keep their labels and their 44px boxes. */
+  .ledger-toolbar { gap: var(--space-2); flex-wrap: nowrap; }
+  .ledger-search-wrap { flex: 1 1 6rem; }
+  .ledger-filter-btn, .ledger-select-btn { flex: 0 0 auto; }
+  .ledger-filter-btn, .ledger-select-btn { padding-inline: var(--space-3); }
 
-  .ledger-toolbar { gap: var(--space-2); }
-  .ledger-search-wrap { flex: 1 1 100%; }
-  .ledger-filter-btn, .ledger-select-btn { flex: 1 1 auto; }
+  /* THE PREAMBLE IS THE MEASUREMENT. The standing critic, on arrival at this
+     screen: "fixed chrome is 112px and the first row starts at y=347, so 295px
+     of the 732px usable first screen — 40% — is preamble."
 
-  /* WHAT YOU ARE ABOUT TO DOWNLOAD, BEFORE THE BUTTON THAT DOWNLOADS IT.
-     .page-head-tools always takes its own line (order: 1), which on a desktop
-     puts the figure neatly under the title — but on a phone, where the actions
-     already own a full-width band, it landed the count BELOW the Download
-     button. The two swap here and nowhere else. */
-  .ledger-head .ledger-figures { order: 0; }
-  .ledger-head .page-head-actions { order: 1; }
+     Adding an Export action and two tappable counts to this head would have
+     cost two more 44px bands (measured: y=447). They cost none: the head is
+     two lines at any width — title + figure + Export on one, the counts you
+     act on beneath — because .spacer's phone behaviour (a full-width flex
+     break, so a title always keeps its own line) is the only thing that made
+     an action row necessary, and this head does not need it. */
+  .ledger-head { margin-bottom: var(--space-3); }
+  .ledger-head > .spacer { display: none; }
+  .ledger-head-title { flex: 1 1 auto; }
+  .ledger-head .page-head-actions { flex: 0 0 auto; margin-left: auto; }
 }

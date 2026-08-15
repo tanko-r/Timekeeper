@@ -2,6 +2,8 @@ import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, emitToast, Icon, React } from '/js/ui.js';
 import { useShortcuts, refreshShortcuts } from '/js/components/shortcuts.js';
 import { CmsSection } from '/js/views/cms.js';
+import { RunTodo } from '/js/components/runtodo.js';
+import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 // SETTINGS — the configuration surface, and now the home of reference data.
 //
@@ -34,8 +36,18 @@ import { CmsSection } from '/js/views/cms.js';
 //      navigation-bar pull-down menu. settings.css suppresses the shell's
 //      generic chip strip on these pages so there is exactly one navigation.
 //
-// The sidebar's `.subnav` is still the desktop navigation (≥1024px), where six
-// vertical links fit comfortably and the switcher is hidden.
+//      …AND TOOLS TOO (this wave). Seven of the eight sections rendered the
+//      switcher and the eighth did not: Tools was app.js's own panel, so it
+//      fell through to the shell's generic chip strip — eight chips on a 390px
+//      phone with five of them off the left edge and "Codes & shortcuts" cut
+//      mid-word to "…rtcuts" behind a fade. app.js was already built to hand
+//      the section over the day this file grew it ("appended only if
+//      settings.js has not already grown them itself"), so it is grown here
+//      now: `tools` is a category like any other, and there is exactly ONE
+//      sub-navigation on every settings route.
+//
+// The sidebar's `.subnav` is still the desktop navigation (≥1024px), where the
+// eight vertical links fit comfortably and the switcher is hidden.
 
 export const SETTINGS_CATEGORIES = [
   ['general', 'General'],
@@ -45,13 +57,8 @@ export const SETTINGS_CATEGORIES = [
   ['codes', 'Codes & shortcuts'],
   ['validation', 'Validation'],
   ['server', 'Remote & backups'],
+  ['tools', 'Tools'],
 ];
-
-// Tools is app.js's own panel (it owns the three ex-navigation actions and the
-// keyboard sheet), so it is NOT in the list above — adding it there would stop
-// app.js rendering it. The switcher still lists it, because a section a thumb
-// cannot reach is a section that does not exist.
-const EXTRA_CATEGORIES = [['tools', 'Tools']];
 
 // Icon + one line per category. The line is what makes the switcher a
 // navigation rather than a list of nouns: "Validation" means nothing on its
@@ -85,6 +92,7 @@ export function SettingsView({ page, settings, reloadSettings, authState, reload
         <${RemoteCard} authState=${authState} reloadAuth=${reloadAuth} />
         <${BackupCard} settings=${settings} reloadSettings=${reloadSettings} />
       <//>`,
+    tools: html`<${ToolsCard} />`,
   };
   const label = SETTINGS_CATEGORIES.find(([k]) => k === key)[1];
   return html`
@@ -112,7 +120,7 @@ function SectionNav({ current }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef(null);
   const triggerRef = useRef(null);
-  const items = [...SETTINGS_CATEGORIES, ...EXTRA_CATEGORIES];
+  const items = SETTINGS_CATEGORIES;
   const at = items.findIndex(([k]) => k === current);
   const [, label] = items[at] || items[0];
   const meta = CATEGORY_META[current] || CATEGORY_META.general;
@@ -759,6 +767,69 @@ function RemoteCard({ authState, reloadAuth }) {
           </select>
         <//>
       </div>
+    <//>`;
+}
+
+// ---------------------------------------------------------------------------
+// Tools — the three actions that left the primary navigation, plus the
+// keyboard sheet
+// ---------------------------------------------------------------------------
+//
+// This was app.js's own `ToolsPanel`, which is why it was the one settings
+// section rendering the shell's chip strip instead of the section switcher.
+// Nothing about the four controls changed: Add todo still fires the same
+// `tk:add-todo` event the Alt+drag feedback gesture uses, Run /todo is the same
+// component with the same two-click arming, Float timer is the same
+// document-picture-in-picture toggle (and is also on the running-timer bar),
+// and Keyboard shortcuts still opens the same sheet.
+//
+// THE ONE BRIDGE IN THIS FILE, and it is deliberate: the keyboard sheet lives
+// in app.js as view-local state with exactly one public entry point — the `?`
+// key on the document. app.js imports this file, so importing it back to reach
+// the component would close a cycle. Replaying the key it already listens for
+// uses the documented entry point rather than inventing a private one, and it
+// is the only route a phone has had to that sheet since the More sheet went
+// away. If app.js ever grows a `tk:help` event, this becomes one line shorter.
+function openKeyboardHelp() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }));
+}
+
+function ToolsCard() {
+  const floatable = pipSupported();
+  return html`
+    <${SettingsCard} title="Tools"
+      intro=${'Utilities that are not part of keying time. The float window is a Chrome/Edge '
+        + 'desktop feature and appears on the running-timer bar too; the two todo actions write '
+        + "to this repo's own backlog."}>
+      ${/* A labelled action list, not settings rows: every one of these is a
+            verb with no value to set, and a row shape built for
+            label-left/control-right would put the same word on both sides. Each
+            is a full-width 44px target — the sidebar these came from never had
+            to meet the touch floor, and here they do. */''}
+      <div class="set-tools">
+        <button type="button" class="set-tool"
+          title="Jot a quick change onto TODO.md (no screenshot)"
+          onClick=${() => window.dispatchEvent(new CustomEvent('tk:add-todo'))}>
+          <${Icon} name="plus" size=${18} />
+          <span>Add todo</span>
+        </button>
+        <${RunTodo} />
+        ${floatable ? html`
+          <button type="button" class="set-tool"
+            title="Float a tiny always-on-top timer window (SPIKE — Chrome only)"
+            onClick=${() => toggleTimerPip().catch((e) => emitToast(String(e.message || e), { error: true }))}>
+            <${Icon} name="copy" size=${18} />
+            <span>Float timer</span>
+          </button>` : null}
+        <button type="button" class="set-tool" onClick=${openKeyboardHelp}>
+          <${Icon} name="keyboard" size=${18} />
+          <span>Keyboard shortcuts</span>
+        </button>
+      </div>
+      ${floatable ? null : html`<${Note} tone="off">
+        The float window needs Chrome or Edge on a desktop — this browser does
+        not offer it.
+      <//>`}
     <//>`;
 }
 

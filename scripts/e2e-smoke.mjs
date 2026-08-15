@@ -356,10 +356,19 @@ await step('backdated start (10m ago) → stop → inline chips; picking one FIN
   if (!toasts.some((t) => t.action === 'Undo')) {
     throw new Error(`the pick must offer Undo, got ${JSON.stringify(toasts)}`);
   }
-  // One merged list: the timer and the entry it filled are the SAME row, and
-  // the earlier finalized entry (which has no timer) is a row of its own.
+  // ONE MERGED LIST, KEYED BY MATTER (wave-1b). The timer, the entry it just
+  // filled and the earlier entry recorded by hand on the SAME matter are one
+  // row — a timer and a record are the same work at two moments. (Before this
+  // the list showed the matter twice with two different numbers.) The row
+  // carries an entry line per entry, so nothing the merge folded together is
+  // hidden.
   const rows = await page.$$eval('.today-list .work-row', (els) => els.length);
-  if (rows < 2) throw new Error(`expected at least 2 rows of today's work, got ${rows}`);
+  if (rows < 1) throw new Error(`expected at least 1 row of today's work, got ${rows}`);
+  const perRow = await page.$$eval('.today-list .work-row',
+    (els) => els.map((el) => el.querySelectorAll('.work-entry').length));
+  if (!perRow.some((n) => n >= 2)) {
+    throw new Error(`the matter's entries did not merge onto one row: ${JSON.stringify(perRow)}`);
+  }
 });
 
 await step('quick-capture palette (q): "call re acme .3" parses clean and files', async () => {
@@ -401,13 +410,20 @@ await step('timer clock is editable in place', async () => {
   await page.waitForFunction(
     () => document.querySelector('.timer-clock')?.textContent.trim() === '1.4',
     { timeout: 4000 });
-  // compact card shows the raw clock (display-only, always HH:MM:SS) beside the
-  // editable tenths: 1.4h = 01:24:00 and 1.4
+  // ONE NUMBER PER ROW (wave-2). The HH:MM:SS reading used to sit beside the
+  // editable tenths on every row, saying the same thing twice — "00:00:00 0.0"
+  // on a timer that was not running. It renders only while the clock is
+  // actually ticking now; on a stopped row the elapsed time is the tenths
+  // figure itself, and its exact HH:MM:SS is the figure's title. Where the
+  // clock and the day's record HAVE parted company the row shows both, and
+  // the smaller one is labelled "clock" so the pair cannot be misread.
   await page.waitForFunction(() => {
     const pair = document.querySelector('.timer-clock-pair');
-    return pair
-      && pair.querySelector('.timer-clock-raw')?.textContent.trim() === '01:24:00'
-      && pair.querySelector('.timer-clock')?.textContent.trim() === '1.4';
+    if (!pair) return false;
+    const clock = pair.querySelector('.timer-clock');
+    return clock?.textContent.trim() === '1.4'
+      && clock.title.startsWith('01:24:00')
+      && !pair.querySelector('.timer-clock-raw');
   }, { timeout: 4000 });
 });
 
@@ -753,12 +769,22 @@ await step('AUTO narrative: two-way edit-through, structural-break detach, clien
   await page.waitForFunction(() =>
     [...document.querySelectorAll('.today-list .work-row')].some((c) => c.textContent.includes('Review lease terms')),
   { timeout: 5000 });
-  // The pencil is gone (teardown E8: one primary action plus an overflow); the
-  // matter name IS the open affordance, and the rest is behind the row's ⋯.
+  // The pencil is gone (teardown E8: one primary action plus an overflow), so
+  // the entry is reopened from the row's ⋯ menu. On a row keyed by MATTER
+  // (wave-1b) that menu names each of the day's entries on that matter by its
+  // narrative, so the reopen can name the one it means.
   await page.evaluate(() => {
     const row = [...document.querySelectorAll('.today-list .work-row')]
       .find((c) => c.textContent.includes('Review lease terms'));
-    row.querySelector('.timer-name').click();
+    row.querySelector('.timer-more, .entry-more').click();
+  });
+  await waitFor('.ctx-menu');
+  await page.evaluate(() => {
+    const items = [...document.querySelectorAll('.ctx-menu .ctx-item')];
+    const it = items.find((b) => b.textContent.includes('Review lease terms'))
+      || items.find((b) => b.textContent.trim().startsWith('Open'));
+    if (!it) throw new Error('no "Open entry" item in the row menu');
+    it.click();
   });
   await waitFor('.modal-wide .narrative-preview textarea');
   await page.waitForFunction(() => !document.querySelector('.modal-wide .auto-badge'), { timeout: 4000 });
@@ -846,16 +872,23 @@ await step('groups: create from the list menu, assign from the row menu, isolate
   await setOnly('');
   await page.waitForFunction(() => document.querySelectorAll('.today-list .timer-row').length === 1, { timeout: 4000 });
 
-  // assign the existing timer to Litigation via the ROW menu (the touch path)
+  // Assign the existing timer to Litigation. The row menu was seventeen items
+  // and 57% of a phone screen (teardown §5, "the tell"), so timer maintenance
+  // — duplicate, group, reorder, pin, zero, delete — moved into the Edit-timer
+  // dialog the menu still opens in one row (wave-2). The group select lives
+  // there beside the timer's name and matter, where it always belonged.
   await page.click('.timer-row button[title="Timer menu"]');
-  await waitFor('.ctx-menu select');
+  await clickText('.ctx-menu .ctx-item', 'Edit timer');
+  await waitFor('.modal select');
   await page.evaluate(() => {
-    const sel = document.querySelector('.ctx-menu select');
-    sel.value = sel.querySelector('option:not([value=""])').value;
+    const sel = [...document.querySelectorAll('.modal select')]
+      .find((s) => [...s.options].some((o) => o.textContent.trim() === 'Ungrouped'));
+    if (!sel) throw new Error('no Group control in the Edit timer dialog');
+    sel.value = [...sel.options].find((o) => o.value !== '').value;
     sel.dispatchEvent(new Event('change', { bubbles: true }));
   });
-  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
-  await page.waitForFunction(async () => true);
+  await clickText('.modal button', 'Save');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
   await page.waitForFunction(() => {
     const sec = [...document.querySelectorAll('.timer-section')]
       .find((x) => x.querySelector('.group-head')?.textContent.includes('Litigation'));
@@ -1202,16 +1235,28 @@ await step('drag: an open inline edit suspends it; hovering a row opens a drop s
   await page.waitForFunction((want) => [...document.querySelectorAll('.today-list .timer-row .timer-name')]
     .map((e) => e.textContent).join('|') === want, { timeout: 4000 }, before.join('|'));
 
-  // "Move to group…" and "Move up/down in the list" on the row menu are the
-  // TOUCH equivalents of the drag — dragging is not a touch path (teardown E1).
+  // "Move to group…" and "Move up/down in the list" are the TOUCH equivalents
+  // of the drag — dragging is not a touch path (teardown E1). They live in the
+  // Edit-timer dialog now (wave-2: the row menu was seventeen items on a
+  // phone), one row deep from the same ⋯, as real controls rather than 28px
+  // popover rows.
   await page.click('.today-list .timer-row button[title="Timer menu"]');
   await waitFor('.ctx-menu');
-  const hasMove = await page.evaluate(() => [...document.querySelectorAll('.ctx-menu button')]
+  await clickText('.ctx-menu .ctx-item', 'Edit timer');
+  await waitFor('.modal .timer-lifecycle');
+  const hasMove = await page.evaluate(() => [...document.querySelectorAll('.modal .timer-lifecycle button')]
     .some((b) => (b.getAttribute('title') || '').includes('Move down in the list')));
-  if (!hasMove) throw new Error('row menu missing the touch reorder (Move up/down)');
-  if (!await page.$('.ctx-menu select')) throw new Error('row menu missing the "Group" move-to control');
+  if (!hasMove) throw new Error('Edit timer dialog missing the touch reorder (Move up/down)');
+  const hasGroup = await page.evaluate(() => [...document.querySelectorAll('.modal select')]
+    .some((s) => [...s.options].some((o) => o.textContent.trim() === 'Ungrouped')));
+  if (!hasGroup) throw new Error('Edit timer dialog missing the "Group" move-to control');
+  for (const label of ['Duplicate', 'Pin to float window', 'New entry (zero clock)', 'Delete timer']) {
+    const there = await page.evaluate((t) => [...document.querySelectorAll('.modal .timer-lifecycle button')]
+      .some((b) => b.textContent.trim().includes(t)), label);
+    if (!there) throw new Error(`Edit timer dialog missing "${label}" — it left the row menu, it must land here`);
+  }
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
   await setListSeg('Order', 'Recent activity');
 });
 
@@ -1279,12 +1324,17 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
     && ![...document.querySelectorAll('.timer-name')].some((el) => el.textContent.startsWith('Batch probe')),
   { timeout: 4000 }, before);
 
-  // right-click on a lone card still opens the ordinary single-timer menu
+  // right-click on a lone card still opens the ordinary single-timer menu —
+  // which is the eight-item row menu now, with timer maintenance (and the
+  // delete) one row deep in the Edit-timer dialog it opens (wave-2)
   await page.evaluate(() => document.querySelector('.today-list .timer-row')
     .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 200 })));
   await waitFor('.ctx-menu');
   const single = await page.$eval('.ctx-menu', (el) => el.textContent);
-  if (!single.includes('Delete timer')) throw new Error(`single menu missing: ${single}`);
+  if (single.includes('timers selected')) throw new Error(`lone card opened the BATCH menu: ${single}`);
+  if (!single.includes('Edit timer')) throw new Error(`single menu missing: ${single}`);
+  const rowItems = await page.$$eval('.ctx-menu .ctx-item, .ctx-menu .ctx-custom', (els) => els.length);
+  if (rowItems > 8) throw new Error(`the row menu is back over eight items (${rowItems}) — teardown §5 named this object as the app's tell`);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
 });
@@ -1325,7 +1375,10 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
   // repeat `/` while the bar is already open: click a card (focus leaves the
   // input; the bar stays up because the filter is set), press `/` again — it
   // must refocus the input rather than no-op on unchanged searchOpen state.
-  await page.click('.timer-row .timer-clock-raw'); // safe spot — name/tenths/start are all interactive
+  // focus a row directly — every painted thing on it (name, tenths, start,
+  // the ⋯) is interactive, and the HH:MM:SS reading that used to be the one
+  // inert spot only exists while a timer is running now
+  await page.evaluate(() => document.querySelector('.timer-row').focus());
   await page.waitForFunction(() =>
     document.activeElement !== document.querySelector('.timer-search'), { timeout: 4000 });
   await page.keyboard.press('/');
@@ -1413,10 +1466,23 @@ await step('custom fields: define on client, entry enforces + carries value', as
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
 });
 
-await step('export view offers CSV, .TIM, and text', async () => {
+// Export is a DIALOG over the entries ledger now, not a page of its own
+// (teardown §12, and the standing critic's re-measure: "28 visible interactive
+// controls, all 28 above the fold, first and only table row at y=486"). Same
+// three formats, same deep links, same file contents — one screen fewer.
+await step('export offers CSV, .TIM and text, as a dialog over the ledger', async () => {
   await page.goto(`${base}/#/export`, { waitUntil: 'networkidle0' });
-  await page.waitForFunction(() => document.body.textContent.includes('.TIM'));
-  await page.waitForFunction(() => document.body.textContent.includes('CSV'));
+  await waitFor('.export-modal');
+  await page.waitForFunction(() => {
+    const names = [...document.querySelectorAll('.export-format .export-format-name')]
+      .map((n) => n.textContent);
+    return names.some((t) => t.includes('Copy as text'))
+      && names.some((t) => t.includes('Download CSV'))
+      && names.some((t) => t.includes('Download .TIM'));
+  }, { timeout: 5000 });
+  // …and the ledger is still underneath it: this is a mode of Entries, not a
+  // second copy of the entry table.
+  await page.waitForFunction(() => document.querySelectorAll('table.tk tbody tr').length > 0);
   await shot('export');
 });
 
@@ -1462,10 +1528,17 @@ await step('export view: row actions edit and finalize a not-finalized entry', a
   await fetch(`${base}/api/entries/${created.id}`, { method: 'DELETE' });
 });
 
-await step('export view: This month preset sets from=1st, to=today', async () => {
-  await clickText('button', 'This month');
+// The range presets used to live on the Export page. There is one range
+// vocabulary now and it belongs to the ledger, behind "Filters" — the same
+// five presets and the same two date inputs, feeding the same export.
+await step('ledger range presets: This month sets from=1st, to=today', async () => {
+  await page.goto(`${base}/#/entries`, { waitUntil: 'networkidle0' });
+  await waitFor('.ledger-filter-btn');
+  await page.click('.ledger-filter-btn');
+  await waitFor('.ledger-filters');
+  await clickText('.ledger-filters .filter-presets button', 'This month');
   const { fromVal, toVal, today } = await page.evaluate(() => {
-    const inputs = document.querySelectorAll('input[type="date"]');
+    const inputs = document.querySelectorAll('.ledger-filters input[type="date"]');
     const now = new Date();
     const y = now.getFullYear();
     const m = String(now.getMonth() + 1).padStart(2, '0');
@@ -1476,10 +1549,78 @@ await step('export view: This month preset sets from=1st, to=today', async () =>
   if (toVal !== today) throw new Error(`This month "to" should be today (${today}), got ${toVal}`);
 });
 
+// THE EXPORT DIALOG'S THREE PROMISES, in one pass:
+//   1. the ledger's header opens it scoped to what the ledger is showing;
+//   2. the bulk bar opens it scoped to the entries you picked (the standing
+//      critic: "there is no way to export the entries you just picked out");
+//   3. it refuses to write a blank billing line. `narrative_empty` is a BLOCK
+//      in lib/validation.js, so only an included DRAFT can be blank — and the
+//      page this replaced wrote three of them into a .TIM with an empty na=.
+await step('export dialog: header scope, selection scope, blank-narrative fence', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const blank = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date: todayLocal(), cm_id: cms[0].id, narrative: '',
+      tasks: [{ task_code: 'Review', duration: 0.3, fragment: '' }],
+    }),
+  })).json();
+
+  await page.goto(`${base}/#/entries`, { waitUntil: 'networkidle0' });
+  // A hash-only goto is a same-document navigation, so the ledger keeps the
+  // chips the previous steps applied. This one starts from an unfiltered
+  // ledger on purpose — the header's Export is scoped to what is on screen.
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.ledger-export-btn');
+  await page.click('.ledger-export-btn');
+  await waitFor('.export-modal');
+  await page.waitForFunction(() => !!document.querySelector('.export-scope-count'), { timeout: 6000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.export-modal'), { timeout: 4000 });
+
+  // 2. the selection path
+  await page.evaluate(() => {
+    document.querySelector('table.tk tbody tr:not(.ledger-daybreak) td[data-col="select"] input').click();
+  });
+  await waitFor('.ledger-bulk-export');
+  await page.click('.ledger-bulk-export');
+  await waitFor('.export-modal');
+  await page.waitForFunction(() => !!document.querySelector('.export-scope-count'), { timeout: 6000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.export-modal'), { timeout: 4000 });
+
+  // 3. drafts in scope, one of them blank: CSV and .TIM refuse and say why;
+  //    "Copy as text" stays available because it marks nothing as sent.
+  await waitFor('.ledger-stat-unfinalized');
+  await page.click('.ledger-stat-unfinalized');
+  await page.waitForFunction(() =>
+    [...document.querySelectorAll('.ledger-chip')].some((c) => c.textContent.includes('Draft')));
+  await page.click('.ledger-export-btn');
+  await waitFor('.export-formats');
+  await page.waitForFunction(() => document.body.textContent.includes('no narrative'), { timeout: 6000 });
+  const state = await page.evaluate(() =>
+    [...document.querySelectorAll('.export-format')].map((b) => ({ t: b.textContent, off: b.disabled })));
+  const row = (t) => state.find((s) => s.t.includes(t));
+  if (row('Copy as text').off) throw new Error('Copy as text must stay available — it marks nothing as sent');
+  if (!row('Download CSV').off) throw new Error('CSV must refuse while an entry in scope has no narrative');
+  if (!row('Download .TIM').off) throw new Error('.TIM must refuse while an entry in scope has no narrative');
+  await shot('export-blank-fence');
+  await page.keyboard.press('Escape');
+
+  await fetch(`${base}/api/entries/${blank.id}`, { method: 'DELETE' });
+});
+
 // Time-leakage chain (TODO 2026-08-03): an unfinalized entry on a day that is
 // already over has to be visible on the dashboard, and the pill has to land on
-// an Export page that is actually showing it — right filter, wide enough range.
-await step('stalled time: banner pill → Export filtered to exactly those entries', async () => {
+// a list that is actually showing it — right filter, wide enough range.
+//
+// Where that list lives changed, not what it must contain: #/export/<filter>/
+// <from> is the entries ledger with that filter's CHIPS applied (teardown §12:
+// "keep the deep-link contract pointing at the ledger with that chip applied").
+// The pill says *Review*, so no download dialog opens over the rows it brought
+// the reader here to read.
+await step('stalled time: banner pill → ledger filtered to exactly those entries', async () => {
   const cms = await (await fetch(`${base}/api/cms`)).json();
   const yesterday = (() => {
     const d = new Date(); d.setDate(d.getDate() - 1);
@@ -1496,26 +1637,33 @@ await step('stalled time: banner pill → Export filtered to exactly those entri
 
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
   // The four flat grey chips (whose only affordance was a pointer-only
-  // tooltip) are gone: unfinalized time from a day that is already over gets
-  // its own callout with an explicit action (teardown §3 / D3).
+  // tooltip) are gone: unfinalized time from a day that is already over leads
+  // the attention band, carries its amber rail, and is itself the link to the
+  // filtered ledger (teardown §3 / D3; wave-2 folded the banner ROW and the
+  // backlog link row into one 44px band).
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('.attn-stale')].some((b) => b.textContent.includes('not finalized')));
+    [...document.querySelectorAll('.attn-link-stale')].some((b) => b.textContent.includes('not finalized')));
   await shot('attention-banner');
-  await clickText('.attn-stale button', 'Review');
+  await clickText('.attn-link-stale', 'not finalized');
 
   await page.waitForFunction(() =>
-    [...document.querySelectorAll('.seg button')].some((b) => b.classList.contains('on') && b.textContent.includes('Not finalized')));
-  // The segment flips synchronously on the route change but the filtered rows
+    [...document.querySelectorAll('.ledger-chip')].some((c) => c.textContent.includes('Draft')));
+  if (await page.$('.export-modal')) throw new Error('a Review link must not open a download dialog');
+  // The chips flip synchronously on the route change but the filtered rows
   // arrive from a fetch, so reading the table straight away races the render.
   // Swallow the timeout — the assertions below produce the useful message.
   await page.waitForFunction(() =>
     [...document.querySelectorAll('table.tk tbody tr')]
       .some((r) => r.textContent.includes('stalled matter correspondence')),
   { timeout: 5000 }).catch(() => {});
-  const { fromVal, rows } = await page.evaluate(() => ({
-    fromVal: document.querySelectorAll('input[type="date"]')[0].value,
-    rows: [...document.querySelectorAll('table.tk tbody tr')].map((r) => r.textContent),
-  }));
+  const { fromVal, rows } = await page.evaluate(() => {
+    const chip = [...document.querySelectorAll('.ledger-chip')]
+      .find((c) => c.textContent.trim().startsWith('From '));
+    return {
+      fromVal: chip ? chip.textContent.replace(/[^\d-]/g, '') : '',
+      rows: [...document.querySelectorAll('table.tk tbody tr')].map((r) => r.textContent),
+    };
+  });
   // the pill opens on the oldest stalled entry, so the range must reach back
   // at least to yesterday — a narrower one would show an empty list
   if (fromVal > yesterday) throw new Error(`range should reach ${yesterday}, got from=${fromVal}`);
@@ -1590,8 +1738,12 @@ await step('activity filters (Today / Yesterday / Week / Recent) survive as a li
 // same events, same two-click arming — one route further in.
 await step('add-todo button: Settings → Tools → note box → TODO entry filed (no screenshot)', async () => {
   await page.goto(`${base}/#/settings/tools`, { waitUntil: 'networkidle0' });
-  await waitFor('.tools-list');
-  await clickText('.navlink', 'Add todo');
+  // Tools is a settings SECTION now, not app.js's own panel: it renders inside
+  // the settings shell (one sub-navigation, the section switcher, on a phone)
+  // rather than beside it. Same four controls, same events — `.set-tools`
+  // replaces `.tools-list` as the list they live in.
+  await waitFor('.set-tools');
+  await clickText('.set-tools > button', 'Add todo');
   await waitFor('.feedback-note', 4000);
   // No screenshot preview on this path — the note files on its own.
   const hasShot = await page.evaluate(() => !!document.querySelector('.feedback-shot'));

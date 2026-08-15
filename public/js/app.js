@@ -1,5 +1,5 @@
 import { api, accessSignInUrl } from '/js/api.js';
-import { html, React, useState, useEffect, useRef, useCallback, Spinner, Icon } from '/js/ui.js';
+import { html, React, useState, useEffect, useRef, useCallback, Spinner, fmtHours, Icon } from '/js/ui.js';
 import { LoginView } from '/js/views/login.js';
 import { DashboardView } from '/js/views/dashboard.js';
 import { DayView } from '/js/views/day.js';
@@ -14,7 +14,7 @@ import { EntryEditor } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
 import { RunTodo } from '/js/components/runtodo.js';
-import { RunBar } from '/js/components/runbar.js';
+import { RunBar, useDayTotal } from '/js/components/runbar.js';
 import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 const { createRoot } = window.ReactDOM;
@@ -511,6 +511,26 @@ function App() {
   const closeQuickCapture = useCallback(() => setQuickCapture(false), []);
   const openQuickCapture = useCallback(() => setQuickCapture(true), []);
 
+  // The day's filed total, owned by the shell so it can be stated once per
+  // viewport: the run bar carries it on wide screens away from the dashboard,
+  // the phone's bottom bar carries it everywhere (see runbar.css's ownership
+  // note). One read of /api/stats for today; no new endpoint.
+  const dayTotal = useDayTotal(!!settings);
+
+  // "Close the day" from the phone's bottom bar. The sweep is the dashboard's
+  // (it is a day-level commit, and the dashboard owns the day's data), so from
+  // anywhere else this goes home first and then asks. Two dispatches, because
+  // the listener mounts with the view: the first lands when we are already
+  // there, the second after the route has painted. setCloseOut is idempotent.
+  const closeDay = useCallback(() => {
+    const fire = () => window.dispatchEvent(new CustomEvent('tk:close-day'));
+    if (route.path !== 'dashboard') {
+      nav('#/');
+      requestAnimationFrame(() => requestAnimationFrame(fire));
+      setTimeout(fire, 300);
+    } else fire();
+  }, [route.path]);
+
   // Back / the Android gesture dismisses the top overlay instead of leaving
   // the screen under it. Order is irrelevant — each hook owns its own marker.
   useBackDismiss(!!editor, closeEditor);
@@ -693,7 +713,10 @@ function App() {
 
   return html`
     <div class="shell">
-      <${RunBar} />
+      ${/* The bar carries the day's number only where nothing else does: the
+            dashboard's own day footer says it there (≥768px), and below that
+            the bottom bar says it on every screen. */''}
+      <${RunBar} dayTotal=${dayTotal} showTotal=${here !== 'dashboard'} />
       <nav class="sidebar" aria-label="Main">
         <div class="brand">
           <${Icon} name="timer" size=${21} />
@@ -722,10 +745,20 @@ function App() {
         ${view()}
       </main>
     </div>
-    ${/* The phone bar: four destinations, and quick capture in the middle —
-          Material 3's BottomAppBar-with-a-FAB, and the first time the app's
-          fastest feature has had a control a thumb can reach. */''}
+    ${/* THE PHONE'S ONE BOTTOM BAR. Four destinations, quick capture in the
+          middle — Material 3's BottomAppBar-with-a-FAB — and, since this wave,
+          the day footer's two jobs folded into the same bar rather than
+          stacked above it: the filed total as the leading label, "Close the
+          day" as the trailing action. That is M3's own bottom-app-bar anatomy
+          (a leading text slot, actions, one trailing action), and it takes the
+          phone's permanent chrome from three bars and 173px to two and 112px.
+          Nothing was deleted: both controls are here on every screen now,
+          where before they existed only on the dashboard. */''}
     <nav class="botnav" aria-label="Main">
+      <span class="botnav-total" title="Filed today (all entries)">
+        <strong class="mono">${dayTotal == null ? '—' : `${fmtHours(dayTotal)}h`}</strong>
+        <span class="botnav-total-cap">filed</span>
+      </span>
       ${NAV.slice(0, CAPTURE_SLOT).map(([path, label, icon, short]) => html`
         <button key=${path}
           class=${'botnav-item' + (active === path ? ' active' : '')}
@@ -749,6 +782,11 @@ function App() {
           <span class="botnav-ind"><${Icon} name=${icon} size=${20} /></span>
           <span class="botnav-label">${short}</span>
         </button>`)}
+      <button class="botnav-item botnav-close" onClick=${closeDay}
+        title="Review, finalize and export today (c)" aria-label="Close the day">
+        <span class="botnav-ind"><${Icon} name="lock" size=${20} /></span>
+        <span class="botnav-label">Close</span>
+      </button>
     </nav>
     <${ToastHost} />
     <${FeedbackCapture} />

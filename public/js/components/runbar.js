@@ -32,12 +32,49 @@
 // covers it (and is marked inert with the rest of .shell while one is open).
 // ============================================================================
 import { api } from '/js/api.js';
-import { html, useState, useEffect, useRef, useCallback, fmtClock, fmtHours, emitToast, Icon } from '/js/ui.js';
+import { html, useState, useEffect, useRef, useCallback, fmtClock, fmtHours, emitToast, todayStr, Icon } from '/js/ui.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { runningTitle, IDLE_ICON, RUNNING_ICON } from '/js/lib/titlebar.js';
 import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
 
 const POLL_MS = 5000;
+
+// THE DAY'S FILED TOTAL, FOR THE WHOLE SHELL.
+//
+// It used to be rendered by the dashboard's day footer, which is a dashboard
+// component — so on Calendar, Entries and Settings the number a lawyer manages
+// his day by simply did not exist. One read of the stats range endpoint (no
+// API change), refreshed on every entry write and on wake, shared by the run
+// bar and the phone's bottom bar so the figure is stated once per viewport.
+export function useDayTotal(enabled = true) {
+  const [total, setTotal] = useState(null);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    const poll = () => {
+      const d = todayStr();
+      api.get(`/api/stats?from=${d}&to=${d}`)
+        .then((s) => { if (alive && s && typeof s.totalHours === 'number') setTotal(s.totalHours); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, POLL_MS * 6);
+    const onWake = () => { if (document.visibilityState === 'visible') poll(); };
+    window.addEventListener('tk:entries-changed', poll);
+    window.addEventListener('tk:timers-changed', poll);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      window.removeEventListener('tk:entries-changed', poll);
+      window.removeEventListener('tk:timers-changed', poll);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [enabled]);
+  return total;
+}
 
 // One poll for every running-timer surface. `tk:timers-changed` (dispatched by
 // api.js after any successful /api/timers write, wherever it was made — this
@@ -108,7 +145,7 @@ function useBrowserChrome(timers, fetchedAt, enabled) {
   }, [enabled]);
 }
 
-export function RunBar({ enabled = true }) {
+export function RunBar({ enabled = true, dayTotal = null, showTotal = false }) {
   const { timers, fetchedAt } = useTimers(enabled);
   const [busy, setBusy] = useState(false);
   const [, tick] = useState(0);
@@ -128,10 +165,20 @@ export function RunBar({ enabled = true }) {
   // shell's padding has to answer it at three different breakpoints. Written
   // imperatively so a bar that appears mid-session does not depend on the app
   // root re-rendering to make room for itself.
+  // TWO STATES, TWO OFFSETS. `tk-runbar` says a bar is on the top edge at all;
+  // `tk-running` says it is the taller, live one. The resting bar carries only
+  // the day's filed total, so it is a slim strip — and on a phone it stands
+  // down altogether, because there the bottom bar states that number (see the
+  // ownership note at the end of runbar.css).
+  const mounted = live || showTotal;
   useEffect(() => {
+    document.documentElement.classList.toggle('tk-runbar', mounted);
     document.documentElement.classList.toggle('tk-running', live);
-    return () => document.documentElement.classList.remove('tk-running');
-  }, [live]);
+    return () => {
+      document.documentElement.classList.remove('tk-runbar');
+      document.documentElement.classList.remove('tk-running');
+    };
+  }, [live, mounted]);
 
   const stopAll = useCallback(async () => {
     if (busy) return;
@@ -168,7 +215,23 @@ export function RunBar({ enabled = true }) {
     toggleTimerPip().catch((e) => emitToast(String(e.message || e), { error: true }));
   }, []);
 
-  if (!live) return null;
+  if (!mounted) return null;
+
+  // The day's number, wherever the bar is. It is the only place it exists on
+  // Calendar, Entries and Settings — measured before this: nowhere at all.
+  const total = showTotal && dayTotal != null ? html`
+    <span class="runbar-total" title="Filed today (all entries)">
+      <strong class="mono">${fmtHours(dayTotal)}h</strong>
+      <span class="muted small">filed</span>
+    </span>` : null;
+
+  if (!live) {
+    return html`
+      <div class="runbar resting" role="region" aria-label="Today">
+        ${total}
+        <span class="runbar-gap"></span>
+      </div>`;
+  }
 
   const first = running[0];
   const secs = running.reduce(
@@ -183,6 +246,7 @@ export function RunBar({ enabled = true }) {
       <span class="runbar-name" title=${running.map((t) => t.name).join(', ')}>${name}</span>
       <span class="runbar-clock t-clock t-clock-lg" aria-label=${`Running ${clock}`}>${clock}</span>
       <span class="runbar-gap"></span>
+      ${total}
       ${pipSupported() ? html`
         <button type="button" class="btn btn-ghost btn-icon runbar-pop"
           title="Float this timer in a small always-on-top window"

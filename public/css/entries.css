@@ -8,16 +8,18 @@
    buttons apiece). See docs/ui/teardown.md §3, §4, §6 and E8/E9.
    ========================================================================= */
 
-/* ---------- the day's numbers, stated once ---------- */
+/* ---------- the day's numbers, stated once, in three lines ---------- */
 .daystat {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  padding-bottom: var(--space-4);
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding-bottom: var(--space-2);
   border-bottom: var(--border-w) solid var(--border);
 }
 .daystat-row {
   display: flex; align-items: baseline; flex-wrap: wrap;
   gap: var(--space-2) var(--space-5);
 }
+/* the target sits at the far end of the hero line, not on a line of its own */
+.daystat-row .daystat-target { margin-left: auto; }
 /* THE one hero figure on this screen. Mercury's big-number/small-decimal
    treatment (reference-analysis §1) — magnitude reads before precision — used
    exactly once, because using it on every row would fight the density goal. */
@@ -35,46 +37,60 @@
   font-size: var(--fs-caption); font-weight: var(--fw-caption); letter-spacing: var(--ls-caption);
   color: var(--text-muted); margin-left: var(--space-1);
 }
-.daystat-legend { align-items: baseline; row-gap: var(--space-1); }
-.daystat-target { color: var(--text-secondary); }
-.daystat-met { color: var(--accent-muted-strong); font-weight: var(--fw-semibold); }
-
-/* Week to date against target — the number a lawyer actually manages, and the
-   one the teardown found nowhere on the screen he lives on (D6). */
-.daystat-week {
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
-  margin: 0; font-size: var(--fs-label); color: var(--text-secondary);
+/* The legend is also the week line: one caption row, no second meter, no
+   band of its own. Week to date against target is the number a lawyer
+   actually manages and the teardown found it nowhere (D6) — it is here, in
+   words, which is all a ratio ever needed. */
+/* two classes deep on purpose: views.css owns the generic .meter-* rules and
+   loads after this file */
+.daystat .daystat-legend {
+  display: flex; align-items: baseline; flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0; font-size: var(--fs-caption); line-height: var(--lh-caption);
+  color: var(--text-secondary);
 }
-.daystat-week-label { color: var(--text-muted); font-weight: var(--fw-medium); }
-.daystat-weekbar { width: 8rem; height: var(--space-2); border-radius: var(--radius-xs); }
+.daystat .meter-bar { height: var(--space-2); }
+.daystat-target { color: var(--text-secondary); font-size: var(--fs-label); }
+.daystat-met { color: var(--accent-muted-strong); font-weight: var(--fw-semibold); }
+.daystat-week { color: var(--text-secondary); }
 
-/* ---------- attention: one line with real actions ---------- */
-.attn { display: flex; flex-direction: column; gap: var(--space-2); margin: var(--space-4) 0 0; }
+/* ---------- attention: ONE band, not a banner over a link row ----------
+   Measured at 390×844 before this pass: an amber callout row plus a second row
+   of backlog links — part of the 338px of chrome the wave critic found between
+   the top of the phone and the first row of the day's work (46% of the
+   screen). The teardown's §C sketch is a single attention line, so this is one
+   band: a leading icon, a line of real links, and — on a phone, where only the
+   most urgent one fits — a "+N more" that opens the rest as a bottom sheet.
 
-/* Unfinalized time from a day that is already over is the most expensive
-   failure mode in legal billing, so it is not a chip in a row of chips: it is
-   its own callout with its own explicit action (teardown D3). */
-.attn-stale {
-  display: flex; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: var(--border-w) solid var(--border);
-  border-left: var(--valid-mark-w) solid var(--attention);
-  border-radius: var(--radius);
+   The amber rail and tint appear only when the band carries stale time
+   (teardown D3); an ordinary day's counts are quiet. */
+.attn {
+  display: flex; align-items: center; gap: var(--space-2);
+  min-height: var(--tap-min);
+  margin: var(--space-3) 0 0;
+  padding: 0 var(--space-2) 0 var(--space-1);
+  border-left: var(--valid-mark-w) solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.attn.attn-warn {
+  padding-left: var(--space-3);
+  border-left-color: var(--attention);
   background: var(--valid-warn-bg);
   color: var(--valid-warn-fg);
 }
-.attn-stale > .icon { flex: none; }
-.attn-stale-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
-.attn-stale-text strong { color: var(--text-primary); }
-.attn-action { flex: none; }
+.attn-icon { flex: none; color: var(--text-muted); }
+.attn.attn-warn .attn-icon { color: var(--attention); }
 
-/* Everything else is one quiet line of real links, each of which takes you to
-   the thing it is about — never a passive-looking chip with a tooltip. */
+/* ONE quiet line of real links, middle-dot separated, each of which takes you
+   to the thing it is about — never a passive-looking chip with a tooltip. */
 .attn-line {
+  flex: 1 1 auto; min-width: 0;
   display: flex; align-items: center; flex-wrap: wrap;
-  gap: 0 var(--space-5);
-  margin: 0; font-size: var(--fs-label); color: var(--text-secondary);
+  gap: 0 var(--space-2);
+  margin: 0; font-size: var(--fs-caption); line-height: var(--lh-caption);
+  color: var(--text-secondary);
 }
+.attn-dot { color: var(--text-muted); }
 .attn-link {
   border: 0; background: none; padding: var(--space-0-5) 0; cursor: pointer;
   font: inherit; color: var(--accent-strong);
@@ -82,6 +98,44 @@
   text-underline-offset: 3px;
 }
 .attn-link:hover { color: var(--accent-hover); text-decoration-thickness: var(--border-w-thick); }
+/* The stale-time link is the band's headline: it reads as text with weight,
+   not as a third blue link competing with the two beside it. */
+.attn-link-stale {
+  color: var(--text-primary); font-weight: var(--fw-semibold);
+  text-decoration-color: var(--attention);
+}
+.attn-link-stale:hover { color: var(--text-primary); }
+.attn-more { flex: none; }
+
+/* ---------- a menu as a bottom sheet (phone) ----------
+   `ActionMenu` (components/entrylist.js) renders the app's overflow menus as
+   an anchored popover at ≥768px and as a Material-3 bottom sheet below it,
+   through the ONE overlay primitive — so the scrim, the focus trap, the scroll
+   lock, Escape, hardware Back and the grabber all come from the same place
+   every dialog gets them. The plain rows reuse `.sheet-item` (views.css), which
+   the Calendar day-actions sheet already established at a 44px floor, so the
+   two sheets are one component and not two look-alikes; what is added here is
+   the two row kinds that menu never needed. */
+.menu-sheet .sheet-hr {
+  border-top: var(--border-w) solid var(--border);
+  margin: var(--space-2) calc(var(--space-4) * -1);
+}
+.menu-sheet .sheet-item.danger { color: var(--status-critical); }
+.menu-sheet .sheet-item.danger svg { color: var(--status-critical); }
+.menu-sheet .sheet-item:disabled { opacity: 0.45; cursor: default; }
+.menu-sheet .sheet-item:disabled:hover { background: none; }
+.menu-sheet .sheet-spacer { width: 18px; flex: none; }
+/* A row that carries controls rather than a verb — the list's Show/Group/Order
+   switches, the row's backdate chips. base.css already gives every .btn,
+   select and .seg button inside it a real 44×44 box at this width. */
+.menu-sheet .sheet-custom {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  padding: var(--space-1) 0;
+}
+.menu-sheet .sheet-custom .ctx-inline { flex: 1 1 100%; padding: 0; gap: var(--gap-inline); }
+.menu-sheet .sheet-custom .ctx-inline select { flex: 1 1 8rem; }
+.menu-sheet .sheet-custom + .sheet-custom { border-top: var(--border-w) solid var(--border-subtle); }
 
 /* ---------- entry rows (day view, calendar panel) ---------- */
 /* Same density decision as the today list: one bounded surface, hairline
@@ -102,51 +156,26 @@
 }
 .entry-list > div:first-child > .entry-day-head { border-top: 0; }
 .entry-week-divider { border-top: var(--border-w-thick) solid var(--border); }
-.entry-card {
-  position: relative;
-  display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-4);
-  border-top: var(--border-w) solid var(--border-subtle);
-  align-items: flex-start;
-  transition: background var(--dur-fast) var(--ease-standard),
-              box-shadow var(--dur-fast) var(--ease-standard);
-}
-.entry-list > .entry-card:first-child { border-top: 0; }
-/* the same state rail the today list uses, so a row means the same thing on
-   both screens */
-.entry-card::before {
-  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-  width: var(--valid-mark-w); background: transparent;
-}
-.entry-card.needs-narrative::before { background: var(--attention); }
-/* Same rule, same reason, as .work-row in timers.css — a row is a row. */
-.entry-card:hover {
-  background: var(--surface-row-hover);
-  box-shadow: inset 0 1px 0 var(--border-strong), inset 0 -1px 0 var(--border-strong);
-}
-.entry-card .body { flex: 1; min-width: 0; }
-.entry-card .narrative { margin: var(--space-1) 0 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
-.entry-side { display: flex; align-items: center; gap: var(--space-3); flex: none; }
-.entry-card .hours {
-  font-size: var(--fs-num-lg); line-height: var(--lh-num-lg); font-weight: var(--fw-num-lg);
-  font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--figure);
-}
-/* a timer is running on this entry — the live accent, same as its stop button */
-.entry-card .hours.active { color: var(--live); }
-.entry-card.nonbillable .hours { color: var(--nonbillable); }
-.entry-card.billable .hours { color: var(--billable); }
-.entry-meta { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; font-size: var(--fs-label); }
-.entry-actions { display: flex; gap: var(--space-1); align-items: center; }
-/* the matter name IS the row's open affordance (teardown §6: "tapping the row
-   should open it") — a dotted underline says so without a fifth icon button */
-.entry-open {
-  border: 0; background: none; padding: var(--space-0-5) var(--space-1);
-  margin-left: calc(-1 * var(--space-1));
-  font: inherit; font-weight: var(--fw-semibold); color: var(--text-primary);
-  cursor: pointer; border-radius: var(--radius-xs);
-  text-decoration: underline; text-decoration-style: dotted;
-  text-decoration-color: var(--border-strong); text-underline-offset: 3px;
-}
-.entry-open:hover { background: var(--surface-2); text-decoration-color: var(--accent); }
+/* THE ENTRY CARD IS THE WORK ROW.
+   The wave critic put this screen next to Today and found the same records in
+   two shapes: hours top-right beside a leading Start/Stop there, hours
+   bottom-right with no transport control here, and on a phone the figure
+   dropped below the narrative. It is the same component now — `.entry-card`
+   carries `.work-row` and takes its layout, its state rail, its hover, its
+   name, figures and overflow from timers.css. Only three things are said here:
+   which surface the row sits in, the first row's missing hairline, and the
+   read-only narrative of a finalized entry. */
+.entry-list > .entry-card:first-child,
+.entry-list > div > .entry-day-head + .entry-card { border-top: 0; }
+.entry-card .narrative { margin: 0; color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: break-word; }
+/* A FIGURE HAS NO HUE (tokens.css §7a, tier 3). Measured on the day view
+   before this pass: FIVE hour figures painted --billable — which is
+   --accent-muted, the same blue family as the one filled button on the screen
+   — so five numbers nobody can act on were competing with the one thing you
+   can. Billable is the default state and the row already says so in words when
+   it is not; the figure ranks by size, weight and tabular figures instead.
+   The single exception is the counter that is actually moving. */
+.entry-card.nonbillable .work-hours-static { color: var(--figure-secondary); }
 
 /* ---------- the inline narrative, made VISIBLE ----------
    The teardown's §6/E9 finding: "the best thing in this component is
@@ -207,24 +236,30 @@
 
 /* ---------- phone (≤767px) ---------- */
 @media (max-width: 767px) {
-  .daystat-row { gap: var(--space-1) var(--space-4); }
-  .daystat-weekbar { width: 5rem; }
-  .attn-stale { align-items: flex-start; flex-wrap: wrap; }
-  .attn-link { min-height: var(--tap-min); display: inline-flex; align-items: center; }
-  .entry-open { min-height: var(--tap-min); display: inline-flex; align-items: center; }
+  /* THE DAY'S NUMBERS IN ONE LINE PLUS A RULE (teardown §4).
+     Measured at 390×844 before this pass: hero row, bar and legend row stacked
+     to ~110px, part of the 338px of chrome standing between the top of the
+     phone and the first row of work. The hero steps down from the display size
+     it takes on a desktop (where it is the screen's one big number and has the
+     room for it) and shares its line with the split and the week; the bar
+     drops underneath as the thin rule the teardown asked for. Every figure is
+     still on screen — this is a line break removed, not a number. */
+  .daystat { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-3); }
+  .daystat-row { flex: 0 1 auto; gap: var(--space-1) var(--space-3); }
+  .daystat-num { font-size: var(--fs-num-lg); line-height: var(--lh-num-lg); letter-spacing: var(--ls-num-lg); }
+  .daystat-unit { font-size: var(--fs-num-sm); }
+  .daystat .daystat-legend { flex: 1 1 auto; order: 2; gap: 0 var(--space-3); }
+  .daystat .meter-bar { flex: 1 1 100%; order: 3; margin-top: var(--space-1); }
+  .daystat-row .daystat-target { margin-left: var(--space-2); }
+
+  /* One 44px band. The line truncates rather than wrapping — the phone shows
+     the most urgent count and "+N more" opens the rest as a sheet. */
+  .attn { margin-top: var(--space-2); }
+  .attn-line { flex-wrap: nowrap; overflow: hidden; }
+  .attn-link {
+    min-height: var(--tap-min); display: inline-flex; align-items: center;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .narrative-editable, .narrative-write { min-height: var(--tap-min); }
   .narrative-editable { display: flex; align-items: center; }
-
-  /* The row is one flex line: text on the left, hours + actions on the right.
-     At 390px that left the narrative a 174px column inside a 358px card. So
-     the row stacks: the text block takes the full measure, then hours and
-     actions share one line beneath it. */
-  .entry-card { flex-wrap: wrap; gap: var(--gap-inline); }
-  .entry-card > .body { flex: 1 1 100%; }
-  .entry-side {
-    flex: 1 1 100%;
-    flex-direction: row; align-items: center; justify-content: space-between;
-    gap: var(--gap-inline);
-  }
-  .entry-actions { justify-content: flex-end; row-gap: var(--space-1); }
 }
