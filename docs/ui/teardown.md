@@ -1218,3 +1218,359 @@ One line each, then done.
   change unmounts all).
 - `BarList` in Stats: labelled, valued, single-hue, readable.
 - The allocation chip, the AUTO toggle and the AI-rewrite Undo in the editor.
+
+---
+---
+
+# Wave 1 review — 2026-08-15
+
+Same critic, same standard. Evidence: `shots/teardown-w1/` (60 shots, 0 failed,
+**0 console errors**, mobile fences pass), `shots/baseline/`, `shots/refs-v2/`,
+and my own puppeteer-core driving of the real app on a real server with
+`scripts/lib/demoseed.mjs`. Everything below is measured, not read.
+
+## A. Verdicts on my own ten things
+
+**1. Merge the timer grid and the entry list into one list of rows — BUILT.**
+One `.work-row` list keyed by matter. Gone from the DOM: the three grouping
+modes, the `role="tablist"` filter strip, A–Z sort, New group, drag-and-drop,
+multi-select and the batch menu. The 17-item context menu is now `Timer menu`
+(10 items) / `Entry menu` (6). Import moved to Settings → Clients & matters ⋯.
+Single column. Keyboard model intact, driven: roving `tabindex` 0/-1, `↓↓↑`
+walks rows, `Alt+↑` nudges, `Shift+Enter` opens `ovl-md`, `Ctrl+Enter` opens
+`ovl-lg`, `t` toggles the last-used timer. Controls in `<main>` on Today:
+**64 → 43 desktop, 69 → 39 mobile.**
+
+**2. Stop chip finishes the entry and stops vanishing — BUILT, all four parts.**
+`.stop-chips.stop-chips-inline` renders *inside* the stopped `.work-row`, not at
+`top:22%`. Still present after 20s — the 15s auto-dismiss is gone. One tap sets
+the narrative with **no dialog** and raises a toast reading `Narrative saved ·
+Undo`. Chips are 46–61px tall on the phone. The best-executed item in the wave.
+
+**3. Visible quick capture on every viewport — BUILT; the `/` half NOT built.**
+Desktop: a sidebar input `What did you do?  q` opens `.qc-card` 560×156.
+Mobile: bottom-bar `Capture` opens a 390×241 sheet. `q` works from Today,
+Calendar, Entries and Settings. But `/` still forks — it focuses
+`.timer-search` on Today and `.ledger-search` everywhere else. The two surfaces
+were not merged; the `?` overlay now *documents* the fork ("Search — timers on
+Today, the entry ledger everywhere else") instead of removing it.
+
+**4. One running-timer bar on every screen — BUILT, with two residuals.**
+`.runbar` is `position:fixed` on `#/`, `#/calendar`, `#/entries`, `#/settings`,
+both viewports, carrying name + live clock + filed total + Stop + a pop-out for
+the float window (which also satisfies §20's MOVE). Residuals: (a) **desktop
+Today still stacks two fixed bars** — `.runbar` 48px at the top *plus*
+`.today-footer` 49px at the bottom = 97px; the footer was absorbed on mobile,
+not on desktop; (b) `.runbar.resting` computes to **height 0** on mobile while
+still rendering the text `5.6h filed` — a zero-height fixed element painting
+nothing.
+
+**5. Collapse Day / Stats / Export, rename Search, move CMS — BUILT.**
+Nav is Today · Calendar · Entries · Settings. `#/day/<date>` renders Calendar
+with that day selected; `#/export` renders the ledger with the Export dialog;
+CMS lives at `#/settings/cms`. `g d/c/s/e` → `#/`, `#/calendar`, `#/settings`,
+`#/entries`; `[`/`]` still step days. **Variance:** Stats was *relocated*, not
+merged — `#/stats` is a Statistics sub-tab under Calendar and still carries an
+"Hours by day" panel whose own caption reads "The calendar draws the same
+figures against your target." A panel that documents its own redundancy should
+be deleted.
+
+**6. Delete Finalize day and Export from the headers — BUILT with variance,
+and it introduced a new defect.** The header is `< date > ⋯` + Quick start;
+`Finalize today without exporting` and `Download today as CSV` moved into the
+⋯, which is a better answer than deletion. The .TIM/CSV labelling bug is fully
+fixed: the Export dialog offers `Copy as text 17` / `Download CSV 17` /
+`Download .TIM 17`, each with a sentence saying what it is, and `Include drafts`
+is a real button rather than the disabled checkbox that lied. **New defect:**
+the mobile bottom bar carries a permanent `Close` slot that fires close-out for
+*today* from Calendar, Entries and Settings, while the `c` shortcut fires only
+on Today. Touch and keyboard disagree, and on Calendar the button closes a day
+other than the one on screen.
+
+**7. Narrative first in the entry editor — NOT BUILT.** Measured at 390×844:
+panel 390×776 at y=68; the narrative `<textarea>` sits at **y=725**, the 15th
+of 18 controls, beneath the pinned Delete / Save & close / Finalize bar. In
+`shots/teardown-w1/entry-editor-existing.mobile.light.png` it is not visible at
+all. Order is unchanged: Date → Total hours → Client/Matter → Billable → Task
+lines → Add task line → Allocated → Narrative. Desktop is still a centred
+`ovl-lg modal modal-wide` at 858×585, and the primary is still called
+`Save & close`.
+
+**8. One primary plus one overflow on every row — PARTLY BUILT.** Entry rows
+lost the five unlabelled ghost icons and gained a labelled `Start`/`Stop` plus
+`⋯`. But the matter name, the hours figure, the clock figure and the narrative
+are all separately focusable buttons, so a Today row still carries **six
+controls** (36 of the page's 43 belong to six rows). Harvest's row
+(`refs-v2/harvest-timesheet-day.desktop.webp`) carries two. CMS matter rows went
+4 icons → 3 (star, pencil, ⋯); the pencil belongs in the ⋯. The ledger's
+bulk-select checkbox column is still permanent on desktop with no persistent
+action bar.
+
+**9. Attention as rows with actions; visible inline narrative — BUILT.** The
+chip wall is one amber line of three underlined links, each with a real
+destination, driven: "2 entries not finalized · 4.5h" →
+`#/entries/export/unfinalized/2026-08-14`; "2 entries need a narrative" → stays
+on Today, scrolls 104px and focuses `.narrative-inline-input`; "17 finalized,
+not yet exported" → `#/entries/export/unexported/2026-08-06`. The narrative now
+carries a persistent dotted underline plus a pencil, and empty ones show a
+dashed `Write narrative` button. **Residual:** on the phone only the first item
+renders; the other two hide behind `+2 more` — and the two hidden ones are the
+two that deep-link.
+
+**10. Close-out list, and tables off the phone — HALF BUILT.** Tables: done.
+CMS and the ledger both render as card lists below 768px; ledger narratives wrap
+to three lines; the 741px and 839px sideways scrollers are gone. Close-out: not
+built. Driven, it is still `Close the day — 1 of 5` with dot pagination and
+`Quit / Skip / Edit / Accept`. There is no **Accept all**. And `Edit` still
+destroys the sweep — measured: click Edit on card 1 of 4, the sweep unmounts,
+the editor opens; press Esc and you are on Today with **no sweep at all** and
+must press `c` and walk from card 1 again.
+
+Score: **6 BUILT, 3 PARTLY, 1 NOT.**
+
+## B. The numbers, re-measured at 390×844
+
+| | teardown | now | note |
+|---|---|---|---|
+| Today page height | 2639px (3.1 screens) | **1292px (1.53)** | −51% |
+| y, first control that starts/stops a timer | 978 | **328** (row Stop) / **0–44** (run bar Stop, fixed) | above the fold |
+| complete work rows above the fold | 0 | **2** | fold at y=784 (botnav top); rows end 504 / 688 / 799 |
+| work-row heights | — | **182, 184, 111, 136, 109, 57** | 3.2× spread |
+| total fixed chrome | 121px (14%) | **104px (12.3%)** running, **60px (7.1%)** idle | runbar 44 visible + botnav 60 |
+| visible controls in `<main>`, Today | 64 desktop / 69 mobile | **43 / 39** | 36 of 43 belong to six rows |
+| desktop fixed chrome, Today | 49px | **97px** (runbar 48 + today-footer 49) | went *up* |
+| desktop row heights | — | **117, 113, 91, 91, 55, 55** | Harvest: uniform 93 |
+
+The earlier critic's "173px of fixed chrome" is not reproducible on this build:
+the measured mobile total is 104px with a timer running and 60px without.
+
+## C. The core loop, re-counted
+
+Driven on the phone, every interaction counted, five timers started and
+stopped, then the day closed:
+
+| | teardown | target | **measured now** |
+|---|---|---|---|
+| 5-entry day, narratives left to close-out | ~22 | ~12 | **18** |
+| 5-entry day, narratives taken from stop chips | — | — | **23** |
+
+A four-matter run measured **17** end to end (4 Start, 4 Stop, 2 chips, Close,
+4× Enter, Finalize & export, Done); the arithmetic extrapolates to 18–23 for
+five. **The wave did not move the interaction count**, and using the new
+one-tap chips makes the day *longer*, because:
+
+**The stop chip and the close-out sweep are not connected.** An entry that
+already has a narrative — because you chipped it thirty seconds earlier — still
+gets its own card in the sweep and still costs an Enter. Confirmed: cards 3 and
+4 of the sweep were the two entries I had already chipped. The chip is a real
+win per-entry (3 interactions + a modal → 1 tap) and a net loss per-day.
+
+Second cause: close-out charges 1 + N + 2 where N is *every* draft. The wave's
+own new capability — the phrasebook pre-fill and the chip — should be able to
+retire cards, not just pre-fill them.
+
+## D. What this wave broke or made worse
+
+1. **Two fixed bars on desktop Today.** 48px run bar + 49px footer = 97px,
+   against 49px before. The footer's only contents are `5.6h filed` and
+   `Close the day` — and `5.5h filed today` is *also* the first line of the stat
+   strip 700px above it. This is §4's two-meters defect, resurrected at smaller
+   scale.
+2. **The mobile bottom bar is a seven-slot bar.** `5.5h filed | Today |
+   Calendar | Capture | Entries | Settings | Close` in 390px. Material 3 caps a
+   bottom navigation bar at five destinations; this is six controls plus a
+   status label, at ~56px each. It also gives a once-a-day destructive-ish
+   action (`Close`) a permanent thumb slot — the exact objection I made about
+   Export having one.
+3. **The Entries ledger doubled in height on the phone**: 2868 → **5386 CSS px**
+   (6.4 screens) for 23 entries, because every entry became a ~190px card with
+   no pagination or virtualisation. The capability is genuinely better (hours
+   and narrative are readable without a 483px sideways scroll) but the page is
+   now the longest in the app.
+4. **Calendar grew 38% on the phone**, 1226 → **1695 CSS px**, and §9's second
+   fault is untouched: three all-empty week rows (16–22, 23–29, 30–31) render at
+   full height, ~164 CSS px of blank grid, and they push the selected-day panel
+   to roughly y=1000 — so on the phone, tapping a day produces a result you
+   cannot see without scrolling, with nothing signalling it.
+5. **Settings grew 2664 → 3120px on the phone** and gained an accordion
+   (`SECTION 1 OF 8`), adding a step to reach any setting.
+6. **Three overflow-menu components now coexist**, which contradicts wave 0b's
+   "every dialog goes through one overlay primitive": `.ovl` full-screen sheets
+   with 44px rows (Today row menu on mobile, Day header ⋯ on mobile, CMS list ⋯
+   on mobile), `.ctx-menu` anchored popovers with **28px** rows (Today row menu
+   on desktop, Entries row ⋯ on both, Day header ⋯ on desktop), and `.act-menu`
+   with 36px rows (CMS list ⋯ on desktop). The already-queued "28px rows" item
+   is a symptom; the disease is that there are three menus.
+7. **Two different overflow menus hang off visually identical rows.**
+   `Timer menu` (10 items, includes `Stop & file time`, backdate chips
+   `10m ago / 30m ago / at last stop`, `Edit timer…`) versus `Entry menu`
+   (6 items, includes `Delete entry` and `Start a timer on this matter`).
+   `Delete entry` exists in one and not the other. Nothing on the row tells the
+   lawyer which he is about to get.
+8. **Today and the ledger disagree about the day.** Today is keyed by matter and
+   shows `Acme — merger 2.7`; the ledger shows the same work as two rows, 2.6
+   and 0.0. The figure 2.7 appears nowhere in the ledger. Today's list showed 6
+   rows where the day panel header said "5 entries".
+9. **Quick capture's primary is disabled far too often.** Driven with four
+   realistic phrasings, only one filed. `"Acme lease dispute review .6"` and
+   `"northgate diligence review documents .4"` both parse matter and hours,
+   then show `? action` and a **disabled** `File it`. The hint says "fill the ?
+   pieces" — but `.qc-chip.miss` is an inert `<span>` 67×27 with `cursor:
+   default`; clicking it does nothing. There is no way to follow the
+   instruction the dialog gives. This is a dead end on the wave's headline new
+   path.
+10. **The stop-chip empty state contradicts itself.** With no history the
+    surface reads "Nothing on file for this matter yet — write the narrative on
+    the row" while occupying the row and offering no field; you must Dismiss it
+    first to reach `Write narrative`. My E2 asked for a focused narrative field
+    beneath the chips; there is none.
+11. **`Float window theme` survives in General settings.** §20 said delete it
+    and inherit the app theme. Still there.
+12. **The `Day closed` panel reads "1 draft still need attention."** Grammar,
+    and a state question: the sweep accepted 5 of 5 and one draft is still
+    outstanding, unexplained.
+
+Nothing regressed in correctness: 60/60 shots clean, zero console errors on any
+route or dialog, no horizontal overflow, every statically visible interactive
+element ≥44×44, `n t q c s / ? g[dcse] [ ] Ctrl+Enter Shift+Enter Alt+↑ Esc`
+and the arrow-key row walk all verified working.
+
+## E. What I got wrong
+
+1. **"Delete `Finalize day` and `Export` from the dashboard header" was too
+   blunt.** Moving them into a `⋯` with format-naming labels is better than
+   deleting them: the exceptional case (finalize without exporting; re-download
+   today's CSV) is real and now costs one extra tap instead of a trip to the
+   ledger. Replace E6 with: *demote to overflow and name the format* — which is
+   what shipped.
+2. **"Merge Export into the ledger" undersold the answer.** The wave made Export
+   a dialog with three explicitly described formats and live counts, which is
+   better than the filter-chip I proposed. What is left over is the
+   `All entries | Export` subnav pair — a navigation destination whose only job
+   is to open a dialog. Replace with: one `Export…` button in the ledger header,
+   no subnav item.
+3. **"Delete the Stats screen's By-day chart" is now the wrong instruction
+   because the whole Statistics tab is the redundancy.** The three header stat
+   tiles (Total / Billable / Not closed) already carry everything I wanted
+   folded into Calendar. Replace with: delete the Statistics tab; keep the two
+   `BarList`s as a collapsible "This month" panel under the calendar grid.
+4. **"One primary action plus one overflow" is not achievable on the merged
+   row, and I should not have written it as an absolute.** A row that is
+   simultaneously a timer, an entry, an hours field and a narrative needs the
+   name and the hours to be editable in place — that is the whole point of the
+   merge. The right rule is *one primary **button** plus one overflow*; text
+   and numbers that edit in place are not buttons competing for attention as
+   long as they are visually typography, not chrome. The current row passes that
+   rule. Withdraw the absolute; keep the count of *buttons* at two.
+5. **I called the sticky footer's `Summary` "prime real-estate waste" and asked
+   for it to move to an overflow. It moved, and `s` still works — but there is
+   now no visible control for it on the phone at all** (it lives in the desktop
+   Day-header ⋯). I under-specified. Summary needs one visible entry point on
+   both viewports or it should be deleted.
+6. **My "~22 interactions" baseline was an estimate, not a measurement, and it
+   was too generous to the old build.** The honest comparison is: the *marginal*
+   cost per entry fell (narrative 3 + modal → 1 tap) while the *fixed* cost of
+   close-out did not, so the day total is flat. Future waves should be judged on
+   the measured 18/23, not on my original 22.
+
+## F. Wave 2, ranked
+
+**1. RETHINK — the entry editor. (the centrepiece)**
+`public/js/components/entryeditor.js`, `public/css/editor.css`.
+Judge against `shots/refs-v2/harvest-new-time-entry.mobile.jpg`, which does the
+same job in **7 controls** to our 18, using label-left / value-right rows that
+open pickers rather than inline widgets. Ours must invert Harvest's order —
+their note is optional and last, our narrative is the reason the dialog exists.
+Target order: **Narrative (focused, with Reuse beside it) → Hours (stepper with
++0.1/+0.2/+0.5/+1.0 quick-add pills, copying Harvest's floating pill row) →
+Matter ▸ → Task lines, collapsed behind one "Split into tasks" affordance until
+there are ≥2 → Date ▸ / Billable → audit in the ⋯.** Rename `Save & close` to
+`Done` (it autosaves). Desktop presentation becomes a right-hand panel or an
+inline row expansion so the rest of the day stays visible. Preserve
+`Ctrl+Enter`, autosave, AUTO, AI undo, the allocation chip.
+*Acceptance: the narrative field is above y=200 at 390×844; ≤10 controls
+visible before "more"; the editor opens on the narrative with the caret in it.*
+
+**2. RETHINK — connect the stop chip, the phrasebook and close-out.**
+`public/js/components/closeout.js`, `public/js/components/stopchips.js`.
+The single biggest number in this document is that the day still costs 18–23.
+Fix it here: (a) a draft that already has a narrative is **not** a card in the
+sweep — show it in a "ready" list at the top with a count and one confirm;
+(b) add **Accept all** for the remainder; (c) stop `Edit` unmounting the sweep —
+open the editor over it and return to the same card (measured today: the sweep
+is destroyed and Esc leaves you on Today); (d) replace the carousel with a list
+so you can see which of N still need work and jump to one.
+*Acceptance: a 5-entry day where every stop was chipped closes in ≤4
+interactions after `c`; total day ≤12.*
+
+**3. RETHINK — one overflow-menu component, one row menu.**
+`public/css/overlays.css`, `public/js/components/` (the `ctx-menu`, `act-menu`
+and `ovl`-sheet call sites), `public/js/views/search.js`,
+`public/js/views/cms.js`. Collapse three menu implementations into one:
+anchored popover ≥1024px, bottom sheet below, 44px rows in both. Then collapse
+`Timer menu` and `Entry menu` into a **single row menu** whose items are enabled
+or disabled by row state — `Delete entry` must exist on every row that has an
+entry. This subsumes the queued 28px-row item; do not fix that separately.
+
+**4. RETHINK — the Today row's rhythm.**
+`public/js/components/timergrid.js`/`entrylist.js` (whichever renders
+`.work-row`), `public/css/timers.css`, `public/css/entries.css`.
+Against `refs-v2/harvest-timesheet-day.desktop.webp`: uniform ~93px rows, two
+lines, one right-aligned duration, one control. Ours: 109–184px on the phone
+(3.2× spread), so only 2 complete rows clear the fold. Fix by (a) collapsing
+`2.7 / clock 0.1` to one number with the clock only on the running row —
+`1.7 clock 0.0` is two numbers where one is always zero; (b) putting the status
+chip (`finalized`, `non-billable`) inline with the matter number rather than on
+its own line; (c) capping the resting narrative at one line with the full text
+on expand. *Acceptance: 4 complete rows above the fold at 390×844; height spread
+under 1.4×.* This subsumes the queued 111–184px item.
+
+**5. RETHINK — quick capture must never dead-end.**
+`public/js/components/quickcapture.js`.
+Three of four realistic sentences produce a disabled `File it` and an inert
+`? action` chip. Make every `qc-chip.miss` a real control that opens the matching
+picker (task-code list / matter picker / hours stepper) inline in the sheet, and
+let `Enter` on a parse with a missing task code file it as a draft rather than
+refusing. Also fold the Today `/` timer filter into this surface, closing out
+E3's second half and giving `/` one meaning.
+
+**6. MERGE — the desktop day footer into the run bar; fix the resting bar.**
+`public/js/components/todayfooter.js`, `public/js/app.js`, `public/css/shell.css`.
+Desktop Today carries 97px of fixed chrome across two bars showing the same
+`5.6h filed` that the stat strip already shows. Put `Close the day` in the run
+bar and delete `.today-footer`. Separately, `.runbar.resting` computes to
+height 0 on mobile while still rendering text — either give it a height or
+render nothing.
+
+**7. DELETE — the Statistics tab; MOVE its two BarLists under the calendar.**
+`public/js/views/stats.js`, `public/js/views/calendar.js`, `public/js/app.js`.
+The header tiles already answer the question and the "Hours by day" panel says
+so itself. Keep `#/stats` as a redirect to `#/calendar`.
+
+**8. RETHINK — Calendar on the phone.**
+`public/js/views/calendar.js`, `public/css/views.css`.
+Collapse or shrink all-empty trailing week rows (~164 CSS px of blank grid
+today); on tap, scroll the selected-day panel into view or render it directly
+under the tapped week. Add a roving `tabindex` to the 42-cell grid (queued item)
+in the same pass — a grid whose rows collapse and whose cells are one tab stop
+is one component change, not two.
+
+**9. MOVE — `Close the day` off the phone's bottom bar; fix its date.**
+`public/js/app.js`, `public/css/shell.css`,
+`public/js/components/closeout.js`.
+Seven slots in 390px is two too many, and a `Close` button on Calendar that
+closes a different day than the one on screen is a correctness failure. Put
+`Close the day` in Today's page header (where `c` already lives) and give the
+bar back to five slots: Today · Calendar · **Capture** · Entries · Settings.
+
+**10. DELETE — the `All entries | Export` subnav pair, and the
+`Float window theme` setting.**
+`public/js/views/search.js`, `public/js/app.js`, `public/js/views/settings.js`.
+A navigation destination whose only job is opening a dialog is not a
+destination; the header `Export…` button is enough. The float window should
+inherit the app theme (§20).
+
+**11. NEW — pagination or virtualisation in the ledger; a Summary entry point.**
+`public/js/views/search.js`, `public/js/components/summary.js`.
+5386 CSS px for 23 entries does not survive a year of data. And `s` currently
+has no visible control on the phone.
