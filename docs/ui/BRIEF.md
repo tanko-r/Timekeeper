@@ -17,8 +17,13 @@ browser during the day and as an installed Android PWA on a phone.
 ## The goal
 
 It should feel like magic to a lawyer keying time between calls: fast, calm,
-keyboard-first on desktop, thumb-first on mobile, with zero friction between
-"did the work" and "logged the work."
+and keyboard-first, with zero friction between "did the work" and "logged the
+work."
+
+This is a **desktop-first** app. The owner works from the desktop browser and
+the desktop PWA; the phone is a secondary surface that must handle the core
+loop well and need not match desktop feature for feature. See the
+platform-priority constraint below.
 
 ## The three bars
 
@@ -26,8 +31,8 @@ Judge every piece against all three.
 
 1. **Harvest** (domain bar) — the closest analog: timers, entries,
    narrative-style descriptions, invoicing. Our timer → entry → narrative →
-   export chain must be at least as clear and at least as fast as theirs, on
-   desktop and on a phone. Reference shots: `shots/refs/harvest-*.png`.
+   export chain must be at least as clear and at least as fast as theirs —
+   on desktop above all, and workable on a phone.
 2. **Mercury and Attio** (craft bar) — Mercury for calm, precise,
    financial-grade polish: restrained type, generous but disciplined spacing,
    quiet color, numbers that read as numbers. Attio for fast, contemporary
@@ -66,12 +71,16 @@ Judge every piece against all three.
   `[data-theme="dark"]` — the pattern is: define the light value on bare
   `:root`, then redefine under both `@media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) }` and `:root[data-theme="dark"]`.
-- **Mobile is a real layout, not a squeeze.** Phone width is 390–412 CSS px.
-  Every screen needs a genuine touch layout. Minimum touch target 44×44 CSS
-  px for any primary control. Respect safe-area insets. Core actions — start
-  and stop a timer, add an entry, edit a narrative, finalize, export — must
-  be fully usable by touch with no keyboard at all. Keyboard shortcuts are a
-  desktop enhancement layered on top, never the only path.
+- **Desktop first; see the platform-priority section below.** This is a
+  keyboard-driven desktop app that also works on a phone. Design the desktop
+  browser and desktop PWA experience first and do not cap desktop density or
+  speed for the phone's benefit.
+- **Mobile is a real layout for the core loop, not a squeeze.** Phone width is
+  390–412 CSS px. Starting and stopping a timer, adding or editing an entry,
+  writing a narrative, finalizing and exporting must be fully usable by touch
+  with no keyboard, at 44×44 minimum, with safe-area insets respected.
+  Everything else on a phone must be reachable and unbroken, not equal to
+  desktop.
 - **After changing any `public/js/**` or `public/css/*.css` file, bump
   `CACHE` in `public/sw.js`**, and keep the `SHELL` precache list in sync
   with the real file tree. There is no build step, so nothing else tells an
@@ -164,6 +173,48 @@ Styles live in `public/css/`, split into modules, each loaded by its own
 
 If you find a hardcoded color, font size, or spacing value outside
 `tokens.css`, that is a defect.
+
+## Owner constraint: desktop first, mobile second
+
+Stated by the person who uses this app every working day, and it revises the
+original instruction that every screen must be fully featured on a phone:
+
+> "I don't care that much about mobile. I mostly need to use this from desktop
+> web/PWA. This should be a desktop-first app, with mobile features, but not
+> full-featured mobile."
+
+What that means in practice:
+
+- **Design for the desktop browser and the desktop PWA first.** When a
+  decision trades desktop quality against phone quality, desktop wins. Do not
+  cap desktop density, hide desktop controls, or slow a desktop interaction
+  down to keep a phone layout simple.
+- **Keyboard is a first-class input, not an enhancement.** Earlier drafts of
+  this brief called shortcuts "a desktop enhancement layered on top". That is
+  now backwards: this is a keyboard-driven desktop app that also works on a
+  phone. Every frequent action deserves a key, the keys deserve to be
+  discoverable, and the shortcut overlay must describe what the keys actually
+  do.
+- **Desktop density is a feature.** A lawyer scanning twenty timers on a
+  1440px screen should see twenty timers. Do not carry phone-sized rows,
+  phone-sized spacing, or phone-sized type onto the desktop.
+- **Mobile scope is the core loop, done well** — start and stop a timer, add
+  or edit an entry, write a narrative, finalize the day, export. Those must
+  work by touch with no keyboard, and they must be genuinely good. Everything
+  else on a phone needs to be *reachable and not broken*, not equal to
+  desktop. Bulk operations, matter maintenance, import, settings depth and
+  reporting may all be thinner on a phone.
+- **The mobile fences stay, with a changed status.** The screenshot harness
+  still measures horizontal overflow and the 44x44 touch floor at phone width.
+  Horizontal overflow and anything that breaks the core loop on a phone remain
+  blockers. A sub-44px control on a secondary phone surface is now a *minor*
+  finding, not a blocker — note it, do not stop the wave for it.
+- **Nothing already built for mobile gets torn out.** The phone layouts,
+  bottom sheets and touch paths already shipped are good work and they stay.
+  This changes where the REMAINING effort goes, not what exists.
+
+If a task, a critic, or an earlier section of this brief conflicts with this
+one, this one wins.
 
 ## Owner constraint: this is fundamentally a timers app
 

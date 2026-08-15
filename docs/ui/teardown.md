@@ -1613,4 +1613,30 @@ Therefore:
    default, never a cage: the compact row still carries the matter, the state,
    the hours and the start/stop control.
 
+## Second owner constraint — desktop first
+
+> "I don't care that much about mobile. I mostly need to use this from desktop
+> web/PWA. This should be a desktop-first app, with mobile features, but not
+> full-featured mobile."
+
+This revises the original instruction that every screen be fully featured on a
+phone, and it reweights much of this teardown. Where a finding here is stated
+as a mobile measurement — page heights at 390x844, rows above the fold, touch
+targets on secondary surfaces — treat it as follows:
+
+- Findings about the CORE LOOP on a phone (start and stop a timer, add or edit
+  an entry, write a narrative, finalize, export) still stand at full weight.
+  Those must be genuinely good by touch.
+- Findings about secondary surfaces on a phone — bulk operations, matter
+  maintenance, import, settings depth, reporting — drop to minor. Reachable
+  and unbroken is the bar, not parity with desktop.
+- Findings that would cap DESKTOP density, hide desktop controls, or slow a
+  desktop interaction in order to serve the phone are withdrawn. Desktop wins
+  those trades.
+- Keyboard is promoted, not demoted: this is a keyboard-driven desktop app
+  that also works on a phone.
+
+Nothing already built for mobile should be torn out. This changes where the
+remaining effort goes.
+
 Everything else in this document stands.
