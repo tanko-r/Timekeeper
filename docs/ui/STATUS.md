@@ -179,6 +179,30 @@ Not yet built — it is the last open piece of 1e and it touches
 `server/routes/timers.js`, the timer edit dialog, and the shared overlay
 primitive.
 
+## Owner decision 2026-08-16 — all billing is in tenths of an hour
+
+Asked because the bracketed allocations in a narrative ("Reviewed the lease
+(0.8); drafted email (0.5).") are formatted to the billing increment, while the
+amount actually charged on that line could be a different number such as 0.75.
+The sentence and the charge could disagree.
+
+**The owner's words:** *"Round it. All billing should be done in 1/10 hr
+increments. Client will never see this anyway. It is exported and manually
+added to Intapp."*
+
+So the CHARGE moves, not the display. Every stored, billed and exported figure
+— the entry total and every task line — is a multiple of the increment
+(0.1 by default), rounded up, **quantised at the point of storage**. A figure
+like 0.75 is never stored and never exported.
+
+This is the decisive answer to the whole "screen hours, CSV hours and .TIM
+hours disagree" family: quantise once on write and all three surfaces agree by
+construction, with no formatter kept in sync. It also makes `durationLabel`'s
+existing `toFixed` correct rather than lossy, so the three copies of the hours
+formatter do NOT need to be reconciled — an earlier plan to do that rested on
+a misreading and would have made the narrative print 0.75 while the ledger
+said 0.8.
+
 ## Standing owner rules — never re-litigate these
 
 1. **Data integrity above all.** A narrative may never cross a matter
