@@ -12,11 +12,11 @@ Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 4
 
 | | |
 |---|---|
-| Suites | **913 tests, 862 pass, 51 fail** — the failures are deliberate leak proofs, not regressions. The 633 pre-audit tests all pass. |
-| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1e landed |
+| Suites | **925 tests, 922 pass, 3 fail** — the 3 are deliberate leak proofs still open, not regressions. The 633 pre-audit tests all pass. |
+| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1f/1g landed |
 | Working tree | Clean and pushed. |
-| Preview | Infrastructure ready, **not started** — blocked on Stage 1 |
-| Next action | Stage 1f (export) and 1g (records), then the last two 1e items, then the Stage 1 exit test |
+| Preview | **LIVE** at `poc-time.rigid-dreamy-sweep.us`, password in the owner decision below. Fictional demo day, own database, port 4748. Re-point it with `scripts/poc-sync.sh`. |
+| Next action | The 3 remaining reds (all rule-1 narrative crossings), then the Stage 1 exit test, then the timer board |
 
 ### Correction to the test counts (session 4)
 
@@ -94,12 +94,12 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 | 1c Scope both AI pools | mostly done | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. Residue: `verify.matterctx.thinsibling:404` |
 | 1d Pin timer write-backs to their matter | **done** | `209b39c` `32e1995` `528affa` `a01252c` `69227c7` `ecb49a3` `7c30644` `4393482`. Closed: stop-chip provenance, thin-sibling AI, stale state, suggestions, auto-narrative discard, the stash/template fence and the ghost-text pool fence. The last four proofs were red on scaffolding, not on a leak — see above. `verify.timer-repoint-audit` and `verify.entry-repoint-doublefile` were never 1d's; they belong to 1e/1g. |
 | 1e Time-loss family | **mostly done** | `5efcd0d` `535b660` `2524ed2` `a5559c6` `3259565`. Closed 15 of 17: `verify.entry-repoint-doublefile` (4), `verify.splitentry.secondstop` (2), `verify.taskduration-zeroing`, `verify.timer-txn-crash`, `integrity.entries` L3/L4, and 5 of `integrity.closeout`. **Two left, both in `integrity.closeout`:** the mid-day re-point test needs the owner's "ask me each time" decision built (above); the start-for-entry proof is red on a REAL defect — the hijack strands a timed, narrative-less draft that now blocks close-out. Two defects found that nobody was looking for and had no test: close-out never ran the midnight rollover (an overnight timer lost ten hours), and the first version of the re-file deduct dropped an hour whenever a draft was deleted. Both now have proofs. |
-| 1f Export correctness | todo | 8 confirmed defects · 27 red tests: `integrity.export` (10), `verify.tim-draft-reexport` (3), `verify.export.rounding` (3), `verify.csv-duration-vs-entrytotal` (3), `verify.export-stamp-nofile` (2), `verify.export-stamp-before-response` (2), `verify.export-blank-narrative` (2), `verify.export-scope-widening`, `verify.csv-entrytotal-repeat` |
-| 1g Records and recovery | todo | 5 confirmed defects · 17 red tests: `verify.bulk-setcm-recoverability` (4), `verify.bulksetcm.billingformat` (4), `verify.copy.softdeleted` (3), `verify.copy.aiprovenance` (2), `integrity.entries` L5/L6/L7/L8, `verify.timer-repoint-audit`, `verify.quickcapture.aiprovenance`, `integrity.ai`, `fence.suggestionmatter`, `integrity.closeout` close-out pre-fill |
+| 1f Export correctness | **done** | `0607bd4` `f0aca28` `5551e88`. Export is now a two-step handshake — the POST builds the file and stamps nothing; only a client confirm, sent after the download really succeeded, writes `exported_at`. Deferring to the response's `finish` event was tried and PROVED useless (a proxy cutting the connection at the first byte still emits `finish` exactly like a healthy delivery). Also: the exported set is now the set on screen; every entry has a stable `tim_ref` so the same hour cannot import twice unrecognised; blank narratives stay out of the file but still SHOW in the preview; the 1000-row ledger cap is opt-in. |
+| 1g Records and recovery | **mostly done** | `5551e88` `4ad84db`. Copying a soft-deleted entry no longer resurrects it; copy and quick capture carry AI provenance so model text stops being laundered into the attorney's own voice and fed back as an example of it; a bulk matter move is audited, adopts the new matter's billable flag and rebuilds the narrative in the new client's format; a timer re-point is audited and no longer moves an entry holding work without being asked. **One left:** `fence.suggestionmatter` (below). |
 | Stage 1 exit: 9-attack verification | todo | must find nothing |
 
 ### Stage 2 — Preview
-| Launch on `poc-time.rigid-dreamy-sweep.us` | blocked | needs Stage 1 exit |
+| Launch on `poc-time.rigid-dreamy-sweep.us` | **done** | Live 2026-08-16 at the owner's request, ahead of the Stage 1 exit gate. Password `harbor-lease-2026`. Own worktree at `~/Projects/timekeeper-poc`, own database, port 4748, `timekeeper-poc` user service (enabled). Re-point with `scripts/poc-sync.sh [ref]`; `--seed` rebuilds the demo data. Alt+drag feedback from it writes into the MAIN repo. |
 
 ### Stage 3 — Stop-chip content spec
 | Matter's own narratives + AI next-step extrapolation | todo | |
@@ -179,6 +179,46 @@ What that means for the implementation:
 Not yet built — it is the last open piece of 1e and it touches
 `server/routes/timers.js`, the timer edit dialog, and the shared overlay
 primitive.
+
+## The three tests still red — all one family, all rule 1
+
+Every remaining failure is a NARRATIVE CROSSING A MATTER BOUNDARY. Nothing
+about time is left open: no test in the suite now says an hour can be lost,
+double-counted, or marked exported without reaching a file.
+
+**1. `fence.suggestionmatter` — "NO ENTRY HOLDS ANOTHER MATTER'S SENTENCE".**
+The sweep that walks the whole app. A diagnostician reproduced it in a real
+browser: a live, exportable entry on one matter holding a sentence written for
+another. It is the highest-severity item left in the project.
+It CANNOT be fixed on the server alone, and this is the trap: four client
+surfaces already send `source_cm_id` — `stopchips.js`, `entryeditor.js`,
+`closeout.js`, `quickcapture.js` — and two of them send it for text the
+attorney may have TYPED. So stamping provenance from `source_cm_id` alone would
+silently wipe hand-typed sentences on a matter move. The fix needs a separate
+"this text was SUGGESTED, not typed" signal, which means a client change — and
+a stale cached PWA would run without it until it updates. The `v18` migration
+already added `entries.narrative_src_cm_id` to carry the provenance.
+Do NOT "fix" this by removing the unasked stop-chip pre-fill:
+`fence.suggestionmatter.test.js:277` asserts that pre-fill as a PRECONDITION.
+
+**2. `integrity.closeout` — the close-out pre-fill writes a sibling matter's
+narrative onto this matter's entry and exports it.** Same family, reached
+through close-out rather than the editor.
+
+**3. `integrity.closeout` — start-for-entry strands a narrative-less draft.**
+Not a crossing: the hijack leaves the previous entry as a timed, narrative-less
+draft with no timer pointing at it, which now hard-blocks close-out (since a
+zero-hour entry stopped being finalizable). An ordinary click produces it. The
+proof was re-aimed at this in `3259565` and is deliberately kept red.
+
+## Still to build — the owner's "ask me each time" dialog
+
+The SERVER half landed in `4ad84db`: an entry holding real hours or a real
+narrative no longer follows a re-pointed timer, and `move_entry: true` is how a
+caller asks for the move. **The dialog that asks him is not built.** Until it
+is, the desktop app silently leaves the entry behind with no way to say "move
+it too" — safe, but only half the decision he made. Build it on the shared
+overlay primitive.
 
 ## Owner decision 2026-08-16 — THE TIMER BOARD COMES BACK
 
