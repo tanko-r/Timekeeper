@@ -55,15 +55,60 @@ test('no task lines blocks', () => {
 });
 
 test('no task lines does NOT block a client that does not require task billing', () => {
-  const v = validateEntry(entry({
+  // A block-billed entry carries its hours on the entry total, not on task
+  // lines — so total_override is what holds the time here. (An entry holding
+  // NO time is a separate matter: it blocks. See the zero-hour test below.)
+  const blockBilled = {
+    tasks: [],
+    total_override: 0.5,
+    cm: { cm_number: '123456-654321', client_task_billing: 0 },
+  };
+  const v = validateEntry(entry(blockBilled), SETTINGS);
+  assert.ok(!codes(v).includes('no_task_lines'));
+
+  const r = canFinalize(entry(blockBilled), SETTINGS);
+  assert.deepEqual(r.blocks, [], 'nothing blocks a block-billed entry holding real time');
+  // The only thing standing between it and finalize is the pre-existing
+  // ack-able sum_mismatch warn (no task lines to sum against a 0.5h total).
+  assert.deepEqual(codes(r.warns), ['sum_mismatch']);
+  assert.ok(canFinalize(entry({ ...blockBilled, ack_validation: 1 }), SETTINGS).ok);
+});
+
+test('a zero-hour entry blocks — with task lines, without them, and when a zero '
+  + 'override contradicts real task time', () => {
+  // (a) block-billed client, no task lines, no total: holds no time at all.
+  const bare = validateEntry(entry({
     tasks: [],
     cm: { cm_number: '123456-654321', client_task_billing: 0 },
   }), SETTINGS);
-  assert.ok(!codes(v).includes('no_task_lines'));
-  assert.ok(canFinalize(entry({
-    tasks: [],
-    cm: { cm_number: '123456-654321', client_task_billing: 0 },
-  }), SETTINGS).ok);
+  assert.ok(codes(bare).includes('zero_duration'));
+  assert.equal(bare.find((x) => x.code === 'zero_duration').level, 'block');
+
+  // (b) task lines summing to zero.
+  const zeroTasks = entry({
+    tasks: [{ task_code: 'Review', duration: 0, fragment: 'review lease' }],
+  });
+  const zt = validateEntry(zeroTasks, SETTINGS);
+  assert.equal(zt.find((x) => x.code === 'zero_duration')?.level, 'block');
+
+  // (c) an hour of recorded task time zeroed by a manual override. Previously
+  // this was two warns (sum_mismatch + zero_duration), so ONE date-wide ack
+  // exported the hour as 0.0.
+  const overridden = entry({
+    tasks: [{ task_code: 'Draft', duration: 1.0, fragment: 'draft amendment' }],
+    total_override: 0,
+  });
+  const ov = validateEntry(overridden, SETTINGS);
+  assert.ok(codes(ov).includes('sum_mismatch'));
+  assert.equal(ov.find((x) => x.code === 'zero_duration')?.level, 'block');
+
+  // No acknowledgement can push any of them through.
+  for (const e of [entry({ tasks: [], cm: { cm_number: '123456-654321', client_task_billing: 0 } }),
+    zeroTasks, overridden]) {
+    const r = canFinalize({ ...e, ack_validation: 1 }, SETTINGS);
+    assert.equal(r.ok, false);
+    assert.ok(r.blocks.some((b) => b.code === 'zero_duration'));
+  }
 });
 
 test('sum mismatch vs manual total warns', () => {

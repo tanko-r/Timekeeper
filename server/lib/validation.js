@@ -88,8 +88,13 @@ export function validateEntry(entry, settings = {}) {
     }
   }
 
-  if (tasks.length > 0 && total <= 0) {
-    add('warn', 'zero_duration', 'Entry total is zero.');
+  // An entry holding no time is time lost: it locks and reaches the bill as a
+  // 0.0 row. This is task-count independent — a block-billed client's entry
+  // legitimately has no task lines — and it is a hard block, because no
+  // acknowledgement should be able to finalize zero hours.
+  if (total <= 0) {
+    add('block', 'zero_duration',
+      'Entry holds no time — enter the hours (or delete the entry) before finalizing.');
   }
 
   // Per-client task-billing enforcement of narrative allocations.
