@@ -274,7 +274,11 @@ test('V7 control: re-pointing a timer to a block-billed matter DOES reformat', (
     assert.equal(rawRow(t, entryId).narrative,
       'Review lease (0.5); draft email to landlord (0.5).');
 
-    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: blockBilled.id });
+    // move_entry: this control is ABOUT the entry being reformatted for the new
+    // client, so the entry has to move. Since 2026-08-16 that takes the
+    // attorney's say-so (the owner's "ask me each time" rule).
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`,
+      { cm_id: blockBilled.id, move_entry: true });
 
     const after = rawRow(t, entryId);
     assert.equal(after.task_billing, 0, 'the entry followed the timer to the block-billed client');

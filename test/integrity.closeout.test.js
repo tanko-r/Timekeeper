@@ -332,14 +332,28 @@ test('LEAK/LOSS: re-pointing a timer mid-day re-bills the morning’s hours — 
     await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: lease.id });
 
     const moved = (await t.fetchJson('GET', `/api/entries/${entry.id}`)).body;
-    // ⚠️ FAILS on both counts. routes/timers.js PATCH `associate` MOVES the
+    // Was ⚠️ FAILS on both counts: routes/timers.js PATCH `associate` MOVED the
     // linked draft entry to the new matter — "same entry, same time, same
-    // narrative, new matter". The morning's 2.0 merger hours are now billed to
-    // the office lease, and the Borealis sentence went with them. Nothing is
-    // audited (the entry was never finalized) and nothing is undoable.
+    // narrative, new matter" — so the morning's 2.0 merger hours were billed to
+    // the office lease and the Borealis sentence went with them, unaudited and
+    // undoable. Closed 2026-08-16: an entry holding real hours or a real
+    // narrative now stays where the work was done unless the attorney asks for
+    // the move (the owner's "ask me each time" rule; silence means leave it).
     assert.equal(moved.cm.id, merger.id,
       'hours already recorded against the merger must not follow the timer to another matter');
-    assert.ok(!String(moved.narrative).includes('Borealis'),
+
+    // SCAFFOLD REPAIR, same date. This assertion read `moved` — the MERGER's
+    // own entry — and demanded it not contain "Borealis". That was only ever
+    // true while the leak existed and the entry had been dragged onto the
+    // lease; once the entry correctly stays put it must KEEP its own Borealis
+    // sentence, so the old form asserted the leak rather than the rule. The
+    // rule it means is what it says: the merger's narrative must not become the
+    // OFFICE-LEASE entry's narrative. So it now reads every entry on the lease.
+    assert.ok(String(moved.narrative).includes('Borealis'),
+      'the merger entry must KEEP its own sentence — it is the merger’s work');
+    const leaseEntries = (await t.fetchJson('GET', '/api/entries')).body
+      .filter((e) => e.cm && e.cm.id === lease.id);
+    assert.deepEqual(leaseEntries.filter((e) => String(e.narrative).includes('Borealis')), [],
       'the merger narrative must not become the office-lease entry’s narrative');
   }));
 

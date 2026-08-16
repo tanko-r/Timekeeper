@@ -168,7 +168,10 @@ test('SCOPE: a never-finalized entry is audited by neither route', () =>
     const entryId = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body.entry.id;
     await t.fetchJson('PATCH', `/api/entries/${entryId}`, { narrative: 'Draft lease abstract.' });
 
-    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: verity.id });
+    // move_entry: this test's subject is what is AUDITED, and the move is only
+    // its stimulus. The entry holds an hour and a written sentence, so since
+    // 2026-08-16 it stays put unless the attorney asks for the move.
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: verity.id, move_entry: true });
     assert.equal(entryRow(t, entryId).cm_id, verity.id);
     assert.equal(entryRow(t, entryId).ever_finalized, 0);
     assert.equal(auditRows(t, entryId).length, 0,

@@ -468,7 +468,15 @@ test('re-pointing a timer to another matter MOVES its draft entry — no duplica
     const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
     assert.equal(stop.entry.total, 1.0);
 
-    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: real.id })).body;
+    // Since 2026-08-16 an entry holding real hours moves only when the attorney
+    // asks (the owner's "ask me each time" rule — silence leaves it where the
+    // work was done, so one matter's sentence cannot reach another's bill).
+    // The MOVE is still a first-class capability; this pins that it still works
+    // and still does not duplicate. The other half — that silence LEAVES the
+    // entry — is pinned in verify.timer-repoint-audit.test.js ("DEFAULT") and
+    // in integrity.closeout.test.js (the mid-day re-point proof).
+    const r = (await t.fetchJson('PATCH', `/api/timers/${timer.id}`,
+      { cm_id: real.id, move_entry: true })).body;
     assert.equal(r.entry.id, stop.entry.id, 'SAME entry — moved, not replaced');
     assert.equal(r.entry.cm_id, real.id);
     assert.equal(r.entry.total, 1.0, 'time unchanged by the move');

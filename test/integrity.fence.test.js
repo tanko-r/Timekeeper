@@ -236,7 +236,13 @@ test('FENCE: the real race — the timer under an open editor is re-pointed mid-
 
     // the editor is open on this entry, showing Harbor Lease suggestions. The
     // timer is re-pointed (wrong matter picked at start) — which MOVES the entry.
-    const repoint = await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: borealis.id });
+    // move_entry: the race this test reproduces is an edit landing on an entry
+    // that has just CHANGED MATTER, so the move is the stimulus. Since
+    // 2026-08-16 an entry holding work moves only when asked (the owner's
+    // "ask me each time" rule); without the flag the entry stays and there is
+    // no race to reproduce.
+    const repoint = await t.fetchJson('PATCH', `/api/timers/${timer.id}`,
+      { cm_id: borealis.id, move_entry: true });
     assert.equal(repoint.status, 200, JSON.stringify(repoint.body));
     assert.equal(t.db.prepare('SELECT cm_id FROM entries WHERE id=?').get(entryId).cm_id, borealis.id);
 

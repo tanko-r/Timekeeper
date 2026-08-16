@@ -95,6 +95,18 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       0, elapsedSeconds(timer, Date.parse(nowIso)) - Math.round(settled * 3600));
   }
 
+  // Nothing left to file. The departed entry kept the whole clock, so opening
+  // a new entry here would manufacture a 0.0h draft with an empty narrative on
+  // the new matter — invisible at the time and a hard block at close-out since
+  // a zero-hour entry stopped being finalizable. It fires on the commonest
+  // flow there is: stop a timer, re-point it, before any time on the new
+  // matter. Rebase the clock, drop the stale link, and open nothing.
+  if (entry === null && rebaseSeconds != null && !(hours > 0)) {
+    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=?, linked_entry_id=NULL WHERE id=?')
+      .run(rebaseSeconds, timer.running ? nowIso : null, timer.id);
+    return { entryId: null, relinked, previousTotal, filedHours: 0 };
+  }
+
   let entryId;
   db.transaction(() => {
     if (entry) {
@@ -368,8 +380,8 @@ export function timersRouter({ db, clock }) {
     // deleted or already-finalized entry stays behind (its time is settled);
     // there the timer unlinks and opens a fresh entry.
     const linked = timer.linked_entry_id
-      ? db.prepare('SELECT id, cm_id, status, deleted_at, ever_finalized FROM entries WHERE id=?')
-        .get(timer.linked_entry_id)
+      ? db.prepare(`SELECT id, cm_id, status, deleted_at, ever_finalized, narrative, total_override
+           FROM entries WHERE id=?`).get(timer.linked_entry_id)
       : null;
     const liveLink = !!(linked && !linked.deleted_at && linked.status === 'draft');
 
@@ -391,7 +403,13 @@ export function timersRouter({ db, clock }) {
     // A MATTERLESS quick timer being given its FIRST matter is not this case at
     // all — nothing was ever written against another matter — so it keeps
     // following the timer silently, ever_finalized or not.
-    const needsConsent = liveLink && !!linked.ever_finalized && timer.cm_id != null;
+    const linkedSeed = [timer.narrative_template, timer.draft_narrative]
+      .filter(Boolean).join(' ').trim();
+    const linkedNarrative = liveLink ? String(linked.narrative || '').trim() : '';
+    const holdsWork = liveLink
+      && (storedTotal(db, linked) > 0
+        || (linkedNarrative !== '' && linkedNarrative !== linkedSeed));
+    const needsConsent = liveLink && holdsWork && timer.cm_id != null;
     const moveEntry = b.move_entry === true;
     const associate = cmChanged && b.cm_id != null && liveLink
       && (!needsConsent || moveEntry);
@@ -486,7 +504,9 @@ export function timersRouter({ db, clock }) {
       // is what deducts the settled hours and clears the stale link.
       if (fresh.running || leaveEntryBehind || (hours >= minIncrement(db) - 1e-9 && hours > 0)) {
         const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
-        entry = loadEntry(db, synced.entryId);
+        // null when the departed entry kept the whole clock and nothing was left
+        // to file — no entry is opened in that case, and none is reported.
+        entry = synced.entryId ? loadEntry(db, synced.entryId) : null;
       }
     }
     res.json({ ...withElapsed(getTimer.get(timer.id)), entry });
@@ -557,7 +577,7 @@ export function timersRouter({ db, clock }) {
     }
     const synced = syncToEntry(db, getTimer.get(timer.id), hours, todayLocal(clock()), now());
     return {
-      entry: loadEntry(db, synced.entryId),
+      entry: synced.entryId ? loadEntry(db, synced.entryId) : null,
       // what reached the entry, not what came off the clock — see syncToEntry
       hours: synced.filedHours ?? hours,
       seconds,
@@ -639,7 +659,7 @@ export function timersRouter({ db, clock }) {
       const freshTimer = getTimer.get(timer.id);
       const hours = secondsToHours(elapsedSeconds(freshTimer, clock().getTime()), roundingCfg(db));
       const synced = syncToEntry(db, freshTimer, hours, todayLocal(clock()), now());
-      entry = loadEntry(db, synced.entryId);
+      entry = synced.entryId ? loadEntry(db, synced.entryId) : null;
       // The old linked entry may have been finalized/deleted meanwhile — the
       // relink (with its double-count risk) now surfaces at start, not stop.
       if (synced.relinked) relink = { relinked: true, previousTotal: synced.previousTotal ?? undefined };

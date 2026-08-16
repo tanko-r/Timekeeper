@@ -367,7 +367,7 @@ test('LOSS L7: re-pointing a timer must audit the matter move it performs on a f
     await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entryId });
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
 
-    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: verity.id });
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: verity.id, move_entry: true });
 
     const after = (await t.fetchJson('GET', `/api/entries/${entryId}`)).body;
     assert.equal(after.cm.id, verity.id, 'the entry followed the timer (documented behaviour)');

@@ -131,7 +131,10 @@ test('LEAK (expected failure): a crash inside PATCH /api/timers/:id leaves the t
     // of that move.
     let crashed = false;
     try {
-      await jsonReq(base, 'PATCH', `/api/timers/${timer.id}`, { cm_id: B.id });
+      // move_entry: this test is ABOUT the crash that lands mid-move, so it must
+      // ask for the move. Without the flag the entry now stays on its own matter
+      // (the owner's "ask me each time" rule) and the crash never happens.
+      await jsonReq(base, 'PATCH', `/api/timers/${timer.id}`, { cm_id: B.id, move_entry: true });
     } catch { crashed = true; }
     const { sig } = await exited;
     assert.equal(sig, 'SIGKILL', 'server was killed mid-PATCH');
@@ -292,7 +295,7 @@ test('control: an uninterrupted PATCH /api/timers/:id re-point MOVES the entry â
     })).body;
     const timer = (await t.fetchJson('POST', '/api/timers', { name: 'T', cm_id: A.id })).body;
     await t.fetchJson('PUT', `/api/timers/${timer.id}/clock`, { hours: 0.5 });
-    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: B.id });
+    await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: B.id, move_entry: true });
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
 
     const rows = t.db.prepare(
