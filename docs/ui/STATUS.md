@@ -4,7 +4,7 @@
 last, commit it with the work. If it disagrees with reality, reality is right
 and this file is stale — fix it.
 
-Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 2
+Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 3
 
 ---
 
@@ -12,11 +12,28 @@ Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 2
 
 | | |
 |---|---|
-| Suites | 902 tests, 811 pass, 91 fail — **the failures are deliberate leak proofs**, not regressions. The 633 pre-audit tests all pass. |
-| e2e | `node scripts/e2e-smoke.mjs` green — re-verified at the start of session 2 |
+| Suites | 973 tests, 832 pass, 141 fail — **the failures are deliberate leak proofs**, not regressions. The 633 pre-audit tests all pass. |
+| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1d landed |
 | Working tree | Clean. |
 | Preview | Infrastructure ready, **not started** — blocked on Stage 1 |
-| Next action | `PLAN.md` Stage 1d |
+| Next action | Close the four leaks 1d left open (below), then `PLAN.md` Stage 1e |
+
+### What session 2 left behind, and why the count moved
+
+Session 2 ran as a headless `claude -p` orchestrator. Print mode answers once
+and exits, so it terminated its own five builders at the 600-second ceiling
+and quit mid-1d, leaving their work uncommitted in the working tree. Nothing
+was lost. Session 3 reviewed the nine files, repaired one defect in them (a
+raw NUL byte written into `ghosttext.js`, which made git treat the file as
+binary), and committed the work in seven pieces.
+
+The failure count rose from 91 to 141 because 1d's builders **added** proof
+tests as well as fixing code. Measured both ways on the same machine: at
+`01a51ca` the suite was 811 pass / 183 fail; with 1d landed it is 832 / 141.
+No test file fails that did not fail before.
+
+**Do not run an orchestrator with `-p`.** Start it in a tmux window so it
+survives its own subagents.
 
 ### Correction to session 1's handoff
 
@@ -48,7 +65,7 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 | 1a Land the written fence | done | `e36d705` (bundled into the docs commit) — `integrity.fence` 17/17 green |
 | 1b Scope `matterSuggestions` | done | `e36d705` — the sibling-narrative UNION arm is gone; `source` labels are honest |
 | 1c Scope both AI pools | mostly done | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. Residue: `verify.matterctx.thinsibling:404` |
-| 1d Pin timer write-backs to their matter | doing | 24 failing proofs: stash, template, ghost text, stop-chip provenance |
+| 1d Pin timer write-backs to their matter | mostly done | `209b39c` `32e1995` `528affa` `a01252c` `69227c7` `ecb49a3`. Closed: stop-chip provenance, thin-sibling AI, stale state, suggestions, auto-narrative discard. **Still open — four leaks, all on the far side of the server fence:** `verify.timerstash.repoint` LEAK 4 and `verify.stashfollow.matterb` LEAK D and `verify.timer-template-repoint` LEAK (each "reaches the export CSV"), plus `verify.ghosttext-matterswitch` LEAK (Tab over a slow link, a browser test). `verify.timer-repoint-audit` and `verify.entry-repoint-doublefile` were never 1d's — they belong to 1e/1g. |
 | 1e Time-loss family | todo | 6 confirmed defects |
 | 1f Export correctness | todo | 8 confirmed defects |
 | 1g Records and recovery | todo | 5 confirmed defects |
@@ -88,6 +105,7 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 | 1b | Preamble cut; footer folded into bottom bar; list keyed by matter; hours tap-editable | `9114c9a` |
 | 2b-1 | Narrative-first editor with Done; close-out skips finished work; three menu components became one | `e54bfca` |
 | 2b-3 | Stop-chip contamination fix + regression test; desktop craft fixes | `d2b46c9` |
+| 1d | Timer re-point disarms the narrative stash and template; ghost-text pool kept with its matter; entry editor keyed by its record and flushing queued saves; a chosen narrative no longer overwritten by the task-line join; AI suggestions naming another matter refused | `209b39c`…`2173243` |
 
 ## Measurements — the scoreboard
 
