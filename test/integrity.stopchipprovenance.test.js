@@ -12,6 +12,14 @@
 //    phrasing or offer nothing — never another matter's sentence, however
 //    good a match it looks."
 //
+// STATUS 2026-08-15: the three LEAK tests now PASS, and must keep passing.
+// They are closed on two independent fences — the server no longer lends a
+// sibling matter's NARRATIVE to a thin matter (matterSuggestions borrows task
+// fragments only), and stopchips.js `build()` drops anything the endpoint
+// marks `source: 'client'` before it can become a chip. Either fence alone
+// would turn these green, which is why both are kept and why the copy below
+// was re-derived rather than deleted.
+//
 // NOT tested here because the brief says they are shared BY DESIGN and are
 // NOT defects: the phrasebook as a concept, text expansions, and ghost text.
 //
@@ -92,12 +100,26 @@ async function coldMatterOffer(t, { ownNarrative = null } = {}) {
 
 // ---------------------------------------------------------------------------
 // A VERBATIM COPY of the offer's chip pipeline — public/js/components/
-// stopchips.js `build()` (the `add`/dedupe/slice body) plus the title
-// expression from the chip render. Copied rather than imported because
-// stopchips.js is a browser module with absolute `/js/…` imports. The last
-// test in this file fails if the original drifts from this copy.
+// stopchips.js `build()` (the `borrowed` fence, the `add`/dedupe body and the
+// slice) plus the title expression from the chip render. Copied rather than
+// imported because stopchips.js is a browser module with absolute `/js/…`
+// imports. The last test in this file fails if the original drifts from this
+// copy.
+//
+// RE-DERIVED 2026-08-15 from the current stopchips.js, which the fence work
+// edited legitimately: `build()` now drops every phrase marked
+// `source: 'client'` BY TEXT before anything else runs ("MATTER FENCE 2"), so
+// a borrowed sentence can reach neither the chip list nor the timer's stamped
+// ✦ line. The three LEAK tests below were re-run against this re-derived copy
+// and still hold. Nothing in their assertions was changed.
 // ---------------------------------------------------------------------------
 function buildChips(suggestedNarrative, phrases) {
+  const borrowed = new Set();
+  for (const p of phrases || []) {
+    if (p.source !== 'client') continue;
+    const text = formatSuggestion(String(p.text || '').trim());
+    if (text) borrowed.add(text.toLowerCase());
+  }
   const byKey = new Map();
   const order = [];
   const add = (raw, meta) => {
@@ -106,6 +128,7 @@ function buildChips(suggestedNarrative, phrases) {
     const text = formatSuggestion(src);
     if (!text) return;
     const k = text.toLowerCase();
+    if (borrowed.has(k)) return; // fence 2 — another matter's sentence
     const had = byKey.get(k);
     if (had) {
       if (meta.own) { had.own = true; had.ai = false; }
@@ -116,12 +139,17 @@ function buildChips(suggestedNarrative, phrases) {
     order.push(chip);
   };
   add(suggestedNarrative, { ai: true, own: false });
-  for (const p of phrases) add(p.text, { ai: false, own: p.source !== 'client' });
+  for (const p of phrases) {
+    if (p.source === 'client') continue; // fence 2
+    add(p.text, { ai: false, own: true });
+  }
   return order.slice(0, 3);
 }
 
-// stopchips.js chip render, `title=` — the whole of it. `chip.ai` is the only
-// input; nothing here can tell a borrowed sentence from his own.
+// stopchips.js chip render, `title=` — the whole of it. `chip.ai` is still the
+// only input, so this expression on its own STILL cannot tell a borrowed
+// sentence from his own; what changed is that `build()` above no longer lets
+// one through to be labelled.
 const chipTitle = (chip) => (chip.ai
   ? `Suggested when this timer started — finish the entry with: ${chip.text}`
   : `You wrote this on this matter before — finish the entry with: ${chip.text}`);
@@ -208,8 +236,17 @@ test('GATE HOLDS: nothing borrowed is ever eligible for the unasked pre-fill', (
 test('GUARD: the pipeline copied into this file still matches stopchips.js', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../public/js/components/stopchips.js', import.meta.url)), 'utf8');
+  // Pinned to the three lines the copy above depends on: the fence that builds
+  // the borrowed set, the fence that drops it inside `add`, and the fence in
+  // the phrase loop. Any of them moving invalidates the copy.
   assert.ok(
-    src.includes("for (const p of phrases) add(p.text, { ai: false, own: p.source !== 'client' });"),
+    src.includes("if (p.source !== 'client') continue;")
+    && src.includes('if (text) borrowed.add(text.toLowerCase());'),
+    'stopchips.js borrowed-set fence changed — re-derive buildChips() in this file');
+  assert.ok(
+    src.includes('if (borrowed.has(k)) return;')
+    && src.includes("if (p.source === 'client') continue;")
+    && src.includes("add(p.text, { ai: false, own: true });"),
     'stopchips.js build() changed — re-derive buildChips() in this file');
   assert.ok(
     src.includes('`You wrote this on this matter before — finish the entry with: ${chip.text}`'),

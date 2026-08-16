@@ -137,15 +137,36 @@ test('CONTROL (expected to pass): the Rezone prose is stored only against the Re
 // then discards both and prints the rows under a heading that asserts they
 // are this matter's own work.
 // ───────────────────────────────────────────────────────────────────────────
+// FIXTURE REPAIRED 2026-08-15, assertions UNCHANGED. This control needs the
+// blend to be ON so it can check the labelling, and `seed()` alone no longer
+// turns it on: the sibling arm of matterSuggestions now selects task-line
+// FRAGMENTS only (the narrative arm was deleted as the leak it was), and every
+// entry `seed()` files carries a BLANK fragment. Against correct code the seeded
+// fixture therefore borrows nothing at all — measured `{borrowed:false,
+// phrases:[]}` — which is a stronger result than this control was written to
+// check, but it leaves the control with no borrowed row to inspect.
+//
+// So one sibling entry gains real task lines. Their wording is generic and
+// reusable, which is precisely the text the brief says IS shared; its narrative
+// still carries Rezone's client facts. The original three assertions then hold
+// verbatim, and a fourth is ADDED: the reusable fragment crossed, the
+// client-facing sentence did not. Nothing here is relaxed.
 test('CONTROL (expected to pass): matterSuggestions correctly LABELS the borrowed rows', () =>
   withServer(async (t) => {
-    const { wetland } = await seed(t);
+    const { wetland, rezone } = await seed(t);
+    await addEntry(t, rezone.id, '2026-08-04',
+      'Prepare rezone hearing notice and transmit to R. Calder.', [
+        { task_code: 'Draft', duration: 0.2, fragment: 'Draft correspondence to opposing counsel' },
+        { task_code: 'Review', duration: 0.2, fragment: 'Review document production' },
+      ]);
     const s = matterSuggestions(t.db, wetland.id, TODAY);
     assert.equal(s.borrowed, true, 'the blend is flagged at source');
     assert.ok(s.phrases.length > 0);
     for (const p of s.phrases) {
       assert.equal(p.source, 'client',
         `every Wetland phrase is borrowed: ${JSON.stringify(p)}`);
+      assert.doesNotMatch(p.text, REZONE_FACTS,
+        `only reusable wording may be borrowed, never Rezone's billing prose: ${JSON.stringify(p)}`);
     }
   }));
 
