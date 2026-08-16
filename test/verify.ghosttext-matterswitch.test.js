@@ -78,6 +78,20 @@
 //
 // Set TK_SKIP_UI_PROOF=1 to skip (the same switch integrity.stalestate.test.js
 // uses) — e.g. while a screenshot run already owns the cores.
+//
+// 2026-08-16 (Stage 1d): BOTH prescribed fixes landed in
+// public/js/components/ghosttext.js — the pool is now stored WITH its matter
+// and handed out only on a match (line ~51, stronger than the setPhrases([])
+// suggested above: the check is at render time, so there is no window at all),
+// and a painted completion is dropped when its pool changes (line ~96). Both
+// tests now pass. Test 2's outcome assertion needed a SCAFFOLD repair, not a
+// relaxation: it asserted the stored narrative was '' , which only held while
+// the leak existed and Tab replaced the field wholesale. With the leak closed,
+// Tab finds no ghost and falls through, so the field correctly keeps the two
+// characters the attorney typed. It now asserts the stored narrative is
+// EXACTLY "Re" and carries no Acme fingerprint — nothing was completed onto
+// it. That is a tighter check than '' would be: it fails both on a leaked
+// sentence and on any other text Tab appends.
 // ===========================================================================
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -440,11 +454,19 @@ test('LEAK (expected to fail until fixed): over a slow link, Tab writes another 
     console.log('  observed — stored in the database: ', JSON.stringify(row));
 
     assert.equal(typed.matter, 'Verity payer audit', 'sanity: the entry points at Verity');
-    // The outcome first: what a lawyer's bill would carry.
+    // The outcome first: what a lawyer's bill would carry. The two characters
+    // he actually typed are his own and are supposed to be saved; what must
+    // never be there is anything Tab appended from Acme's pool. So the stored
+    // narrative must be EXACTLY the keystrokes, with nothing completed onto it.
     assert.equal(
-      row.narrative, '',
+      /harbor street/i.test(row.narrative), false,
       `LEAK: the entry stored against ${row.client} · ${row.short_name} now reads `
       + `${JSON.stringify(row.narrative)} — Acme Holdings' billing sentence, on Verity Health's bill`,
+    );
+    assert.equal(
+      row.narrative, 'Re',
+      `LEAK: Tab appended text the attorney never typed. He typed "Re"; the entry against `
+      + `${row.client} · ${row.short_name} stores ${JSON.stringify(row.narrative)}`,
     );
     assert.equal(
       later.hint, null,
