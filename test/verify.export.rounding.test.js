@@ -64,7 +64,15 @@ async function boot(clock) {
 // ---------------------------------------------------------------------------
 // PATH 1 — quick capture, DEFAULT settings, nothing switched off.
 // ---------------------------------------------------------------------------
-test('PROVES: a "45m" quick capture is shown as 0.8 h and filed/exported as 0.75 h', async () => {
+// SCAFFOLD UPDATED 2026-08-16 (owner ruling: "Round it. All billing should be
+// done in 1/10 hr increments."). The load-bearing assertion at the bottom of
+// this test — the export dialog's figure must equal what the CSV carries — is
+// UNTOUCHED. What changed are the three lines that recorded the DEFECT's
+// stored/exported numbers (entry_tasks 0.75, CSV 0.75, .TIM 2700s). The fix
+// quantises at storage, so the row now holds 0.8, the CSV carries 0.8 and the
+// .TIM carries 2880s. The parser still produces 0.75 from "45m" — that is the
+// input to the rule, not a billed figure — so that precondition is unchanged.
+test('PROVES: a "45m" quick capture is shown as 0.8 h and filed/exported as 0.8 h', async () => {
   const { t, acme } = await boot();
   try {
     // Settings are untouched: this is the shipped default.
@@ -89,7 +97,8 @@ test('PROVES: a "45m" quick capture is shown as 0.8 h and filed/exported as 0.75
 
     // WHAT THE DATABASE ACTUALLY HOLDS.
     const stored = t.db.prepare('SELECT duration FROM entry_tasks WHERE entry_id=?').get(e.id);
-    assert.equal(stored.duration, 0.75, 'the row in entry_tasks holds 0.75');
+    assert.equal(stored.duration, 0.8,
+      'the row in entry_tasks holds a whole tenth — a billed figure is quantised at storage');
 
     // WHAT THE LAWYER IS TOLD. Toast: `Filed ✓ — ${fmtHours(hours)}h`.
     // Ledger row / Today row / day total: fmtHours(e.total, increment).
@@ -116,8 +125,8 @@ test('PROVES: a "45m" quick capture is shown as 0.8 h and filed/exported as 0.75
     const timAm = timSeconds(r.tim);
 
     assert.equal(csv.length, 1);
-    assert.equal(csv[0].duration, 0.75, 'the CSV duration column carries 0.75');
-    assert.equal(timAm, 2700, 'the .TIM carries am=2700 seconds = 0.75 h');
+    assert.equal(csv[0].duration, 0.8, 'the CSV duration column carries the stored 0.8');
+    assert.equal(timAm, 2880, 'the .TIM carries am=2880 seconds = 0.8 h');
 
     assert.equal(
       Number(dialogHours), csv[0].duration,

@@ -200,11 +200,84 @@ test('PROVES: task lines above the override make the CSV duration column over-bi
   }));
 
 // ===========================================================================
-// FACT — what the CSV DOES still carry. These pass today and bound the
-// finding: the entry total is present on every CSV row in `entry_total`, so
-// the hours are not absent from the file, only contradicted inside it.
+// PROVES 4 — the third write path, and the one no test covered at all.
+//
+// server/routes/entries.js settleRunningTimers() books a RUNNING timer's live
+// clock onto its entry as the day is closed out. Until 2026-08-16 it carried a
+// pre-Stage-1e rule — "a single task line mirrors the total; user-added splits
+// are left alone" — so finalizing a SPLIT entry while its timer ran stored
+// total_override 1.5 over lines still summing to 1.0. The .TIM said am=5400 and
+// the CSV duration column — the column the assistant keys from — said 1.0.
+// Half an hour vanished from a finalized, exportable entry.
+//
+// Nothing unusual is done here: split an entry in the editor, leave the timer
+// running, close the day out. Written 2026-08-16 (Lane C) because the gap was
+// live and unproven.
 // ===========================================================================
-test('FACT: the CSV carries the true entry total in entry_total on every row, even while duration disagrees', () =>
+test('PROVES: closing the day out on a SPLIT entry whose timer is still running loses half an hour', () =>
+  withServer(async (t, clock) => {
+    const acme = await mkCm(t, '100001-000012', 'Acme lease');
+    const timer = (await t.fetchJson('POST', '/api/timers', {
+      name: 'Acme lease', cm_id: acme.id,
+    })).body;
+
+    // An hour of work, filed.
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const id = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body.entry.id;
+
+    // Split it in the editor, exactly as entryeditor.js doPersist() does.
+    await t.fetchJson('PATCH', `/api/entries/${id}`, {
+      total_override: 1,
+      tasks: [
+        { task_code: 'Review', duration: 0.5, fragment: 'review lease amendment' },
+        { task_code: 'Draft', duration: 0.5, fragment: 'draft email to landlord' },
+      ],
+    });
+
+    // Back on it, and STILL RUNNING when the day is closed out — the clock's
+    // extra half hour has never reached the entry.
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(1800);
+    const day = await t.fetchJson('POST', '/api/finalize-day', { date: TODAY, ack: true });
+    assert.deepEqual(day.body.blocked, [], 'precondition: nothing blocks the close-out');
+
+    const row = storedEntry(t, id);
+    const lines = storedLines(t, id);
+    assert.equal(row.status, 'finalized', 'precondition: the entry is locked and exportable');
+    assert.equal(row.total_override, 1.5,
+      'precondition: close-out settled the live clock onto the entry');
+
+    const exp = (await t.fetchJson('POST', '/api/export', { from: TODAY, to: TODAY })).body;
+    const csv = csvRowsFor(exp.csv, id);
+    const tim = timSecondsFor(exp.tim);
+    const evidence = `\n  DB total_override=${row.total_override}`
+      + `\n  DB entry_tasks=[${lines.map((l) => `${l.task_code}=${l.duration}`).join(', ')}] sum=${lineSum(lines)}`
+      + `\n  DB narrative=${JSON.stringify(row.narrative)} (allocations sum ${allocationsIn(row.narrative)})`
+      + `\n  CSV duration column=${csv.durationSum}, CSV entry_total=${csv.entryTotal}`
+      + `\n  .TIM am=${tim[0]}s = ${tim[0] / 3600}h`;
+
+    assert.equal(lineSum(lines), row.total_override,
+      `the settled total left the task lines behind —${evidence}`);
+    assert.equal(csv.durationSum, 1.5,
+      `the CSV duration column bills ${csv.durationSum}h against a .TIM that ships `
+      + `${tim[0] / 3600}h —${evidence}`);
+    assert.equal(tim[0], 5400, `the .TIM ships the settled 1.5h —${evidence}`);
+    assert.equal(allocationsIn(row.narrative), 1.5,
+      `and the sentence on the bill accounts for every settled hour —${evidence}`);
+  }));
+
+// ===========================================================================
+// FACT — the entry total is present on every CSV row in `entry_total`, and it
+// now AGREES with the duration column it used to contradict.
+//
+// Rewritten 2026-08-16 (Lane C). Until the reconcile landed on all three write
+// paths this test recorded the gap — entry_total 2, duration 1.5 — to bound the
+// finding: the hours were never absent from the file, only contradicted inside
+// it. The contradiction is what was fixed, so the FACT now records the two
+// columns agreeing; asserting the old numbers would be asserting the defect.
+// ===========================================================================
+test('FACT: the CSV entry_total and duration columns now report the same hours', () =>
   withServer(async (t) => {
     const acme = await mkCm(t, '100001-000012', 'Acme lease');
     const e = (await t.fetchJson('POST', '/api/entries', {
@@ -217,17 +290,22 @@ test('FACT: the CSV carries the true entry total in entry_total on every row, ev
     const exp = (await t.fetchJson('POST', '/api/export', { from: TODAY, to: TODAY })).body;
     const csv = csvRowsFor(exp.csv, e.id);
     assert.equal(csv.entryTotal, 2, 'entry_total column carries the entry hours');
-    assert.equal(csv.durationSum, 1.5, 'duration column carries the task-line hours');
-    assert.notEqual(csv.entryTotal, csv.durationSum,
-      'the two columns of the SAME csv row disagree — this is the finding');
+    assert.equal(csv.durationSum, 2, 'duration column carries the same hours');
+    assert.equal(csv.entryTotal, csv.durationSum,
+      'the two columns of the SAME csv row agree');
+    // …and the stored line was moved, not a formatter applied at export time.
+    assert.deepEqual(storedLines(t, e.id).map((l) => l.duration), [2]);
   }));
 
 // ===========================================================================
-// FACT — the narrative is affected too. On a task-billed client the sentence
-// that lands on the bill prints allocations that no longer add to the hours
+// FACT — the narrative follows the hours. On a task-billed client the sentence
+// that lands on the bill prints allocations, and they add up to the hours
 // billed. This is the client-facing half of the same root cause.
+//
+// Rewritten 2026-08-16 (Lane C): this recorded 1.0h of allocations on a 1.5h
+// entry while the drift existed.
 // ===========================================================================
-test('FACT: the client-facing narrative prints allocations that no longer add up to the billed hours', () =>
+test('FACT: the client-facing narrative prints allocations that add up to the billed hours', () =>
   withServer(async (t, clock) => {
     const acme = await mkCm(t, '100001-000012', 'Acme lease');
     const timer = (await t.fetchJson('POST', '/api/timers', {
@@ -249,15 +327,25 @@ test('FACT: the client-facing narrative prints allocations that no longer add up
 
     const row = storedEntry(t, id);
     assert.equal(row.total_override, 1.5, 'the entry bills 1.5h');
-    assert.equal(allocationsIn(row.narrative), 1.0,
-      `the narrative on the bill accounts for 1.0h: ${JSON.stringify(row.narrative)}`);
+    assert.equal(allocationsIn(row.narrative), 1.5,
+      `the narrative on the bill accounts for all 1.5h: ${JSON.stringify(row.narrative)}`);
+    assert.equal(lineSum(storedLines(t, id)), 1.5, 'because the task lines do');
   }));
 
 // ===========================================================================
-// FACT — the warning exists, is only a WARN, and every ordinary finalize path
-// sends ack. This is what makes it reachable rather than theoretical.
+// FACT — sum_mismatch is still only a WARN in server/lib/validation.js, and
+// every ordinary finalize path sends ack:true. That is what made the drift
+// reachable rather than theoretical, and the validator has NOT been changed.
+//
+// Rewritten 2026-08-16 (Lane C). The original stimulus — PATCH total_override
+// alone onto a one-line entry — can no longer produce a mismatch at all, which
+// is the fix. So this test now records BOTH halves:
+//   (a) the app path no longer produces the warning: a bare finalize succeeds;
+//   (b) a database that already holds a drifted row (written before the
+//       reconcile landed) still warns rather than blocks, and one ack still
+//       carries it into both files — nothing is stranded by the fix.
 // ===========================================================================
-test('FACT: sum_mismatch is a warn, and one ack:true carries the entry into both files', () =>
+test('FACT: the app no longer produces sum_mismatch; a legacy drifted row still warns, not blocks', () =>
   withServer(async (t) => {
     const acme = await mkCm(t, '100001-000012', 'Acme lease');
     const e = (await t.fetchJson('POST', '/api/entries', {
@@ -265,18 +353,32 @@ test('FACT: sum_mismatch is a warn, and one ack:true carries the entry into both
       narrative: 'Reviewed the lease amendment and conferred with the client.',
       tasks: [{ task_code: 'Review', duration: 1.5, fragment: 'reviewed lease amendment' }],
     })).body;
+    // (a) the one-tap path timergrid.js entryTotalSet() takes.
     await t.fetchJson('PATCH', `/api/entries/${e.id}`, { total_override: 2.0 });
+    const clean = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, {});
+    assert.equal(clean.status, 200,
+      'no ack needed: the lines were reconciled to the total, so there is no mismatch to warn about');
+    assert.equal(lineSum(storedLines(t, e.id)), 2);
 
-    const blocked = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, {});
+    // (b) a row that drifted before the fix — written straight into SQLite,
+    //     because no route will produce one any more.
+    const legacy = (await t.fetchJson('POST', '/api/entries', {
+      date: TODAY, cm_id: acme.id,
+      narrative: 'Attended to the lease file.',
+      tasks: [{ task_code: 'Review', duration: 1.5, fragment: 'reviewed lease amendment' }],
+    })).body;
+    t.db.prepare('UPDATE entries SET total_override=2.0 WHERE id=?').run(legacy.id);
+
+    const blocked = await t.fetchJson('POST', `/api/entries/${legacy.id}/finalize`, {});
     assert.equal(blocked.status, 422);
     assert.deepEqual(blocked.body.blocks, [], 'nothing BLOCKS it');
     assert.deepEqual(blocked.body.warns.map((w) => w.code), ['sum_mismatch'],
       'the only thing in the way is one ack-able warning');
 
-    const ok = await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, { ack: true });
+    const ok = await t.fetchJson('POST', `/api/entries/${legacy.id}/finalize`, { ack: true });
     assert.equal(ok.status, 200, 'ack:true — the shape close-out, bulk finalize and the editor send');
     const exp = (await t.fetchJson('POST', '/api/export', { from: TODAY, to: TODAY })).body;
-    assert.equal(exp.count, 1, 'and it reaches the export');
+    assert.equal(exp.count, 2, 'and both reach the export');
   }));
 
 // ===========================================================================

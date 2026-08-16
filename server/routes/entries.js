@@ -5,7 +5,9 @@ import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
 import { elapsedSeconds } from '../lib/timerlogic.js';
-import { secondsToHours } from '../lib/rounding.js';
+import { secondsToHours, quantizeBilled } from '../lib/rounding.js';
+import { aiNarrativeProvenance } from '../lib/quickcapture.js';
+import { reconcileEntryLines } from '../lib/reconcile.js';
 import { loadEffectiveFields } from './customfields.js';
 // Cyclic by module graph (timers.js imports loadEntry/syncNarrative from here),
 // but safe: both sides only ever call each other's function DECLARATIONS, which
@@ -52,6 +54,22 @@ export function enrich(db, row) {
 
 function substantiveCount(tasks) {
   return tasks.filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0).length;
+}
+
+// ── the tenth-of-an-hour rule (owner decision, 2026-08-16) ────────────────
+// "All billing should be done in 1/10 hr increments." So every figure this
+// module STORES — an entry's total_override and each of its task lines — is
+// snapped UP to the configured increment before it reaches SQLite. Doing it
+// here, at storage, rather than in a formatter is what makes the ledger, the
+// CSV, the .TIM and the narrative's own "(0.8)" brackets agree by
+// construction: they all read the same stored number, and there is no second
+// rounding rule to keep in sync. 0.75 h is never stored and never exported.
+function billedHours(db, hours) {
+  return quantizeBilled(hours, getSetting(db, 'rounding') || {});
+}
+
+function quantizeTasks(db, tasks) {
+  return tasks.map((t) => ({ ...t, duration: billedHours(db, t.duration) }));
 }
 
 // `requireDuration` marks the EDIT path. writeTasks replaces an entry's lines
@@ -309,9 +327,27 @@ export function entriesRouter({ db, clock }) {
       where.push('EXISTS (SELECT 1 FROM entry_tasks et WHERE et.entry_id = entries.id AND et.task_code = ?)');
       params.push(q.task);
     }
+    // ── the limit is OPT-IN ───────────────────────────────────────────────
+    // This used to end `LIMIT 1000` unconditionally, with no total, no cursor
+    // and no truncation flag. Everything older than the 1000th most recent
+    // entry fell off the ledger silently — and, because public/js/views/search.js
+    // derives the Export… range from the dates of the rows it can SEE, it fell
+    // out of that range too. Unexported time is by its nature the old time you
+    // forgot, so the rows most likely to be owed were the exact rows the screen
+    // could not show and the export could not reach.
+    //
+    // A caller that genuinely wants a window now asks for one (?limit=N); the
+    // default answers every row that matches the filters. Single-user SQLite —
+    // a full scan of a few thousand rows is cheaper than losing one of them.
+    const rawLimit = req.query.limit;
+    const limit = rawLimit === undefined || rawLimit === '' ? null : Number(rawLimit);
+    if (limit !== null && (!Number.isInteger(limit) || limit < 1)) {
+      return res.status(400).json({ error: 'limit must be a positive integer.' });
+    }
     const sql = `SELECT ${ENTRY_COLS} FROM entries
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-      ORDER BY date DESC, id DESC LIMIT 1000`;
+      ORDER BY date DESC, id DESC${limit === null ? '' : ' LIMIT ?'}`;
+    if (limit !== null) params.push(limit);
     res.json(db.prepare(sql).all(...params).map((row) => enrich(db, row)));
   });
 
@@ -355,15 +391,40 @@ export function entriesRouter({ db, clock }) {
             break;
           case 'set_cm': {
             if (row.status === 'finalized') { failed.push({ id, error: 'finalized' }); break; }
+            // A soft-deleted entry is off every bill, export and total. Moving
+            // it silently is a change nobody can see, and restoring it later
+            // surfaces its narrative on a matter it was never written for —
+            // so bulk refuses it exactly as /finalize and /copy do. Restore
+            // it first if it is really meant to move.
+            if (row.deleted_at) { failed.push({ id, error: 'deleted — restore it first' }); break; }
+            const target = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(cm_id);
             db.transaction(() => {
-              db.prepare('UPDATE entries SET cm_id=?, updated_at=? WHERE id=?').run(cm_id, now(), id);
+              // The new matter's billable flag takes over, mirroring the timer
+              // re-point path (routes/timers.js). Without this, time moved onto
+              // a billable matter goes out of the door marked non-billable —
+              // and time moved onto a pro bono matter exports as billable.
+              db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
+                .run(cm_id, target ? target.billable : row.billable, now(), id);
               touchCm(db, cm_id, now());
               // same association glue as PATCH: a matterless timer follows
               if (row.cm_id == null) {
                 db.prepare('UPDATE timers SET cm_id=?, suggested_narrative=NULL WHERE linked_entry_id=? AND cm_id IS NULL')
                   .run(cm_id, id);
               }
-              recordAudit(db, row, { cm_id }, now());
+              // The new client may bill in the other format — task-billed with
+              // per-line "(0.5)" allocations, or block-billed without them.
+              // Every other matter-changing write rebuilds the sentence; bulk
+              // was the outlier, leaving the old client's format on the new
+              // client's bill until some unrelated later save silently
+              // reformatted it. BEFORE the audit, so the rebuilt narrative is
+              // part of what the audit row records.
+              syncNarrative(db, id);
+              // Always audited, ever_finalized or not: a bulk move takes one
+              // matter and applies it to many entries, and without a stored
+              // "previous matter" per entry there is no route back. This is
+              // the ONE recoverability record for the commonest case — a draft
+              // keyed today and reassigned before close-out.
+              recordAudit(db, row, { cm_id }, now(), { always: true });
               rebuildMatterPeople(db, cm_id);
               if (cm_id !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
             })();
@@ -426,18 +487,28 @@ export function entriesRouter({ db, clock }) {
     if (cv.error) return res.status(400).json({ error: cv.error });
 
     const billable = b.billable !== undefined ? (b.billable ? 1 : 0) : cm.billable;
-    const totalOverride = b.total_override != null ? Number(b.total_override) : null;
+    const totalOverride = b.total_override != null ? billedHours(db, Number(b.total_override)) : null;
     const narrativeManual = b.narrative_manual ? 1 : 0;
     // AI provenance (spec 2026-08-01 §5): narrative_ai=1 marks text the model
     // wrote and the attorney accepted untouched, keeping it out of the
     // exemplar and few-shot pools. ai_brief is the shorthand behind it, so a
     // later correction yields a labelled (brief → corrected narrative) pair.
-    const narrativeAi = b.narrative_ai ? 1 : 0;
+    //
+    // A client that says nothing about provenance is not asserting authorship:
+    // quick capture posts { date, cm_id, narrative, tasks } and has no field to
+    // say the model wrote the sentence. So when this text is one the server
+    // itself just handed out as model output (see lib/quickcapture.js's
+    // ledger), it is stored as the model's. An explicit narrative_ai in the
+    // payload always wins.
+    const qc = b.narrative_ai === undefined || b.ai_brief === undefined || b.ai_draft === undefined
+      ? aiNarrativeProvenance(db, b.narrative)
+      : null;
+    const narrativeAi = b.narrative_ai !== undefined ? (b.narrative_ai ? 1 : 0) : (qc ? 1 : 0);
     const aiBrief = b.ai_brief != null && String(b.ai_brief).trim()
-      ? String(b.ai_brief).trim().slice(0, 500) : null;
+      ? String(b.ai_brief).trim().slice(0, 500) : (qc ? qc.brief : null);
     // What the model actually wrote, kept whatever David does to it next.
     const aiDraft = b.ai_draft != null && String(b.ai_draft).trim()
-      ? String(b.ai_draft).trim().slice(0, 2000) : null;
+      ? String(b.ai_draft).trim().slice(0, 2000) : (qc ? qc.draft : null);
     const info = db.transaction(() => {
       const i = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at)
@@ -445,7 +516,7 @@ export function entriesRouter({ db, clock }) {
         .run(b.date, cm.id, String(b.narrative || ''), billable, totalOverride,
           b.source === 'timer' ? 'timer' : 'manual', narrativeManual,
           narrativeAi, aiBrief, aiDraft, now(), now());
-      writeTasks(db, i.lastInsertRowid, norm.tasks);
+      writeTasks(db, i.lastInsertRowid, quantizeTasks(db, norm.tasks));
       applyCustomValues(db, i.lastInsertRowid, cv.ops);
       syncNarrative(db, i.lastInsertRowid);
       touchCm(db, cm.id, now());
@@ -535,13 +606,52 @@ export function entriesRouter({ db, clock }) {
         cmId,
         nextNarrative,
         b.billable !== undefined ? (b.billable ? 1 : 0) : row.billable,
-        b.total_override !== undefined ? (b.total_override == null ? null : Number(b.total_override)) : row.total_override,
+        // Quantised whether it arrives in this payload or is carried over:
+        // any write to the entry settles its billed figure on the increment,
+        // so a total banked before the rule (or by a path that has not adopted
+        // it yet) stops being a non-tenth the moment the entry is saved again.
+        b.total_override !== undefined
+          ? (b.total_override == null ? null : billedHours(db, Number(b.total_override)))
+          : (row.total_override == null ? null : billedHours(db, row.total_override)),
         b.ack_validation !== undefined ? (b.ack_validation ? 1 : 0) : row.ack_validation,
         b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
         narrativeAi, aiBrief, aiDraft,
         now(), row.id);
-      if (norm) writeTasks(db, row.id, norm.tasks);
+      if (norm) writeTasks(db, row.id, quantizeTasks(db, norm.tasks));
       applyCustomValues(db, row.id, cv.ops);
+      // ── the lines follow the total ────────────────────────────────────────
+      // An override says what this entry BILLS; the task lines say how those
+      // hours are made up, and the CSV's per-line `duration` column, the .TIM
+      // and the narrative's "(0.5)" brackets are all built from the lines. So a
+      // save that moves the override without moving the lines ships two
+      // different figures for the same entry in the same export — the one-tap
+      // path (timergrid.js entryTotalSet PATCHes total_override alone) put 2.0
+      // on screen and 1.5 in the CSV, and lines ABOVE the override over-billed
+      // the other way. Reconciled here, right after the total is written and
+      // BEFORE syncNarrative rebuilds the sentence, so the sentence is built
+      // from the lines the file will carry.
+      //
+      // No override means the total IS the sum of the lines — nothing to
+      // reconcile, and nothing is touched.
+      //
+      // WHICH WAY THE RECONCILE RUNS depends on what THIS request said, and
+      // getting it backwards destroys recorded time. If the request restated
+      // the task lines and said nothing about the override, the LINES are the
+      // attorney's statement of the hours and the override must follow them.
+      // Reconciling the other way silently shrank the lines back to a stale
+      // override: a PATCH sending 0.5 + 0.8 stored 0.5 + 0.5 and answered 200,
+      // so three tenths of an hour vanished with no error. The override only
+      // wins when this request supplied it — then he has said both, and the
+      // override is by definition what the entry bills.
+      const overrideNow = db.prepare('SELECT total_override FROM entries WHERE id=?').get(row.id).total_override;
+      const overrideThisRequest = b.total_override !== undefined;
+      if (overrideNow != null && norm && !overrideThisRequest) {
+        const lineSum = billedHours(db, db.prepare(
+          'SELECT COALESCE(SUM(duration), 0) s FROM entry_tasks WHERE entry_id=?').get(row.id).s);
+        db.prepare('UPDATE entries SET total_override=? WHERE id=?').run(lineSum, row.id);
+      } else if (overrideNow != null) {
+        reconcileEntryLines(db, row.id, overrideNow, getSetting(db, 'rounding') || {});
+      }
       // Measured against the task lines as they stand AFTER this write, so a
       // save that changes lines and narrative together is judged on what the
       // entry actually holds now. An entry with no join to regenerate (fewer
@@ -593,16 +703,31 @@ export function entriesRouter({ db, clock }) {
 
   r.post('/:id/copy', (req, res) => {
     const src = loadEntry(db, req.params.id);
-    if (!src) return res.status(404).json({ error: 'Entry not found.' });
+    // A DELETED entry is not a source. The attorney affirmatively removed that
+    // narrative; copying it puts the text back as a live billable draft that
+    // finalizes and reaches the export CSV. Every sibling route re-reads
+    // deleted_at and refuses (/finalize, and syncToEntry's validity check) —
+    // copy was the outlier. The realistic path is a stale row on a second
+    // surface: the ledger and Search views do not poll, so a row deleted on
+    // the phone keeps offering "Copy to today" on the desktop indefinitely.
+    if (!src || src.deleted_at) return res.status(404).json({ error: 'Entry not found.' });
     const date = (req.body || {}).date;
     if (!isValidDate(date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
     const info = db.transaction(() => {
+      // AI provenance travels with the text. The copy IS the model's sentence,
+      // byte for byte; storing it as the attorney's own would feed model output
+      // back to the model as an example of HIS voice (server/lib/exemplars.js
+      // and routes/ai.js both gate on narrative_ai = 0) — the exact loop the
+      // flag exists to break. ai_brief and ai_draft come too, so a later
+      // correction still yields a labelled (brief → corrected) pair.
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?, ?)`)
-        .run(date, src.cm_id, src.narrative, src.billable, src.total_override,
-          src.narrative_manual ? 1 : 0, now(), now());
-      writeTasks(db, i.lastInsertRowid, src.tasks);
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?, ?, ?, ?, ?)`)
+        .run(date, src.cm_id, src.narrative, src.billable,
+          src.total_override == null ? null : billedHours(db, src.total_override),
+          src.narrative_manual ? 1 : 0,
+          src.narrative_ai ? 1 : 0, src.ai_brief, src.ai_draft, now(), now());
+      writeTasks(db, i.lastInsertRowid, quantizeTasks(db, src.tasks));
       db.prepare(`INSERT INTO entry_custom_values (entry_id, field_id, value)
         SELECT ?, field_id, value FROM entry_custom_values WHERE entry_id=?`)
         .run(i.lastInsertRowid, src.id);
@@ -641,19 +766,25 @@ function settleRunningTimers(db, id, nowIso) {
     'SELECT id, running, accumulated_seconds, last_started_at FROM timers WHERE linked_entry_id=?').all(id);
   let grew = false;
   for (const t of timers) {
-    const liveHours = secondsToHours(elapsedSeconds(t, nowMs), rounding);
+    // Snapped to the billing increment before it is banked: close-out writes a
+    // figure that goes straight onto the bill, so it obeys the tenth rule like
+    // every other stored total.
+    const liveHours = quantizeBilled(secondsToHours(elapsedSeconds(t, nowMs), rounding), rounding);
     if (!(liveHours > effectiveTotal(db, id) + 1e-9)) continue;
     grew = true;
     // Same shape as syncToEntry (routes/timers.js): the override carries the
-    // hours, and a single task line mirrors them; user-added splits are left
-    // alone. Imported directly it would be a cycle — timers.js imports us.
+    // hours and the task lines are reconciled to it.
+    //
+    // This used to move a SINGLE line only ("user-added splits are left
+    // alone"), which stranded every split entry at close-out: finalizing a
+    // 0.5+0.5 entry while its timer read 1.5 h stored total_override 1.5 with
+    // lines still summing to 1.0, so the .TIM said am=5400 while the CSV
+    // duration column — the one the assistant keys from — said 1.0. Half an
+    // hour disappeared from a finalized, exportable entry. Same reconcile as
+    // the other two write paths now; server/lib/reconcile.js holds the rule.
     db.prepare('UPDATE entries SET total_override=?, updated_at=? WHERE id=?')
       .run(liveHours, nowIso, id);
-    const lines = db.prepare(
-      'SELECT id FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(id);
-    if (lines.length === 1) {
-      db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?').run(liveHours, lines[0].id);
-    }
+    reconcileEntryLines(db, id, liveHours, rounding);
     syncNarrative(db, id);
   }
   return grew;
@@ -776,8 +907,11 @@ export function finalizeDayRouter({ db, clock }) {
 }
 
 // Audit trail for entries that have ever been finalized: record what changed.
-function recordAudit(db, beforeRow, patch, nowIso) {
-  if (!beforeRow.ever_finalized) return;
+// `always` overrides that gate for a write whose recoverability does not
+// depend on the entry having been billed once — a bulk matter reassignment,
+// where the previous matter of a plain draft is otherwise unrecoverable.
+export function recordAudit(db, beforeRow, patch, nowIso, { always = false } = {}) {
+  if (!always && !beforeRow.ever_finalized) return;
   const after = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(beforeRow.id);
   const changes = {};
   for (const k of ['date', 'cm_id', 'narrative', 'billable', 'total_override']) {

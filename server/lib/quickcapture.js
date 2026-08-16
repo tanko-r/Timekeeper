@@ -1,5 +1,44 @@
 import { rankMatters } from './matterSearch.js';
 
+// ── AI provenance ledger for quick capture ────────────────────────────────
+// Quick capture parses on the SERVER (POST /api/quickcapture, whose LLM pass
+// may write the narrative outright) and then FILES from the browser (POST
+// /api/entries with { date, cm_id, narrative, tasks }). The filing payload
+// carries no provenance field, so the model's own sentence used to land with
+// narrative_ai = 0 — "typed by hand" — and became teaching material for the
+// next narrative the model wrote (server/routes/ai.js gates both prompt pools
+// on narrative_ai = 0). Quick capture offers no way to edit the sentence
+// before filing, so every narrative it files is model text accepted untouched.
+//
+// The server is the only party that knows this, so it remembers here and the
+// create route reads it back. Keyed on the DB HANDLE in a WeakMap, not in a
+// module-level Map: two test servers running concurrently in one process each
+// get their own ledger, nothing bleeds between them, and a ledger dies with
+// its database. Bounded per handle so a long-lived process cannot grow one
+// without limit; oldest entry evicted first.
+const AI_NARRATIVES = new WeakMap();
+const LEDGER_LIMIT = 50;
+
+export function rememberAiNarrative(db, narrative, brief) {
+  const text = String(narrative || '').trim();
+  if (!db || !text) return;
+  let ledger = AI_NARRATIVES.get(db);
+  if (!ledger) { ledger = new Map(); AI_NARRATIVES.set(db, ledger); }
+  const cleanBrief = String(brief || '').trim().slice(0, 500) || null;
+  ledger.delete(text); // re-insert so it counts as the most recent
+  ledger.set(text, { draft: text.slice(0, 2000), brief: cleanBrief });
+  while (ledger.size > LEDGER_LIMIT) ledger.delete(ledger.keys().next().value);
+}
+
+// The provenance of a narrative about to be stored, or null when the text was
+// not written by the model on this database.
+export function aiNarrativeProvenance(db, narrative) {
+  const text = String(narrative || '').trim();
+  if (!db || !text) return null;
+  const ledger = AI_NARRATIVES.get(db);
+  return (ledger && ledger.get(text)) || null;
+}
+
 // Bill-from-a-sentence parser (spec §6, magic #1): one raw line —
 // "call sam re loading dock lease .3" — into a proposed entry.
 // Pure and deterministic; the LLM fallback for messy lines lives in the

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
-import { parseQuickCapture } from '../lib/quickcapture.js';
+import { parseQuickCapture, rememberAiNarrative } from '../lib/quickcapture.js';
 import { containsTimeAmounts } from '../lib/timeAmounts.js';
 
 // Bill from a sentence (spec §6): deterministic parse first (pure lib);
@@ -43,6 +43,14 @@ export function quickCaptureRouter({ db }) {
         if (filled.narrative && !containsTimeAmounts(filled.narrative)
             && (!parsed.narrative || parsed.missing.includes('action'))) {
           parsed.narrative = String(filled.narrative).slice(0, 300);
+          // The MODEL wrote the client-facing sentence, and quick capture
+          // files it with no chance to edit it. Mark it as the model's so it
+          // never re-enters the pool the model learns "the attorney's voice"
+          // from. The flag rides the response for clients that can relay it,
+          // and the ledger carries it for the one that cannot.
+          parsed.narrative_ai = 1;
+          parsed.ai_brief = line.slice(0, 500);
+          rememberAiNarrative(db, parsed.narrative, line);
         }
         if (parsed.task_code) {
           // Case-insensitive validation, normalized to the canonical code.

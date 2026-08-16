@@ -14,6 +14,23 @@
 //   audit row. This is what makes test 1 an inconsistency and not a policy.
 // Test 3 (SCOPE, expected to PASS): a never-finalized entry is audited by
 //   neither route — so the gap is specific to ever_finalized entries.
+//
+// --- SCAFFOLD REPAIR, 2026-08-16 (Lane C) ----------------------------------
+// The owner decided on 2026-08-16 that re-pointing a timer whose linked entry
+// already holds FILED hours must ASK each time — leave the time on the old
+// matter, or move it too — because moving it carries the old matter's narrative
+// across a matter boundary. So PATCH /api/timers/:id now takes an explicit
+// `move_entry` flag and ABSENT MEANS DO NOT MOVE.
+//
+// That changes the STIMULUS these tests need, not what they prove. Test 1's
+// specification assertion is unchanged and still reads exactly as written by
+// the verifier: an ever-finalized entry that changes matter must leave an audit
+// row. It is now driven with `move_entry: true`, which is the request the
+// dialog makes when the owner says "move it too" — the only request that still
+// performs the move test 1 was written about.
+//
+// Tests 4–6 were ADDED to cover the new default and the double-file trap it
+// opens; none of them relaxes anything.
 // ---------------------------------------------------------------------------
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,8 +110,10 @@ test('PROVING: re-pointing a timer moves an ever-finalized entry with no audit r
       entryId, 'precondition: the timer is linked to that entry again');
     const auditBefore = auditRows(t, entryId);
 
-    // The whole user action: re-point the timer at another matter.
-    const patch = await t.fetchJson('PATCH', `/api/timers/${timerId}`, { cm_id: verity.id });
+    // The whole user action: re-point the timer at another matter, and answer
+    // "move the time too" to the question the owner asked for (2026-08-16).
+    const patch = await t.fetchJson('PATCH', `/api/timers/${timerId}`,
+      { cm_id: verity.id, move_entry: true });
     assert.equal(patch.status, 200);
 
     const after = entryRow(t, entryId);
@@ -154,4 +173,112 @@ test('SCOPE: a never-finalized entry is audited by neither route', () =>
     assert.equal(entryRow(t, entryId).ever_finalized, 0);
     assert.equal(auditRows(t, entryId).length, 0,
       'draft entries are deliberately not audited by either route');
+  }));
+
+// ---------------------------------------------------------------------------
+// 4. DEFAULT (added 2026-08-16, Lane C) — a request that says nothing about the
+//    linked entry must NOT move it. Moving it carries the old matter's billing
+//    sentence onto the new matter, which docs/ui/BRIEF.md forbids outright, so
+//    silence has to mean "leave it".
+// ---------------------------------------------------------------------------
+test('DEFAULT: with no move_entry flag an ever-finalized entry stays on its own matter', () =>
+  withServer(async (t, clock) => {
+    const acme = await mkCm(t, '100001-000012', 'Acme lease');
+    const verity = await mkCm(t, '200002-000001', 'Verity merger');
+    const NARR = 'Review and analyze Acme lease amendment; call with landlord counsel.';
+
+    const { timerId, entryId } = await unlockedEntryWithLiveTimer(t, clock, acme, NARR);
+
+    const patch = await t.fetchJson('PATCH', `/api/timers/${timerId}`, { cm_id: verity.id });
+    assert.equal(patch.status, 200);
+
+    const after = entryRow(t, entryId);
+    assert.equal(after.cm_id, acme.id,
+      'the filed hours stayed on the matter they were filed against');
+    assert.equal(after.narrative, NARR, 'and so did the sentence written for it');
+
+    // and no Verity entry carries a syllable of Acme's narrative
+    const onVerity = t.db.prepare(
+      'SELECT id, narrative FROM entries WHERE cm_id=? AND deleted_at IS NULL').all(verity.id);
+    for (const row of onVerity) {
+      assert.notEqual(String(row.narrative || '').trim(), NARR,
+        `entry ${row.id} carried the Acme sentence across the matter boundary`);
+    }
+  }));
+
+// ---------------------------------------------------------------------------
+// 5. THE DOUBLE-FILE TRAP (added 2026-08-16, Lane C) — the entry stays behind
+//    holding its hours, so those hours must LEAVE the day clock before the
+//    timer opens its next entry. Without the rebase the books show 2.0 h for
+//    1.0 h worked: rule 2 of docs/ui/BRIEF.md, in one PATCH.
+//
+//    Both branches of the flag are checked, paused AND running, because the
+//    rebase only runs on one of the four and a regression on any of them is
+//    invisible from the response.
+// ---------------------------------------------------------------------------
+const bookedHours = (t) => Math.round(t.db.prepare(`SELECT COALESCE(SUM(
+    CASE WHEN total_override IS NOT NULL THEN total_override
+    ELSE (SELECT COALESCE(SUM(duration), 0) FROM entry_tasks WHERE entry_id = entries.id) END
+  ), 0) h FROM entries WHERE deleted_at IS NULL`).get().h * 1e4) / 1e4;
+
+for (const running of [false, true]) {
+  for (const move of [false, true]) {
+    test(`BOOKS: re-pointing a ${running ? 'RUNNING' : 'paused'} timer with move_entry=${move} `
+      + 'files exactly the hours worked, not twice', () =>
+      withServer(async (t, clock) => {
+        const acme = await mkCm(t, '100001-000012', 'Acme lease');
+        const verity = await mkCm(t, '200002-000001', 'Verity merger');
+
+        // 1.0 h filed and finalized on Acme, then unlocked and the timer
+        // relinked — exactly the state the consent gate acts on.
+        const timer = (await t.fetchJson('POST', '/api/timers', {
+          name: 'Acme lease', cm_id: acme.id,
+        })).body;
+        await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+        clock.advance(3600);
+        const entryId = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body.entry.id;
+        await t.fetchJson('PATCH', `/api/entries/${entryId}`, { narrative: 'Review Acme lease amendment.' });
+        assert.equal((await t.fetchJson('POST', `/api/entries/${entryId}/finalize`, { ack: true })).status, 200);
+        await t.fetchJson('POST', `/api/entries/${entryId}/unlock`);
+        await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: entryId });
+        // six more minutes on the same matter — 1.1 h worked in total
+        clock.advance(360);
+        if (!running) await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+        const body = { cm_id: verity.id };
+        if (move) body.move_entry = true;
+        assert.equal((await t.fetchJson('PATCH', `/api/timers/${timer.id}`, body)).status, 200);
+        // settle whatever the clock still holds, so nothing is in flight
+        await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+        assert.equal(bookedHours(t), 1.1,
+          'the books hold exactly the 1.1 h worked — '
+          + `rows: ${JSON.stringify(t.db.prepare('SELECT id, cm_id, total_override FROM entries WHERE deleted_at IS NULL').all())}`);
+      }));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. QUICK TIMER (added 2026-08-16, Lane C) — a MATTERLESS timer being given
+//    its FIRST matter is not the consent case: nothing was ever written against
+//    another matter, so the entry follows the timer silently, with or without
+//    the flag, ever_finalized or not.
+// ---------------------------------------------------------------------------
+test('QUICK TIMER: a matterless entry still follows its timer silently, with no flag', () =>
+  withServer(async (t, clock) => {
+    const acme = await mkCm(t, '100001-000012', 'Acme lease');
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Quick timer' })).body;
+    assert.equal(timer.cm_id, null, 'precondition: no matter');
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const entryId = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body.entry.id;
+    assert.equal(entryRow(t, entryId).cm_id, null, 'precondition: matterless entry holds the hour');
+
+    assert.equal((await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: acme.id })).status, 200);
+
+    assert.equal(entryRow(t, entryId).cm_id, acme.id,
+      'the matterless entry was associated in place, not left behind');
+    assert.equal(
+      t.db.prepare('SELECT COUNT(*) c FROM entries WHERE deleted_at IS NULL').get().c, 1,
+      'and no second entry opened — the hour is filed once');
   }));

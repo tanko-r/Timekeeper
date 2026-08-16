@@ -5,12 +5,17 @@ import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
-import { loadEntry, syncNarrative, rebuildMatterPeople } from './entries.js';
+import { loadEntry, syncNarrative, rebuildMatterPeople, recordAudit } from './entries.js';
 import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { matterSuggestions } from './matters.js';
 import { refineSuggestedNarrative } from './ai.js';
 import { containsTimeAmounts } from '../lib/timeAmounts.js';
+// The one rule that keeps an entry's task lines equal to its billed total.
+// Lives in server/lib/ because all THREE write paths need it — the day clock
+// here, PATCH /api/entries/:id, and close-out's settleRunningTimers — and a
+// second copy is how the other two drifted (Stage 1e landed it on one only).
+import { reconcileLines } from '../lib/reconcile.js';
 
 // Round-2 timer model: the clock accumulates for the whole day across
 // start/stops. Each stop syncs the day total into ONE linked draft entry.
@@ -42,32 +47,6 @@ function storedTotal(db, entry) {
   if (entry.total_override != null) return Number(entry.total_override);
   return round4(db.prepare(
     'SELECT COALESCE(SUM(duration), 0) s FROM entry_tasks WHERE entry_id=?').get(entry.id).s);
-}
-
-// Keep an entry's task lines adding up to `total` after the day clock has
-// rewritten entries.total_override.
-//
-// This used to run only when there was exactly ONE line ("user-added splits are
-// left alone"). That stranded every SPLIT entry: the total rose with the clock
-// while the lines stayed where the attorney left them, so the client-facing
-// narrative syncNarrative() rebuilds from those lines — "…(0.5); …(0.5)." on a
-// 1.5h entry — billed less than the entry exported, and the CSV's per-line
-// `duration` column disagreed with its own entry-total column and the .TIM.
-//
-// The reconcile is a DELTA, not a re-split: only the change since the last sync
-// is placed, onto the LAST line and cascading backwards if that line cannot
-// absorb it all. Every allocation the attorney typed above it is left exactly
-// as he set it, and a single line still just mirrors the total.
-function reconcileLines(db, lines, total) {
-  if (lines.length === 0) return;
-  const upd = db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?');
-  let remaining = round4(total - lines.reduce((a, l) => a + (Number(l.duration) || 0), 0));
-  for (let i = lines.length - 1; i >= 0 && remaining !== 0; i--) {
-    const cur = Number(lines[i].duration) || 0;
-    const next = Math.max(0, round4(cur + remaining));
-    remaining = round4(remaining - (next - cur));
-    if (next !== cur) upd.run(next, lines[i].id);
-  }
 }
 
 // File `hours` into the timer's linked entry for `dateStr`, creating and
@@ -123,7 +102,7 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
         .run(hours, nowIso, entry.id);
       const lines = db.prepare(
         'SELECT id, duration FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entry.id);
-      reconcileLines(db, lines, hours);
+      reconcileLines(db, lines, hours, roundingCfg(db));
       syncNarrative(db, entry.id);
       entryId = entry.id;
     } else {
@@ -389,10 +368,45 @@ export function timersRouter({ db, clock }) {
     // deleted or already-finalized entry stays behind (its time is settled);
     // there the timer unlinks and opens a fresh entry.
     const linked = timer.linked_entry_id
-      ? db.prepare('SELECT id, cm_id, status, deleted_at FROM entries WHERE id=?').get(timer.linked_entry_id)
+      ? db.prepare('SELECT id, cm_id, status, deleted_at, ever_finalized FROM entries WHERE id=?')
+        .get(timer.linked_entry_id)
       : null;
-    const associate = cmChanged && b.cm_id != null
-      && linked && !linked.deleted_at && linked.status === 'draft';
+    const liveLink = !!(linked && !linked.deleted_at && linked.status === 'draft');
+
+    // ── the entry with FILED hours needs consent to move (owner, 2026-08-16)
+    // Moving the linked entry carries its NARRATIVE across a matter boundary,
+    // which docs/ui/BRIEF.md forbids outright. For a draft that the timer just
+    // opened that is harmless — the sentence is the timer's own and no bill has
+    // seen it. For an entry that has ALREADY BEEN FINALIZED once, the sentence
+    // is a billing record written against the old matter, so the owner decided
+    // the app must ASK every time: leave the time where it is, or move it too.
+    //
+    // The API is therefore EXPLICIT, and ABSENT MEANS DO NOT MOVE — the safe
+    // half of the choice is the one a caller that says nothing gets.
+    //
+    // The gate keys on ever_finalized, NEVER on status: an entry is unlocked
+    // back to draft to be corrected, and ~15 PATCH cm_id call sites across the
+    // app and the suite legitimately move a plain draft.
+    //
+    // A MATTERLESS quick timer being given its FIRST matter is not this case at
+    // all — nothing was ever written against another matter — so it keeps
+    // following the timer silently, ever_finalized or not.
+    const needsConsent = liveLink && !!linked.ever_finalized && timer.cm_id != null;
+    const moveEntry = b.move_entry === true;
+    const associate = cmChanged && b.cm_id != null && liveLink
+      && (!needsConsent || moveEntry);
+
+    // *** THE DOUBLE-FILE TRAP ***
+    // When the entry stays behind, the hours already on it are SETTLED — they
+    // are on a real matter's books. The day clock, however, still holds them.
+    // Nulling the link here and then syncing the FULL clock into a brand-new
+    // entry files 2.0 h for 1.0 h worked (the Acme duplicate, 2026-07-10). So
+    // the stale link is deliberately KEPT across the update: syncToEntry() then
+    // sees an entry whose cm_id no longer matches the timer's, deducts exactly
+    // what that entry kept, and rebases the accumulator to the remainder — the
+    // Stage 1e mechanism, unchanged. The settle below is unconditional in this
+    // case so the stale link is always resolved before the response.
+    const leaveEntryBehind = cmChanged && b.cm_id != null && liveLink && !associate;
 
     // A timer carries THREE pieces of armed narrative state — draft_narrative
     // (the float window's stash), narrative_template (the Edit-timer dialog's
@@ -425,7 +439,9 @@ export function timersRouter({ db, clock }) {
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
       b.task_code !== undefined ? (b.task_code ? String(b.task_code) : null) : timer.task_code,
       b.group_id !== undefined ? b.group_id : timer.group_id,
-      cmChanged && !associate ? null : timer.linked_entry_id, // new CM → old entry no longer its home
+      // new CM → the old entry is no longer this timer's home, EXCEPT while the
+      // deduct still needs it (see THE DOUBLE-FILE TRAP above)
+      cmChanged && !associate && !leaveEntryBehind ? null : timer.linked_entry_id,
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
       b.pinned !== undefined ? (b.pinned ? 1 : 0) : timer.pinned,
       // user text — survives everything EXCEPT a move off a real matter,
@@ -439,11 +455,22 @@ export function timersRouter({ db, clock }) {
     if (associate) {
       db.transaction(() => {
         const cmRow = db.prepare('SELECT id, billable FROM matters WHERE id=?').get(fresh.cm_id);
+        // The row as it stood BEFORE the move, so the audit can name where the
+        // entry came from. Only the columns recordAudit() compares.
+        const beforeEntry = db.prepare(`SELECT id, date, cm_id, narrative, billable,
+          total_override, ever_finalized FROM entries WHERE id=?`).get(linked.id);
         // the entry's billable was a matterless placeholder, or the OLD
         // matter's flag — either way the new matter's flag takes over
         db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
           .run(fresh.cm_id, cmRow ? cmRow.billable : 1, now(), linked.id);
         db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(now(), fresh.cm_id);
+        // The timer surface moves an entry exactly as PATCH /api/entries/:id
+        // does, so it owes the same record. Without it an entry that had
+        // already been billed once could change matter — and carry its old
+        // matter's narrative — with nothing anywhere naming the matter it came
+        // from. recordAudit's own gate keeps plain drafts unaudited, which is
+        // the documented behaviour of both routes.
+        recordAudit(db, beforeEntry, {}, now());
         rebuildMatterPeople(db, fresh.cm_id);
         // the entry left the old matter — its people roll-up must lose it too
         if (linked.cm_id) rebuildMatterPeople(db, linked.cm_id);
@@ -455,7 +482,9 @@ export function timersRouter({ db, clock }) {
       // timer links its entry immediately (feedback 2026-07-10) — the total
       // settles at stop; a PAUSED one files its settled clock right now.
       const hours = secondsToHours(elapsedSeconds(fresh, clock().getTime()), roundingCfg(db));
-      if (fresh.running || (hours >= minIncrement(db) - 1e-9 && hours > 0)) {
+      // `leaveEntryBehind` forces the call even for a sub-increment clock: it
+      // is what deducts the settled hours and clears the stale link.
+      if (fresh.running || leaveEntryBehind || (hours >= minIncrement(db) - 1e-9 && hours > 0)) {
         const synced = syncToEntry(db, fresh, hours, todayLocal(clock()), now());
         entry = loadEntry(db, synced.entryId);
       }
