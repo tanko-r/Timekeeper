@@ -12,11 +12,11 @@ Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 4
 
 | | |
 |---|---|
-| Suites | **902 tests, 836 pass, 66 fail** — the failures are deliberate leak proofs, not regressions. The 633 pre-audit tests all pass. |
-| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1d closed |
+| Suites | **913 tests, 862 pass, 51 fail** — the failures are deliberate leak proofs, not regressions. The 633 pre-audit tests all pass. |
+| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1e landed |
 | Working tree | Clean and pushed. |
 | Preview | Infrastructure ready, **not started** — blocked on Stage 1 |
-| Next action | `PLAN.md` Stage 1e (time loss), then 1f, 1g, then the Stage 1 exit test |
+| Next action | Stage 1f (export) and 1g (records), then the last two 1e items, then the Stage 1 exit test |
 
 ### Correction to the test counts (session 4)
 
@@ -79,14 +79,6 @@ diffing that commit and by running both suites. The commit message is
 misleading but the code is correct; the history is already pushed and is not
 being rewritten to fix a message.
 
-A per-file map of the 91 deliberate failures is the real work list. Regenerate
-it any time with:
-
-```bash
-npm test > /tmp/tk.txt 2>&1
-grep -oE "^test at (test/[^:]+):" /tmp/tk.txt | sed 's/test at //; s/:$//' | sort | uniq -c | sort -rn
-```
-
 ---
 
 ## Stage tracker
@@ -101,7 +93,7 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 | 1b Scope `matterSuggestions` | done | `e36d705` — the sibling-narrative UNION arm is gone; `source` labels are honest |
 | 1c Scope both AI pools | mostly done | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. Residue: `verify.matterctx.thinsibling:404` |
 | 1d Pin timer write-backs to their matter | **done** | `209b39c` `32e1995` `528affa` `a01252c` `69227c7` `ecb49a3` `7c30644` `4393482`. Closed: stop-chip provenance, thin-sibling AI, stale state, suggestions, auto-narrative discard, the stash/template fence and the ghost-text pool fence. The last four proofs were red on scaffolding, not on a leak — see above. `verify.timer-repoint-audit` and `verify.entry-repoint-doublefile` were never 1d's; they belong to 1e/1g. |
-| 1e Time-loss family | todo | 6 confirmed defects · 22 red tests: `integrity.closeout` (7 of 8), `verify.entry-repoint-doublefile` (4), `verify.splitentry.secondstop` (2), `verify.taskduration-zeroing`, `verify.timer-txn-crash`, `integrity.entries` L3/L4 |
+| 1e Time-loss family | **mostly done** | `5efcd0d` `535b660` `2524ed2` `a5559c6` `3259565`. Closed 15 of 17: `verify.entry-repoint-doublefile` (4), `verify.splitentry.secondstop` (2), `verify.taskduration-zeroing`, `verify.timer-txn-crash`, `integrity.entries` L3/L4, and 5 of `integrity.closeout`. **Two left, both in `integrity.closeout`:** the mid-day re-point test needs the owner's "ask me each time" decision built (above); the start-for-entry proof is red on a REAL defect — the hijack strands a timed, narrative-less draft that now blocks close-out. Two defects found that nobody was looking for and had no test: close-out never ran the midnight rollover (an overnight timer lost ten hours), and the first version of the re-file deduct dropped an hour whenever a draft was deleted. Both now have proofs. |
 | 1f Export correctness | todo | 8 confirmed defects · 27 red tests: `integrity.export` (10), `verify.tim-draft-reexport` (3), `verify.export.rounding` (3), `verify.csv-duration-vs-entrytotal` (3), `verify.export-stamp-nofile` (2), `verify.export-stamp-before-response` (2), `verify.export-blank-narrative` (2), `verify.export-scope-widening`, `verify.csv-entrytotal-repeat` |
 | 1g Records and recovery | todo | 5 confirmed defects · 17 red tests: `verify.bulk-setcm-recoverability` (4), `verify.bulksetcm.billingformat` (4), `verify.copy.softdeleted` (3), `verify.copy.aiprovenance` (2), `integrity.entries` L5/L6/L7/L8, `verify.timer-repoint-audit`, `verify.quickcapture.aiprovenance`, `integrity.ai`, `fence.suggestionmatter`, `integrity.closeout` close-out pre-fill |
 | Stage 1 exit: 9-attack verification | todo | must find nothing |
@@ -157,6 +149,35 @@ All on a 390×844 phone unless noted, measured on the rendered app.
 | Desktop fixed chrome | 49px | 97px | under 60px |
 
 ---
+
+## Owner decision 2026-08-16 — re-pointing a timer that already filed hours
+
+Asked because the integrity corpus contradicted itself: `integrity.closeout`'s
+re-point test asserts the entry must NOT follow the timer to the new matter,
+while `integrity.entries` LOSS L7 asserts it must ("documented behaviour").
+One of them had to be wrong.
+
+**The owner chose: ask him each time.** When a timer whose linked draft entry
+already holds filed hours is re-pointed to a different matter, the app puts the
+choice to him — leave that time on the old matter, or move it too.
+
+What that means for the implementation:
+
+- The API must be **explicit**. `PATCH /api/timers/:id` takes a flag saying
+  whether the linked entry moves. **Absent means DO NOT MOVE** — the safe
+  default, because moving it carries the old matter's narrative across a matter
+  boundary, which rule 1 below forbids absolutely. Never infer the answer.
+- The prompt appears only when there is something to lose: a linked, live,
+  draft entry that already holds hours or a narrative. A matterless quick timer
+  being given its first matter is NOT this case — that text was never written
+  against another matter, so it follows the timer silently, as today.
+- `integrity.entries` LOSS L7 is about the AUDIT RECORD, not about the move. It
+  must pass the explicit "move it too" flag and keep asserting that the move is
+  audited and recoverable. That is a scaffold repair, not a weakening.
+
+Not yet built — it is the last open piece of 1e and it touches
+`server/routes/timers.js`, the timer edit dialog, and the shared overlay
+primitive.
 
 ## Standing owner rules — never re-litigate these
 
