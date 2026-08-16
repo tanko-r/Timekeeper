@@ -34,6 +34,42 @@ function minIncrement(db) {
   return (getSetting(db, 'validation') || {}).minIncrement || 0.1;
 }
 
+const round4 = (n) => Math.round(n * 10000) / 10000;
+
+// The entry's hours as the app computes them: an explicit override, else the
+// sum of its task lines (same rule as enrich() in routes/entries.js).
+function storedTotal(db, entry) {
+  if (entry.total_override != null) return Number(entry.total_override);
+  return round4(db.prepare(
+    'SELECT COALESCE(SUM(duration), 0) s FROM entry_tasks WHERE entry_id=?').get(entry.id).s);
+}
+
+// Keep an entry's task lines adding up to `total` after the day clock has
+// rewritten entries.total_override.
+//
+// This used to run only when there was exactly ONE line ("user-added splits are
+// left alone"). That stranded every SPLIT entry: the total rose with the clock
+// while the lines stayed where the attorney left them, so the client-facing
+// narrative syncNarrative() rebuilds from those lines — "…(0.5); …(0.5)." on a
+// 1.5h entry — billed less than the entry exported, and the CSV's per-line
+// `duration` column disagreed with its own entry-total column and the .TIM.
+//
+// The reconcile is a DELTA, not a re-split: only the change since the last sync
+// is placed, onto the LAST line and cascading backwards if that line cannot
+// absorb it all. Every allocation the attorney typed above it is left exactly
+// as he set it, and a single line still just mirrors the total.
+function reconcileLines(db, lines, total) {
+  if (lines.length === 0) return;
+  const upd = db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?');
+  let remaining = round4(total - lines.reduce((a, l) => a + (Number(l.duration) || 0), 0));
+  for (let i = lines.length - 1; i >= 0 && remaining !== 0; i--) {
+    const cur = Number(lines[i].duration) || 0;
+    const next = Math.max(0, round4(cur + remaining));
+    remaining = round4(remaining - (next - cur));
+    if (next !== cur) upd.run(next, lines[i].id);
+  }
+}
+
 // File `hours` into the timer's linked entry for `dateStr`, creating and
 // (re)linking as needed. Works for MATTERLESS timers too (2026-07-13): the
 // entry is created with cm_id NULL and carries the time — it just can't
@@ -51,9 +87,33 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       && entry.date === dateStr && entry.cm_id === timer.cm_id;
     if (!valid) {
       relinked = !!entry;
-      previousTotal = entry ? entry.total_override : null;
+      // Only an entry that SURVIVES the break is a settled home for the hours
+      // it was given — one that moved to another matter or date, or was
+      // finalized. A SOFT-DELETED entry keeps nothing: it is off every bill,
+      // every export and every total, so deducting its hours from the clock
+      // would drop them out of the day entirely. They stay on the clock and
+      // reach the next entry, which is what this code did before the deduct
+      // was added and what the "nothing dropped" rule requires.
+      previousTotal = entry && !entry.deleted_at ? storedTotal(db, entry) : null;
       entry = null;
     }
+  }
+
+  // The link just broke: the entry moved to another matter or date, was
+  // deleted, or was finalized. It KEEPS the hours already filed onto it, so
+  // those hours are settled and must LEAVE the day clock before the remainder
+  // opens a new entry — otherwise the same time is billed on both rows (the
+  // Acme duplicate, 2026-07-10). finalizeOne() in routes/entries.js resolves
+  // the identical situation the same way; it can simply zero the clock because
+  // the whole of it went to the entry it locked. Here only part of the day did,
+  // so deduct exactly that part and rebase the accumulator to the remainder —
+  // a running timer keeps running and counts up from now.
+  let rebaseSeconds = null;
+  if (relinked && previousTotal > 0) {
+    const settled = Math.min(previousTotal, hours);
+    hours = round4(hours - settled);
+    rebaseSeconds = Math.max(
+      0, elapsedSeconds(timer, Date.parse(nowIso)) - Math.round(settled * 3600));
   }
 
   let entryId;
@@ -62,11 +122,8 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       db.prepare('UPDATE entries SET total_override=?, updated_at=? WHERE id=?')
         .run(hours, nowIso, entry.id);
       const lines = db.prepare(
-        'SELECT id FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entry.id);
-      if (lines.length === 1) {
-        // single line mirrors the total; user-added splits are left alone
-        db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?').run(hours, lines[0].id);
-      }
+        'SELECT id, duration FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entry.id);
+      reconcileLines(db, lines, hours);
       syncNarrative(db, entry.id);
       entryId = entry.id;
     } else {
@@ -89,6 +146,11 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
       // stash consumed: text typed before this entry existed now lives on it
       db.prepare('UPDATE timers SET linked_entry_id=?, draft_narrative=NULL WHERE id=?')
         .run(entryId, timer.id);
+      // …and the hours the departed entry kept leave the clock with it
+      if (rebaseSeconds != null) {
+        db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?')
+          .run(rebaseSeconds, timer.running ? nowIso : null, timer.id);
+      }
     }
     if (timer.cm_id) {
       db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
@@ -96,19 +158,34 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
     }
   })();
 
-  return { entryId, relinked, previousTotal };
+  // `filedHours` is what actually landed on the entry — the caller's `hours`
+  // MINUS anything the departed entry had already settled. The stop response
+  // reports this rather than the pre-deduction figure, so the stop chip never
+  // tells the attorney "1.5h filed" when 0.5h was filed.
+  return { entryId, relinked, previousTotal, filedHours: hours };
 }
 
 // A start-created entry that never got real content (no time, no narrative,
 // no user-touched task lines) is noise — remove it where the user's action
 // means "that start didn't count": misclick grace and "fresh". NEVER called
 // from the midnight reset — entries always survive the day boundary.
-function deleteIfUntouched(db, entryId, nowIso) {
+function deleteIfUntouched(db, timer, nowIso) {
+  const entryId = timer && timer.linked_entry_id;
   if (!entryId) return false;
-  const e = db.prepare(`SELECT id FROM entries WHERE id=? AND deleted_at IS NULL
-    AND status='draft' AND ever_finalized=0 AND narrative=''
+  const e = db.prepare(`SELECT id, narrative FROM entries WHERE id=? AND deleted_at IS NULL
+    AND status='draft' AND ever_finalized=0
     AND COALESCE(total_override, 0) = 0`).get(entryId);
   if (!e) return false;
+  // "Untouched" means the ATTORNEY put nothing into it. Text the START seeded
+  // from the timer's own template or stash still counts as untouched — it came
+  // from the timer, not from him, and syncToEntry writes exactly this string.
+  // Requiring narrative='' instead meant every timer carrying a template left a
+  // 0.0h stray behind on a misclick: silent at the time, and a hard block at
+  // close-out once a zero-hour entry stopped being finalizable.
+  const seeded = [timer.narrative_template, timer.draft_narrative]
+    .filter(Boolean).join(' ').trim();
+  const narrative = String(e.narrative || '').trim();
+  if (narrative && narrative !== seeded) return false;
   const touched = db.prepare(`SELECT COUNT(*) c FROM entry_tasks
     WHERE entry_id=? AND (COALESCE(duration, 0) != 0 OR COALESCE(fragment, '') != '')`).get(entryId).c;
   if (touched > 0) return false;
@@ -429,7 +506,7 @@ export function timersRouter({ db, clock }) {
     if (timer.running && timer.last_started_at
       && clock().getTime() - Date.parse(timer.last_started_at) <= 2000) {
       // "nothing happened" includes the entry the misclicked start created
-      const removedEmpty = deleteIfUntouched(db, timer.linked_entry_id, now());
+      const removedEmpty = deleteIfUntouched(db, timer, now());
       db.prepare(`UPDATE timers SET running=0, last_started_at=NULL${removedEmpty ? ', linked_entry_id=NULL' : ''} WHERE id=?`)
         .run(timer.id);
       return {
@@ -452,7 +529,8 @@ export function timersRouter({ db, clock }) {
     const synced = syncToEntry(db, getTimer.get(timer.id), hours, todayLocal(clock()), now());
     return {
       entry: loadEntry(db, synced.entryId),
-      hours,
+      // what reached the entry, not what came off the clock — see syncToEntry
+      hours: synced.filedHours ?? hours,
       seconds,
       relinked: synced.relinked || undefined,
       previousTotal: synced.previousTotal ?? undefined,
@@ -609,7 +687,7 @@ export function timersRouter({ db, clock }) {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
     // an untouched empty entry isn't "kept" — it never had anything to keep
-    deleteIfUntouched(db, timer.linked_entry_id, now());
+    deleteIfUntouched(db, timer, now());
     db.prepare(
       'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
     ).run(timer.running ? now() : null, timer.id);

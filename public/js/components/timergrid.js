@@ -288,15 +288,12 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     }
     // start creates the entry now — refresh Today's entries right away
     if (r.entry) onEntryChanged();
-    // the old linked entry was finalized/deleted meanwhile; the new entry
-    // carries the whole day clock — offer the double-count deduction here
+    // The old linked entry was finalized, deleted, or moved off this timer's
+    // matter/date, so a new one opened. The SERVER now deducts the hours that
+    // entry kept from the day clock (syncToEntry, routes/timers.js) — offering
+    // a "Deduct" action here would take them off a second time.
     if (r.relinked) {
-      emitToast('Previous entry is locked — started a new one carrying the full day clock.',
-        r.previousTotal ? {
-          actionLabel: `Deduct ${fmtHours(r.previousTotal)}h`,
-          action: () => guard(api.put(`/api/timers/${timer.id}/clock`, { deltaHours: -r.previousTotal })
-            .then(() => { onEntryChanged(); return reload(); })),
-        } : undefined);
+      emitToast('Previous entry is settled — started a new one; its hours have left the clock.');
     }
     await reload();
     // Deliberately imperative one-shot DOM class: a single confirmation pulse
@@ -1297,7 +1294,6 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
     ${stopPopup ? html`
       <${StopChips} popup=${stopPopup} openEditor=${openEditor}
-        onClockDeduct=${(h) => guard(clockDelta(stopPopup.timer, -h))}
         onFiled=${() => { setStopPopup(null); onEntryChanged(); reload(); }}
         onClose=${(changed) => { setStopPopup(null); if (changed) onEntryChanged(); reload(); }} />` : null}
   `;

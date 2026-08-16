@@ -232,7 +232,7 @@ export function StopChips(props) {
   return html`<${StopOffer} key=${`${entryId}#${stamp.current.n}`} ...${props} />`;
 }
 
-function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
+function StopOffer({ popup, openEditor, onFiled, onClose }) {
   const { result } = popup;
   const entry = result.entry;
   const timer = result.timer || popup.timer; // stop payload carries the fresh row
@@ -672,15 +672,15 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
         <span class="muted" style=${TRUNCATE}>— ${cmLabel || 'no matter yet'}</span>
       </div>
 
+      ${/* The entry this timer was filling is settled (finalized, deleted, or
+            moved off the timer's matter or date), so the rest of the day went
+            to a NEW entry. The server has already taken the settled hours off
+            the clock — syncToEntry() in routes/timers.js — so this is a notice,
+            not a question: a "Deduct" button here would remove them twice. */''}
       ${result.relinked ? html`
         <div class="stop-chips-warn">
-          The entry this timer was filling got finalized, so the full day clock
-          (${hoursFiled}h) went to a <strong>new</strong> entry.
-          ${result.previousTotal ? html`
-            <button type="button" class="btn btn-sm"
-              onClick=${() => { onClockDeduct(result.previousTotal); finish(true); }}>
-              Deduct ${fmtHours(result.previousTotal)}h from the clock
-            </button>` : null}
+          The entry this timer was filling is settled, so the ${hoursFiled}h left
+          on the clock went to a <strong>new</strong> entry.
         </div>` : null}
 
       ${offerChips && chips === null ? html`

@@ -83,8 +83,15 @@ test('re-sync preserves narrative and extra task lines the user added', () =>
     assert.equal(stop2.entry.tasks.length, 2, 'user task lines untouched');
     assert.equal(stop2.entry.tasks[0].duration, 0.6, 'multi-line durations untouched');
     assert.match(stop2.entry.narrative, /preemption/);
-    // unallocated remainder surfaces as the sum-mismatch warning
-    assert.ok(stop2.entry.validation.some((v) => v.code === 'sum_mismatch'));
+    // The extra half hour lands on the LAST line (0.4 → 0.9), so the lines
+    // still add up to the entry's total and there is no unallocated remainder
+    // to warn about. Before syncToEntry reconciled split lines this asserted a
+    // sum_mismatch warning — i.e. it asserted the entry billing 1.5h while its
+    // narrative accounted for 1.0h, which is the defect, not the rule.
+    assert.equal(stop2.entry.tasks[1].duration, 0.9, 'the delta lands on the last line');
+    assert.deepEqual(
+      stop2.entry.validation.filter((v) => v.code === 'sum_mismatch'), [],
+      'the lines add up to the total, so nothing is mismatched');
   }));
 
 // 2026-07-17 / 2026-07-21 feedback: assigning a matter to a still-default

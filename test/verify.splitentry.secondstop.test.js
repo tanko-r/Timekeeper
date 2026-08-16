@@ -136,14 +136,16 @@ test('PROVES: the exported CSV and .TIM disagree about the same entry’s hours'
   withServer(async (t, clock) => {
     const { entryId } = await splitThenStopAgain(t, clock);
 
-    // The mismatch is an ack-able WARNING, not a block — one click past it and
-    // the day finalizes and exports.
-    const blocked = await t.fetchJson('POST', `/api/entries/${entryId}/finalize`, {});
-    assert.equal(blocked.status, 422);
-    assert.deepEqual(blocked.body.warns.map((w) => w.code), ['sum_mismatch'],
-      'the only thing standing between this entry and the file is one ack-able warning');
-    const ok = await t.fetchJson('POST', `/api/entries/${entryId}/finalize`, { ack: true });
-    assert.equal(ok.status, 200);
+    // Scaffolding, repaired 2026-08-16. Against the broken build the lines no
+    // longer summed to the total, so finalize came back 422 with a single
+    // ack-able `sum_mismatch` warning and this step had to acknowledge it to
+    // reach the export below. Now that syncToEntry reconciles the lines, there
+    // is nothing to warn about and the first finalize simply succeeds — so the
+    // step asserts THAT instead, and the CSV/.TIM assertions below (the real
+    // subject of this test) are unchanged and still reached.
+    const fin = await t.fetchJson('POST', `/api/entries/${entryId}/finalize`, {});
+    assert.equal(fin.status, 200,
+      `nothing should stand between a reconciled entry and the file: ${JSON.stringify(fin.body)}`);
 
     const exp = (await t.fetchJson('POST', '/api/export', { from: TODAY, to: TODAY })).body;
     const rows = parseCsv(exp.csv);

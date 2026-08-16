@@ -174,7 +174,12 @@ test('LOSS L3: reassigning an entry’s matter must not let the day clock be fil
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(1800);
     const second = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(second.hours, 1.5, 'the clock is a day accumulator');
+    // The clock is a day accumulator for time that is still UNFILED. The hour
+    // that left on the reassigned entry is settled there, so it must no longer
+    // be on the clock — reporting 1.5h here would BE the double-count this
+    // test forbids. 1.0h on Verity's entry + 0.5h still running = 1.5h worked.
+    assert.equal(second.hours, 0.5,
+      'the clock keeps only the day’s unfiled remainder');
 
     const day = (await t.fetchJson('GET', `/api/entries?date=${TODAY}`)).body;
     const billed = day.reduce((a, e) => a + Number(e.total || 0), 0);

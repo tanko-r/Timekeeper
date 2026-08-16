@@ -10,8 +10,20 @@
 //
 // EVERY TEST HERE IS A *PROVING* TEST: each asserts the rule the brief states
 // ("No time and no narrative may ever be lost… No entry dropped, skipped, or
-// double-counted") and each FAILS against ui-overhaul-2026-08 as it stands.
+// double-counted") and each FAILED against ui-overhaul-2026-08 as it stood.
 // DO NOT weaken an assertion to make the suite green — fix the server.
+//
+// THE RULE THESE TESTS PIN (and what the fix in syncToEntry() had to be).
+// The clock is a day accumulator, but only for time that is still UNFILED.
+// The moment part of the day is filed onto an entry and that entry then leaves
+// the timer's matter or date, those hours are settled where they landed: the
+// entry keeps them. The clock therefore cannot ALSO still be carrying them —
+// asserting that a later stop reports the whole day again would be demanding
+// the very double-count these tests forbid. So syncToEntry() now deducts the
+// departed entry's hours from the clock and rebases the accumulator to the
+// remainder, exactly as finalizeOne() (routes/entries.js) already did for the
+// case where the WHOLE clock was settled. V1 and V2 read a second stop of 0.5h
+// for that reason: 1.0h is on the entry that left, 0.5h is the rest of the day.
 //
 //   V1  PATCH /api/entries/:id {cm_id}  → next START files the whole day
 //       clock into a brand-new entry while the moved entry keeps its hours.
@@ -98,7 +110,9 @@ test('V1: moving an entry to another matter must not let the day clock file twic
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(1800);
     const second = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(second.hours, 1.5, 'the clock is a day accumulator');
+    assert.equal(second.hours, 0.5,
+      'the hour that left with the moved entry is settled there, so the clock '
+      + 'carries only the unfiled remainder of the day');
 
     const rows = liveEntries(t.db);
     const billed = rows.reduce((a, e) => a + Number(e.total), 0);
@@ -134,7 +148,9 @@ test('V2: moving an entry to another date must not let the day clock file twice'
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     clock.advance(1800);
     const second = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
-    assert.equal(second.hours, 1.5);
+    // the hour that left with the moved entry is settled on yesterday, so
+    // today's clock carries only the unfiled remainder
+    assert.equal(second.hours, 0.5);
 
     const rows = liveEntries(t.db);
     const billed = rows.reduce((a, e) => a + Number(e.total), 0);
