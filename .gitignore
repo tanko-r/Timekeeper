@@ -13,3 +13,6 @@ scripts/ai-audit/
 # UI overhaul: screenshot matrices and the generated progress page
 shots/
 progress/
+
+# Headless orchestrator session logs
+logs/
