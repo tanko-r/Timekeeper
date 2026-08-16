@@ -145,6 +145,37 @@ function useOwnMatterPhrases(cmId) {
 //
 // spec: {id} | {template:{date?,cm?}} | {copyFrom:id}
 // ============================================================================
+
+// WHICH RECORD THIS DIALOG IS. Mount it with `key=${editorKey(spec)}` — and
+// nothing may mount it without one.
+//
+// The dialog reads its record ONCE, in an effect that deliberately has no
+// dependencies (creating an entry from a template, or copying one, must happen
+// exactly once no matter how many times the component re-renders). That is
+// only safe while one mounted instance means one record. Re-pointing a MOUNTED
+// instance at a different record used to re-render it instead of remounting
+// it: the load never ran again, so `entry`, `local` (matter, narrative, hours,
+// task lines, custom values), `aiUndo` and `entryRef` all stayed on the first
+// record while the dialog claimed to be showing the second — and the autosave
+// PATCHed the first record's id. Measured: the dialog opened for a Northgate
+// Partners entry (the float's "Open entry" button, which dispatches
+// `tk:open-entry` at whatever is already on screen) showed Acme Holdings'
+// billing sentence, and every keystroke wrote it onto ACME's entry. That is
+// docs/ui/BRIEF.md "Data integrity" — one client's words on another client's
+// bill — reachable with one tap.
+//
+// Keying by the RECORD, not by a counter, is deliberate in both directions: a
+// different record remounts (fresh load, no stale field survives the swap),
+// and the SAME record does not (re-opening the entry you are already editing
+// must not throw away what you have typed into it).
+export function editorKey(spec) {
+  if (!spec) return null;
+  if (spec.id != null) return `id:${spec.id}`;
+  if (spec.copyFrom != null) return `copy:${spec.copyFrom}`;
+  const t = spec.template || {};
+  return `new:${t.date || ''}:${t.cm ? t.cm.id : ''}`;
+}
+
 export function EntryEditor({ spec, settings, onClose }) {
   const [entry, setEntry] = useState(null);
   const [local, setLocal] = useState(null);
@@ -165,6 +196,11 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [cmOpen, setCmOpen] = useState(false);           // the matter listbox is down
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
+  // True while the attorney has typed something the server has not been told
+  // about yet — i.e. an autosave is queued on the 600ms debounce and has not
+  // fired. See the flush-on-unmount effect below: losing a narrative is as
+  // serious as misfiling one, and this dialog now unmounts on a re-target.
+  const dirtyRef = useRef(false);
   const localRef = useRef(null);
   localRef.current = local;
   const entryRef = useRef(null);
@@ -400,6 +436,10 @@ export function EntryEditor({ spec, settings, onClose }) {
       body.source_cm_id = suggestedFrom.current;
     }
     suggestedFrom.current = null;
+    // Everything typed so far is in `body` now, so the queued-work flag is
+    // cleared HERE rather than on the response: a keystroke that lands while
+    // this request is in flight sets it again and queues its own save.
+    dirtyRef.current = false;
     setSaveState('saving');
     try {
       const saved = e
@@ -442,7 +482,39 @@ export function EntryEditor({ spec, settings, onClose }) {
     return saveChain.current;
   }, [doPersist]);
 
-  const [queueSave, cancelSave] = useDebounced(persist, 600);
+  const [queueSaveTimer, cancelSaveTimer] = useDebounced(persist, 600);
+
+  // The debounce cancels its own timer when the component goes away, so
+  // anything still inside the 600ms window died with it. That was survivable
+  // while the dialog only ever went away on close (which flushes) — it is not
+  // now that re-targeting it at another record REMOUNTS it (see editorKey),
+  // and it was never right for a route change, which drops the editor without
+  // asking. So the queued work is tracked and flushed on the way out.
+  //
+  // The flush writes to `entryRef.current.id` — THIS instance's record — so
+  // the words go to the entry they were typed into even as the replacement
+  // dialog is already loading a different one. Nothing typed is lost, and
+  // nothing lands on the wrong bill.
+  const queueSave = useCallback(() => {
+    dirtyRef.current = true;
+    queueSaveTimer();
+  }, [queueSaveTimer]);
+
+  // Cancelling means "this queued save is superseded" — by an immediate
+  // persist (flushAndClose, finalize) or by the record ceasing to exist
+  // (delete). Either way there is nothing left for the unmount to flush.
+  const cancelSave = useCallback(() => {
+    dirtyRef.current = false;
+    cancelSaveTimer();
+  }, [cancelSaveTimer]);
+
+  const persistRef = useRef(persist);
+  persistRef.current = persist;
+  useEffect(() => () => {
+    if (!dirtyRef.current) return;
+    dirtyRef.current = false;
+    persistRef.current(); // deliberately not awaited: the request outlives the component
+  }, []);
 
   const update = useCallback((patch) => {
     setLocal((cur) => ({ ...cur, ...patch }));

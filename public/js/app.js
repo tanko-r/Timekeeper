@@ -10,7 +10,7 @@ import { SettingsView, SETTINGS_CATEGORIES } from '/js/views/settings.js';
 import { CmsView } from '/js/views/cms.js';
 import { ExportView } from '/js/views/exportview.js';
 import { Overlay, overlayOpen } from '/js/components/overlay.js';
-import { EntryEditor } from '/js/components/entryeditor.js';
+import { EntryEditor, editorKey } from '/js/components/entryeditor.js';
 import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
 import { RunTodo } from '/js/components/runtodo.js';
@@ -549,6 +549,13 @@ function App() {
   // The float's "Open entry" button (2026-07-15 feedback): pip.js dispatches
   // this on the main window — the editor modal is app-level state, so it has
   // to open from here.
+  //
+  // This fires whether or not a dialog is already up, which is the ONLY sane
+  // behaviour for it (the float is a separate window; it cannot know what is
+  // on screen here) — so the re-target has to be safe. It is: the editor is
+  // keyed by its record below, so pointing it at a different entry remounts
+  // it and it reloads. Before that key existed this line handed the open
+  // dialog a new id and the dialog kept showing — and saving — the old record.
   useEffect(() => {
     const onOpenEntry = (e) => setEditor({ id: e.detail.id });
     window.addEventListener('tk:open-entry', onOpenEntry);
@@ -854,7 +861,8 @@ function App() {
     </nav>
     <${ToastHost} />
     <${FeedbackCapture} />
-    ${editor ? html`<${EntryEditor} spec=${editor} settings=${settings} onClose=${closeEditor} />` : null}
+    ${editor ? html`<${EntryEditor} key=${editorKey(editor)} spec=${editor}
+      settings=${settings} onClose=${closeEditor} />` : null}
     ${showHelp ? html`<${KeyboardHelp} onClose=${closeHelp} />` : null}
     ${quickCapture ? html`<${QuickCapture} onClose=${closeQuickCapture} onFiled=${bumpRefresh} />` : null}
   `;
