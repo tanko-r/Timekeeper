@@ -523,8 +523,11 @@ export function aiRouter({ db }) {
       fragment: String(t.fragment || '').trim().slice(0, 400),
       share: Number(t.share) > 0 ? Number(t.share) : 0,
     }));
+    // Split on the firm's billing increment, not a hardcoded tenth — otherwise
+    // a quarter-hour firm gets task lines that don't add up to the entry total.
+    const increment = (getSetting(db, 'rounding') || {}).increment || 0.1;
     const hours = totalHours && tasks.length
-      ? allocateTenths(totalHours, tasks.map((t) => t.share))
+      ? allocateTenths(totalHours, tasks.map((t) => t.share), increment)
       : null;
 
     res.json({
