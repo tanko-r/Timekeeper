@@ -36,23 +36,42 @@ THE TESTS ARE THE SPECIFICATION
 
 test/integrity.*.test.js and test/verify.*.test.js contain tests that FAIL ON
 PURPOSE, one per confirmed defect, written by the auditors who proved them.
-`npm test` currently reports 902 tests with 91 failing. Those failures are
-the work list. A defect is fixed when its test passes and remains in the
-suite. Never delete or weaken one of those tests to make a suite green — if a
-test is wrong about the intended behaviour, say so explicitly in your report
-and explain why, but do not quietly remove it.
+`npm test` currently reports 973 tests with 141 failing. Those failures are
+the work list. The count is higher than the 91 the audit started with because
+Stage 1d's builders added proof tests of their own; measured on this box, the
+same suite was 811 pass / 183 fail before 1d landed. A defect is fixed when
+its test passes and remains in the suite. Never delete or weaken one of those
+tests to make a suite green — if a test is wrong about the intended
+behaviour, say so explicitly in your report and explain why, but do not
+quietly remove it.
 
 The 633 tests that predate the audit must all keep passing.
 
-START HERE — 1a is already written and waiting
+START HERE — finish 1d, then go on to 1e
 
-The working tree holds uncommitted work from the session that ran out of
-usage: a `source_cm_id` field on PATCH /api/entries/:id that the server
-refuses with 409 when it does not match the entry's current matter, plus the
-client changes that send it. test/integrity.fence.test.js passes 17/17.
-Review that work, confirm both suites behave as expected, and commit it on
-its own before doing anything else. If `git status` shows a clean tree, it
-was already committed — check `git log` before assuming.
+1a, 1b and 1c are committed. Most of 1d is committed too (`209b39c` through
+`2173243`). The working tree is clean and pushed; confirm that with `git log`
+and `git status` rather than taking this paragraph's word for it.
+
+Four leaks that 1d opened are still red, and they are your first work:
+
+  verify.timerstash.repoint      LEAK 4  — reaches the export CSV
+  verify.stashfollow.matterb     LEAK D  — reaches the export CSV
+  verify.timer-template-repoint  LEAK    — reaches the export CSV
+  verify.ghosttext-matterswitch  LEAK    — Tab over a slow link (browser test)
+
+The first three share a shape: the server-side fence that disarms a timer's
+narrative stash on a matter change now holds, but the sentence still reaches
+the exported CSV under the other client's number. Look at the export path
+before assuming three separate causes.
+
+Then continue with 1e (time loss), 1f (export correctness) and 1g (records
+and recovery), and finish with the Stage 1 exit test.
+
+DO NOT RUN YOURSELF, OR ANY ORCHESTRATOR, WITH `claude -p`. Print mode
+answers once and exits: the previous orchestrator killed its own five
+builders at the 600-second background ceiling and quit mid-1d, and its work
+sat uncommitted for eight hours. Run in an interactive session in tmux.
 
 THE LINE YOU ARE ENFORCING
 
