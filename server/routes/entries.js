@@ -4,7 +4,13 @@ import { isValidDate, todayLocal } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
+import { elapsedSeconds } from '../lib/timerlogic.js';
+import { secondsToHours } from '../lib/rounding.js';
 import { loadEffectiveFields } from './customfields.js';
+// Cyclic by module graph (timers.js imports loadEntry/syncNarrative from here),
+// but safe: both sides only ever call each other's function DECLARATIONS, which
+// are hoisted, and never at module-evaluation time.
+import { applyRollovers } from './timers.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
@@ -48,10 +54,32 @@ function substantiveCount(tasks) {
   return tasks.filter((t) => (t.fragment || '').trim() || (t.task_code || '').trim() || Number(t.duration) > 0).length;
 }
 
-function normalizeTasks(tasks) {
+// `requireDuration` marks the EDIT path. writeTasks replaces an entry's lines
+// wholesale, so a PATCH whose tasks carry no usable duration used to coerce
+// every line to 0 (`Number(t.duration) || 0`) and answer 200 — recorded hours
+// destroyed, narrative rewritten with (0.0) amounts, no signal of any kind.
+// docs/ui/BRIEF.md forbids losing time, so on an edit an unusable duration is
+// a 400 and nothing is written. A CREATE is the opposite case: an entry that
+// does not exist yet has no hours to lose and legitimately starts with none,
+// so a missing duration there still means 0.
+function normalizeTasks(tasks, { requireDuration = false } = {}) {
   if (!Array.isArray(tasks)) return { error: 'tasks must be an array.' };
   const out = [];
   for (const t of tasks) {
+    if (requireDuration) {
+      const raw = t == null ? undefined : t.duration;
+      // Only a number, or a string that is entirely a number, counts. '' and
+      // null coerce to 0 in JS and would read as "zero these hours"; they are
+      // far likelier to mean "I wasn't told", so they are refused.
+      const usable = (typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== ''))
+        && Number.isFinite(Number(raw));
+      if (!usable) {
+        return {
+          error: 'Every task line must carry a numeric duration. Nothing was saved — '
+            + 'a save that says nothing about a line\'s hours must not erase them.',
+        };
+      }
+    }
     const duration = Number(t.duration) || 0;
     if (duration < 0) return { error: 'Task durations must be ≥ 0.' };
     out.push({
@@ -450,7 +478,7 @@ export function entriesRouter({ db, clock }) {
     }
     let norm = null;
     if (b.tasks !== undefined) {
-      norm = normalizeTasks(b.tasks);
+      norm = normalizeTasks(b.tasks, { requireDuration: true });
       if (norm.error) return res.status(400).json({ error: norm.error });
     }
     const cv = normalizeCustomValues(db, cmId, b.custom_values);
@@ -588,18 +616,79 @@ export function entriesRouter({ db, clock }) {
   return r;
 }
 
+// Settle the LIVE clock of any timer feeding this entry onto the entry itself,
+// BEFORE the entry is locked. A timer's time only reaches its entry at stop:
+// while it runs, the stored total is whatever the last stop left. finalizeOne
+// then locks that stale total and zeroes the clock, so the unfiled hours end up
+// on neither the entry nor the timer — pure loss (docs/ui/BRIEF.md, "no time
+// may be lost"). Close-out must SETTLE, never refuse: the lawyer closing the
+// day is not asking to be blocked, he is asking for the day to be right.
+//
+// Grow-only (strict '>'): a hand-edited total is never shrunk by a clock that
+// happens to read lower, and an already-stopped timer (clock == entry total) is
+// a no-op — which is what keeps the zero+unlink loop below unchanged and keeps
+// verify.entry-repoint-doublefile's V4 control green.
+//
+// Only today's entry is settled. A yesterday-dated entry's clock belongs to
+// yesterday and is the midnight rollover's job (applyRollovers); writing today's
+// elapsed hours onto it would be a different kind of loss.
+function settleRunningTimers(db, id, nowIso) {
+  const entry = db.prepare('SELECT date FROM entries WHERE id=?').get(id);
+  if (!entry || entry.date !== todayLocal(new Date(nowIso))) return false;
+  const rounding = getSetting(db, 'rounding') || {};
+  const nowMs = Date.parse(nowIso);
+  const timers = db.prepare(
+    'SELECT id, running, accumulated_seconds, last_started_at FROM timers WHERE linked_entry_id=?').all(id);
+  let grew = false;
+  for (const t of timers) {
+    const liveHours = secondsToHours(elapsedSeconds(t, nowMs), rounding);
+    if (!(liveHours > effectiveTotal(db, id) + 1e-9)) continue;
+    grew = true;
+    // Same shape as syncToEntry (routes/timers.js): the override carries the
+    // hours, and a single task line mirrors them; user-added splits are left
+    // alone. Imported directly it would be a cycle — timers.js imports us.
+    db.prepare('UPDATE entries SET total_override=?, updated_at=? WHERE id=?')
+      .run(liveHours, nowIso, id);
+    const lines = db.prepare(
+      'SELECT id FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(id);
+    if (lines.length === 1) {
+      db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?').run(liveHours, lines[0].id);
+    }
+    syncNarrative(db, id);
+  }
+  return grew;
+}
+
 export function finalizeOne(db, id, ack, nowIso) {
-  const entry = loadEntry(db, id);
-  if (!entry || entry.deleted_at) {
+  const stale = loadEntry(db, id);
+  if (!stale || stale.deleted_at) {
     return { ok: false, blocks: [{ level: 'block', code: 'not_found', message: 'Entry not found.' }], warns: [] };
   }
-  if (entry.status === 'finalized') return { ok: true };
+  if (stale.status === 'finalized') return { ok: true };
+  const validation = getSetting(db, 'validation');
+  // Settle BEFORE the gate: raising the total changes what canFinalize finds
+  // (a 0.0h entry with four live hours on its clock is not a zero-hour entry),
+  // so the gate must judge the settled entry, not the stale one.
+  const grew = settleRunningTimers(db, id, nowIso);
+  const entry = loadEntry(db, id);
   // Evaluate the gate with the ack applied hypothetically; persist it only on
   // success so a blocked attempt doesn't pre-acknowledge future warnings.
   const gate = canFinalize(
     { ...entry, ack_validation: ack ? 1 : entry.ack_validation },
-    getSetting(db, 'validation'));
-  if (!gate.ok) return { ok: false, blocks: gate.blocks, warns: gate.warns };
+    validation);
+  if (!gate.ok) {
+    // "Settle, do not refuse." Booking the live clock onto the entry is
+    // bookkeeping the app owes the lawyer — it must never itself become the
+    // reason his day won't close. So a settle that only raises WARNINGS (a
+    // longer single line now trips block_billing, say) on an entry that was
+    // about to finalize cleanly goes through; the hours are what matter, and
+    // refusing here would leave the clock zeroed by a close-out that did
+    // nothing. Anything that BLOCKS, and anything already unacknowledged
+    // before the settle, still refuses exactly as before.
+    const settleCausedIt = grew && gate.blocks.length === 0
+      && canFinalize({ ...stale, ack_validation: ack ? 1 : stale.ack_validation }, validation).ok;
+    if (!settleCausedIt) return { ok: false, blocks: gate.blocks, warns: gate.warns };
+  }
   db.transaction(() => {
     if (ack && !entry.ack_validation) {
       db.prepare('UPDATE entries SET ack_validation=1 WHERE id=?').run(id);
@@ -663,6 +752,14 @@ export function finalizeDayRouter({ db, clock }) {
     if (!isValidDate(from) || !isValidDate(to)) {
       return res.status(400).json({ error: 'Provide date or from/to as YYYY-MM-DD.' });
     }
+    // Bank any overnight clock FIRST. Every other timer-aware surface
+    // (dashboard, the timer routes, the nightly job) calls this; finalize-day
+    // did not, so closing out yesterday from a machine that had been left
+    // running erased the clock and locked yesterday's entry at its stale
+    // total. It also has to run before finalizeOne's settle, or a clock that
+    // has been ticking since last night would be booked onto a
+    // yesterday-dated entry as if it were today's work.
+    applyRollovers(db, clock);
     const drafts = db.prepare(
       "SELECT id FROM entries WHERE status='draft' AND deleted_at IS NULL AND date >= ? AND date <= ?"
     ).all(from, to);

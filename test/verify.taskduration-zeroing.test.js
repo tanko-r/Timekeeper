@@ -6,11 +6,22 @@
 // task line's hours, and syncNarrative then rewrites the billing narrative
 // with (0.0) amounts. Claimed severity: medium.
 //
-// These tests DOCUMENT the observed behaviour. The `repro` tests assert what
-// the server actually does today (they pass, and pin the behaviour). The test
-// marked FAILING-ON-PURPOSE asserts what the brief's "no time may ever be
-// lost" rule demands, and fails until the server either rejects or preserves
-// a duration-less task payload.
+// FIXED 2026-08-16. normalizeTasks() now takes { requireDuration } and the
+// PATCH route passes it; a task line with no usable duration is a 400 and
+// NOTHING in the payload is written. The create route deliberately does not
+// pass it — a brand-new entry has no hours to lose and legitimately starts
+// with none.
+//
+// The `repro` tests below used to assert the destructive behaviour verbatim
+// (200 OK, durations zeroed, narrative rewritten with "(0.0)"). Those
+// assertions stated the DEFECT, not the specification: the file's own
+// FAILING-ON-PURPOSE test named 400 as an acceptable fix, and the brief's "no
+// time may ever be lost" rule outranks a description of what the server
+// happened to do. They have been rewritten to assert the refusal and — the
+// part that actually matters — that the stored hours and narrative are
+// untouched by it. Every rewrite kept or strengthened what is checked after
+// the request; none removed a check. See the four-step revert proof in the
+// task report.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers.js';
@@ -37,7 +48,7 @@ function stored(t, id) {
   return { entry: e, tasks, sum };
 }
 
-test('repro P4: PATCH tasks without duration keys zeroes stored durations and rewrites the narrative', () =>
+test('P4: a PATCH whose tasks omit the duration key is refused and changes nothing', () =>
   withServer(async (t, cm) => {
     const created = (await t.fetchJson('POST', '/api/entries', {
       date: '2026-07-06', cm_id: cm.id,
@@ -49,25 +60,29 @@ test('repro P4: PATCH tasks without duration keys zeroes stored durations and re
     assert.equal(created.total, 1.2);
     const before = stored(t, created.id);
     assert.equal(before.sum, 1.2);
+    assert.equal(before.entry.narrative, 'Review lease (0.5); draft email (0.7).');
 
     // The claimed payload: same fragments, same codes, NO duration key.
-    const patched = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+    const r = await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
       tasks: [
         { task_code: 'Review', fragment: 'review lease' },
         { task_code: 'Draft', fragment: 'draft email' },
       ],
-    })).body;
+    });
+
+    // Refused, and the refusal SAYS SO — no silent 200 over destroyed hours.
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.match(r.body.error, /duration/i);
 
     const after = stored(t, created.id);
-    // 200 OK, no error, no warning of any kind in the response.
-    assert.equal(patched.total, 0, 'API total after duration-less PATCH');
-    assert.equal(after.sum, 0, 'summed duration IN THE DATABASE after the PATCH');
-    assert.deepEqual(after.tasks.map((x) => x.duration), [0, 0]);
-    assert.equal(after.entry.narrative, 'Review lease (0.0); draft email (0.0).');
+    assert.equal(after.sum, 1.2, 'summed duration IN THE DATABASE after the refusal');
+    assert.deepEqual(after.tasks.map((x) => x.duration), [0.5, 0.7]);
+    assert.equal(after.entry.narrative, 'Review lease (0.5); draft email (0.7).',
+      'the billing narrative is not rewritten with (0.0) amounts');
     assert.equal(after.entry.total_override, null);
   }));
 
-test('repro variation A: a single duration-less line in an otherwise valid payload zeroes only that line', () =>
+test('variation A: one duration-less line refuses the WHOLE payload — nothing partial lands', () =>
   withServer(async (t, cm) => {
     const created = (await t.fetchJson('POST', '/api/entries', {
       date: '2026-07-06', cm_id: cm.id,
@@ -76,37 +91,64 @@ test('repro variation A: a single duration-less line in an otherwise valid paylo
         { task_code: 'Draft', duration: 0.7, fragment: 'draft email' },
       ],
     })).body;
-    await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+    const r = await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
       tasks: [
-        { task_code: 'Review', duration: 0.5, fragment: 'review lease' },
+        // the second line would legitimately edit the first one's fragment;
+        // writeTasks replaces the lines wholesale, so a partial write would
+        // still be a loss. The whole request is refused.
+        { task_code: 'Review', duration: 0.9, fragment: 'review lease rider' },
         { task_code: 'Draft', fragment: 'draft email' },
       ],
     });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
     const after = stored(t, created.id);
-    assert.deepEqual(after.tasks.map((x) => x.duration), [0.5, 0]);
-    assert.equal(after.sum, 0.5); // 0.7h gone
+    assert.deepEqual(after.tasks.map((x) => x.duration), [0.5, 0.7]);
+    assert.deepEqual(after.tasks.map((x) => x.fragment), ['review lease', 'draft email'],
+      'the valid line is not written either — the refusal is all-or-nothing');
+    assert.equal(after.sum, 1.2); // the 0.7h that used to disappear
   }));
 
-test('repro variation B: a non-numeric duration ("", null, "0.5h") is coerced to 0, not rejected', () =>
+test('variation B: a non-numeric duration ("", null, "0.5h") is rejected, never coerced to 0', () =>
   withServer(async (t, cm) => {
     const created = (await t.fetchJson('POST', '/api/entries', {
       date: '2026-07-06', cm_id: cm.id,
       tasks: [{ task_code: 'Review', duration: 1.4, fragment: 'review lease' }],
     })).body;
-    for (const bad of ['', null, '0.5h', 'abc', {}]) {
+    for (const bad of ['', null, '0.5h', 'abc', {}, undefined]) {
       const r = await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
         tasks: [{ task_code: 'Review', duration: bad, fragment: 'review lease' }],
       });
-      assert.equal(r.status, 200, `duration=${JSON.stringify(bad)} was accepted`);
-      assert.equal(stored(t, created.id).sum, 0, `duration=${JSON.stringify(bad)} stored as 0`);
-      // restore for the next iteration
-      await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
-        tasks: [{ task_code: 'Review', duration: 1.4, fragment: 'review lease' }],
+      assert.equal(r.status, 400, `duration=${JSON.stringify(bad)} was accepted`);
+      assert.equal(stored(t, created.id).sum, 1.4,
+        `duration=${JSON.stringify(bad)} must leave the recorded 1.4h alone`);
+    }
+    // …while anything that really is a number still goes through, including a
+    // deliberate zero and a numeric string.
+    for (const [good, expected] of [[0, 0], ['0.5', 0.5], [1.4, 1.4]]) {
+      const r = await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+        tasks: [{ task_code: 'Review', duration: good, fragment: 'review lease' }],
       });
+      assert.equal(r.status, 200, `duration=${JSON.stringify(good)} was refused`);
+      assert.equal(stored(t, created.id).sum, expected);
     }
   }));
 
-test('scope check: total_override shields an entry whose hours were set as a total (the editor path)', () =>
+test('scope check: the create path still accepts task lines with no durations yet', () =>
+  withServer(async (t, cm) => {
+    // A create has no recorded hours to destroy, and the editor legitimately
+    // opens a new entry on blank lines. The requirement is EDIT-path only.
+    const r = await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id,
+      tasks: [
+        { task_code: 'Review', fragment: 'review lease' },
+        { task_code: 'Draft', fragment: 'draft email' },
+      ],
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(stored(t, r.body.id).sum, 0);
+  }));
+
+test('scope check: an entry whose hours were set as a total keeps its breakdown too', () =>
   withServer(async (t, cm) => {
     // This is what public/js/components/entryeditor.js doPersist() actually
     // sends: total_override alongside the task lines.
@@ -117,17 +159,18 @@ test('scope check: total_override shields an entry whose hours were set as a tot
         { task_code: 'Draft', duration: 0.7, fragment: 'draft email' },
       ],
     })).body;
-    await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+    const r = await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
       tasks: [
         { task_code: 'Review', fragment: 'review lease' },
         { task_code: 'Draft', fragment: 'draft email' },
       ],
     });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
     const after = stored(t, created.id);
     assert.equal(after.entry.total_override, 1.2, 'billable total survives');
-    assert.equal(after.sum, 0, 'but the per-line breakdown is still zeroed');
-    // The narrative the bill would carry now contradicts the billed total.
-    assert.equal(after.entry.narrative, 'Review lease (0.0); draft email (0.0).');
+    assert.equal(after.sum, 1.2, 'and so does the per-line breakdown behind it');
+    // The narrative on the bill still agrees with the billed total.
+    assert.equal(after.entry.narrative, 'Review lease (0.5); draft email (0.7).');
   }));
 
 test('scope check: no narrative crosses a matter boundary on this path', () =>
@@ -150,12 +193,23 @@ test('scope check: no narrative crosses a matter boundary on this path', () =>
         { task_code: 'Review', fragment: 'review Northgate diligence index' },
       ],
     })).body;
-    await t.fetchJson('PATCH', `/api/entries/${b.id}`, {
+    // The refused edit must not leak either: a 400 writes nothing at all, so
+    // matter B's narrative stays matter B's.
+    const refused = await t.fetchJson('PATCH', `/api/entries/${b.id}`, {
       tasks: [
         { task_code: 'Draft', fragment: 'draft Northgate disclosure schedule' },
         { task_code: 'Review', fragment: 'review Northgate diligence index' },
       ],
     });
+    assert.equal(refused.status, 400);
+    // …and the accepted edit stays on its own matter too.
+    const ok = await t.fetchJson('PATCH', `/api/entries/${b.id}`, {
+      tasks: [
+        { task_code: 'Draft', duration: 0.4, fragment: 'draft Northgate disclosure schedule' },
+        { task_code: 'Review', duration: 0.2, fragment: 'review Northgate diligence index' },
+      ],
+    });
+    assert.equal(ok.status, 200);
     const rows = t.db.prepare(
       'SELECT id, cm_id, narrative FROM entries WHERE deleted_at IS NULL').all();
     for (const row of rows) {
