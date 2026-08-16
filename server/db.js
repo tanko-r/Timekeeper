@@ -350,6 +350,38 @@ const MIGRATIONS = [
   DROP INDEX IF EXISTS idx_entries_exemplar;
   CREATE INDEX idx_entries_exemplar ON entries(status, narrative_ai, date DESC);
   `,
+  // v18 — two durable identities on entries (2026-08-16).
+  //
+  // tim_ref: the stable per-entry identity carried in the .TIM `ref` field.
+  // Until now formatTimEntries minted a fresh randomUUID() on every export, so
+  // re-exporting the same work looked like NEW work to the billing system —
+  // the double-count half of "no time may be lost". Storing the reference once
+  // means the second export of an entry carries the same ref and Intapp can
+  // recognise it. Backfilled here for every existing row (UUID-shaped, which
+  // is what the importer already sees; the last node is the row id, so the
+  // values are distinct by construction, not merely by luck). Nullable so
+  // rows written before the generating lane lands are still legal — the
+  // UNIQUE index tolerates many NULLs but no two equal refs.
+  //
+  // narrative_src_cm_id: the matter a SUGGESTED narrative was composed for.
+  // A narrative may never cross a matter boundary, so when an entry's matter
+  // changes, a suggestion composed for the old matter has to be retracted
+  // rather than silently re-used; that needs to be recorded at compose time.
+  // NULL means "not machine-suggested / nothing to retract", which is the
+  // correct reading of all existing rows. ON DELETE SET NULL so removing a
+  // matter drops the provenance instead of blocking the delete.
+  `
+  ALTER TABLE entries ADD COLUMN tim_ref TEXT;
+  ALTER TABLE entries ADD COLUMN narrative_src_cm_id INTEGER REFERENCES matters(id) ON DELETE SET NULL;
+  UPDATE entries SET tim_ref = lower(
+      substr(hex(randomblob(4)), 1, 8) || '-' ||
+      substr(hex(randomblob(2)), 1, 4) || '-4' ||
+      substr(hex(randomblob(2)), 1, 3) || '-' ||
+      substr('89ab', 1 + (abs(random()) % 4), 1) || substr(hex(randomblob(2)), 1, 3) || '-' ||
+      printf('%012x', id))
+    WHERE tim_ref IS NULL;
+  CREATE UNIQUE INDEX idx_entries_tim_ref ON entries(tim_ref);
+  `,
 ];
 
 const SEED_SETTINGS = {
