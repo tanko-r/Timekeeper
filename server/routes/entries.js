@@ -171,6 +171,48 @@ export function touchCm(db, cmId, nowIso) {
   db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, cmId);
 }
 
+// ── the suggestion fence ──────────────────────────────────────────────────
+// A suggestion — a stop chip, a reused narrative, an AI draft, a close-out
+// prefill — is BUILT for one matter and APPLIED some time later. In between,
+// the entry's matter can move: the editor sat open while the timer under it was
+// re-pointed, an autosave raced a matter change, a matterless entry got
+// associated. Landing that text anyway puts one client's sentence on another
+// client's bill, which docs/ui/BRIEF.md forbids outright ("Data integrity").
+//
+// So any client surface that writes SUGGESTED text sends `source_cm_id`: the
+// matter the suggestion was built for. The server compares it with the entry's
+// CURRENT matter and refuses the whole write with 409 when they differ —
+// nothing is saved, not the narrative and not the rest of the payload. Absent
+// `source_cm_id` the request behaves exactly as before, so hand-typed edits and
+// every existing caller are untouched.
+function matterLabel(db, cmId) {
+  if (cmId == null) return 'no matter';
+  const m = db.prepare('SELECT cm_number, short_name FROM matters WHERE id=?').get(cmId);
+  if (!m) return `a matter that no longer exists (id ${cmId})`;
+  return m.short_name ? `${m.short_name} (${m.cm_number})` : m.cm_number;
+}
+
+export function checkSourceMatter(db, row, sourceCmId) {
+  if (sourceCmId === undefined || sourceCmId === null) return null;
+  const src = Number(sourceCmId);
+  if (!Number.isInteger(src)) {
+    return { status: 400, body: { error: 'source_cm_id must be a matter id.' } };
+  }
+  if (row.cm_id != null && Number(row.cm_id) === src) return null;
+  return {
+    status: 409,
+    body: {
+      error: `That text was written for ${matterLabel(db, src)}, but this entry is now on `
+        + `${matterLabel(db, row.cm_id)}. Nothing was saved — a narrative written for one `
+        + 'matter must never be written onto another. Reopen the entry to get suggestions '
+        + 'for its current matter.',
+      code: 'matter_changed',
+      source_cm_id: src,
+      cm_id: row.cm_id,
+    },
+  };
+}
+
 // matter_people is a DERIVED CACHE: rebuild the whole roster for one matter
 // from its live (non-deleted) entries. Idempotent — safe to call on every
 // write, edit, move, copy, delete, and restore; a per-matter scan is cheap in
@@ -332,6 +374,12 @@ export function entriesRouter({ db, clock }) {
     if (!isValidDate(b.date)) return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
     const cm = db.prepare('SELECT * FROM matters WHERE id=?').get(b.cm_id);
     if (!cm) return res.status(400).json({ error: 'Unknown CM.' });
+    // The fence applies here too. On a create the two ids can only ever agree,
+    // which is exactly why the check is here: every surface that writes a
+    // suggested narrative names the matter it meant, and the one surface that
+    // cannot disagree still says it — so the rule has no exception to remember.
+    const fenced = checkSourceMatter(db, { cm_id: cm.id }, b.source_cm_id);
+    if (fenced) return res.status(fenced.status).json(fenced.body);
     const norm = normalizeTasks(b.tasks || []);
     if (norm.error) return res.status(400).json({ error: norm.error });
     const cv = normalizeCustomValues(db, cm.id, b.custom_values);
@@ -374,6 +422,11 @@ export function entriesRouter({ db, clock }) {
       return res.status(409).json({ error: 'Entry is finalized — unlock it before editing.' });
     }
     const b = req.body || {};
+    // Fence first: a suggestion built for another matter must not write ANY
+    // part of this payload, so this runs before every other check and before
+    // the transaction opens.
+    const fenced = checkSourceMatter(db, row, b.source_cm_id);
+    if (fenced) return res.status(fenced.status).json(fenced.body);
     if (b.date !== undefined && !isValidDate(b.date)) {
       return res.status(400).json({ error: 'date must be YYYY-MM-DD.' });
     }

@@ -161,6 +161,14 @@ export function pickPairs(pool, seeds = [], { count = 6, cmId = null, brief = ''
   const real = [];
   for (const p of pool || []) {
     if (!p || isEcho(p.brief, p.narrative)) continue;
+    // THE MATTER BOUNDARY, enforced here as well as in the caller's SQL. A pair
+    // shows the model a real finished narrative as the answer it should
+    // imitate; a pair from another matter is one client's billing sentence
+    // inside a prompt writing another's, which docs/ui/BRIEF.md forbids. cmId
+    // was previously only a SORT key, so the pool's other matters were used
+    // whenever this matter had too few of its own — the cold-matter case, where
+    // the seeds exist precisely so nothing has to be borrowed.
+    if (cmId != null && p.cm_id !== undefined && p.cm_id !== cmId) continue;
     // Narratives autosave 600ms after typing stops, so a pause mid-correction
     // persists half-edited text and makes it pool-eligible immediately. A pair
     // teaches what good OUTPUT looks like, so its narrative side has to clear

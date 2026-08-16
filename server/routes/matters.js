@@ -25,15 +25,23 @@ const OWN_PHRASES = `
     SELECT e.narrative AS text, e.date FROM entries e
     WHERE e.cm_id = ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
 
+// FRAGMENTS ONLY, deliberately — this is the matter boundary (docs/ui/BRIEF.md,
+// "Data integrity"). A task-line fragment is reusable wording and is SUPPOSED
+// to be shared across a client's matters; a NARRATIVE is the client-facing
+// sentence that lands on a bill and describes work done on one specific matter,
+// and it may never be suggested for another matter — not across clients, and
+// not between two matters of the same client.
+//
+// This query used to carry a second UNION arm selecting `e.narrative` from
+// sibling matters. That one arm was the root of two proven leaks: a brand-new
+// matter's very first timer was stamped with the sibling's whole sentence
+// (timers.js doStart), and the close-out sheet prefilled it into an entry that
+// was then finalized and exported. Both are gone with the arm.
 const SIBLING_PHRASES = `
     SELECT et.fragment AS text, e.date FROM entry_tasks et
     JOIN entries e ON e.id = et.entry_id
     JOIN matters m ON m.id = e.cm_id
-    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND TRIM(et.fragment) != ''
-    UNION ALL
-    SELECT e.narrative AS text, e.date FROM entries e
-    JOIN matters m ON m.id = e.cm_id
-    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
+    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND TRIM(et.fragment) != ''`;
 
 // Suggestions for one matter — exported for reuse (precedent: loadEntry /
 // syncNarrative in entries.js): timers.js calls this at timer START to
@@ -47,24 +55,43 @@ export function matterSuggestions(db, matterId, today) {
   let occurrences = own;
   let borrowed = false;
   if (rankPhrases(own, { today }).length < THIN_PHRASES && matter.client_id != null) {
-    const sib = db.prepare(SIBLING_PHRASES).all(matter.client_id, matter.id, matter.client_id, matter.id)
+    const sib = db.prepare(SIBLING_PHRASES).all(matter.client_id, matter.id)
       .map((o) => ({ ...o, source: 'client' }));
     if (sib.length > 0) { borrowed = true; occurrences = own.concat(sib); }
   }
+  // Every phrase carries an accurate `source`: 'matter' = this matter's own
+  // text (a fragment or one of its own free narratives), 'client' = wording
+  // borrowed from a sibling matter's task lines. Consumers that write a whole
+  // narrative — the timer's suggested_narrative, the AI prompt's "recent work
+  // on this matter" block — must take 'matter' only. rankPhrases promotes a
+  // group to 'matter' as soon as one own-matter occurrence exists, so the flag
+  // never understates ownership.
   return { matter_id: matter.id, borrowed, phrases: rankPhrases(occurrences, { today }) };
 }
 
-// Flat name list for prompt context (AI name resolution, 2026-07-10): own
-// roster first (most recently seen first), then client-sibling names — a
-// "jeff" may only ever appear on a sibling matter, so unlike the /people
-// endpoint this always blends, not just when own history is thin.
-export function matterPeopleList(db, matterId, limit = 20) {
+// Flat name list for prompt context (AI name resolution, 2026-07-10): the
+// matter's own roster, most recently seen first.
+//
+// Sibling names are OFF by default (2026-08-15). This list is captioned in the
+// prompt as "People from this matter's history", and it blended client-sibling
+// names unconditionally — not only when own history was thin. A counterparty
+// who appears on no entry of this matter was therefore offered to a model that
+// was writing THIS matter's billing narrative, under a heading claiming she
+// belonged to it; ai.js's own notes record the model then importing people
+// "from OTHER matters in the voice context" into narratives that named
+// neither. That is a client fact crossing a matter boundary, so the AI path
+// takes own names only. Pass { includeSiblings: true } for a caller that
+// genuinely wants the client-wide roster and labels it as such.
+export function matterPeopleList(db, matterId, opts = {}) {
+  const { limit = 20, includeSiblings = false } =
+    typeof opts === 'number' ? { limit: opts } : (opts || {});
   const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
   if (!matter) return [];
   const own = db.prepare(`
     SELECT name FROM matter_people WHERE matter_id = ?
     ORDER BY last_seen_at DESC, count DESC, name
   `).all(matter.id).map((p) => p.name);
+  if (!includeSiblings) return own.slice(0, limit);
   const have = new Set(own.map((n) => n.toLowerCase()));
   const sib = matter.client_id == null ? [] : db.prepare(`
     SELECT MIN(mp.name) AS name, SUM(mp.count) AS count, MAX(mp.last_seen_at) AS last_seen

@@ -82,6 +82,38 @@ function suggestChips(phrases) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// MATTER FENCE — the chips under the narrative are this matter's own wording.
+//
+// docs/ui/BRIEF.md, "Data integrity": a whole narrative may never be suggested
+// for a matter it was not written on. /api/matters/:id/suggestions blends in
+// the client's OTHER matters when this one's history is thin and marks them
+// `source: 'client'`; `useMatterSuggestions` (ghosttext.js) flattens the
+// response to bare strings, which is right for GHOST TEXT — reusable wording is
+// shared by design and the brief says so explicitly — and wrong for a chip,
+// which is a finished sentence one tap from the entry.
+//
+// So the chips read the endpoint directly and keep only this matter's own
+// phrases. Ghost text keeps the shared list, unchanged and unscoped.
+function useOwnMatterPhrases(cmId) {
+  const [phrases, setPhrases] = useState([]);
+  useEffect(() => {
+    if (!cmId) { setPhrases([]); return undefined; }
+    let alive = true;
+    setPhrases([]); // never carry the previous matter's wording across the swap
+    api.get(`/api/matters/${cmId}/suggestions`)
+      .then((r) => {
+        if (!alive) return;
+        // eslint-disable-next-line eqeqeq
+        if (r.matter_id != null && r.matter_id != cmId) return; // a late answer for another matter
+        setPhrases(r.phrases.filter((p) => p.source !== 'client').map((p) => p.text));
+      })
+      .catch(() => { if (alive) setPhrases([]); });
+    return () => { alive = false; };
+  }, [cmId]);
+  return phrases;
+}
+
 // ============================================================================
 // Entry editor — REBUILT AROUND THE NARRATIVE (teardown §16 / E7, wave-2 F1).
 //
@@ -152,8 +184,16 @@ export function EntryEditor({ spec, settings, onClose }) {
   const increment = settings?.rounding?.increment || 0.1;
 
   // Ghost-text autocomplete (spec §6): deterministic phrasebook completions
-  // for the picked matter; Tab accepts. No LLM anywhere in this path.
+  // for the picked matter; Tab accepts. No LLM anywhere in this path. Shared
+  // wording, deliberately — see the fence above `useOwnMatterPhrases`.
   const phrases = useMatterSuggestions(local?.cm?.id);
+  // …and the same matter's OWN wording, which is all a whole-sentence chip may
+  // ever offer.
+  const ownPhrases = useOwnMatterPhrases(local?.cm?.id);
+  // The matter a suggested sentence was taken from, carried onto the write that
+  // saves it (`source_cm_id`) so the server can refuse it if this entry has
+  // moved to another matter meanwhile. Cleared by every completed save.
+  const suggestedFrom = useRef(null);
 
   // Custom fields for the picked matter (client-level + matter-level —
   // spec 2026-07-15). Values live in local.custom_values keyed by field id
@@ -249,7 +289,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   const remaining = tenth(total - sum);
   const finalized = local?.status === 'finalized';
   const seedText = autoOn ? (autoText || '') : (local?.narrative || '').trim();
-  const suggestionChips = !autoOn && !String(local?.narrative || '').trim() ? suggestChips(phrases) : [];
+  const suggestionChips = !autoOn && !String(local?.narrative || '').trim() ? suggestChips(ownPhrases) : [];
 
   // The task-line editor is COLLAPSED until there is real work in it: two or
   // more lines. One undivided line IS the entry — its hours are the total
@@ -348,6 +388,18 @@ export function EntryEditor({ spec, settings, onClose }) {
       ...(l.aiText ? { ai_draft: l.aiText } : {}),
       custom_values: l.custom_values || {},
     };
+    // MATTER FENCE. A narrative this session took from a suggestion — a chip
+    // under the field, or a sentence reused from this matter's history — names
+    // the matter it was taken from, and the server refuses the write (409) if
+    // the entry has since moved. Only when this save is NOT itself changing the
+    // matter: the picker in this dialog is the legitimate way to move an entry,
+    // and a fence that fought it would block the one screen built for the job.
+    const movingMatter = !!(e && l.cm && e.cm && e.cm.id !== l.cm.id);
+    if (suggestedFrom.current != null && !movingMatter && l.cm
+      && suggestedFrom.current === l.cm.id) {
+      body.source_cm_id = suggestedFrom.current;
+    }
+    suggestedFrom.current = null;
     setSaveState('saving');
     try {
       const saved = e
@@ -378,7 +430,9 @@ export function EntryEditor({ spec, settings, onClose }) {
       return saved;
     } catch (err) {
       setSaveState('error');
-      emitToast(err.message, { error: true });
+      emitToast(err.status === 409 && !/finaliz/i.test(String(err.body?.error || err.message || ''))
+        ? 'This entry moved to another matter — nothing was saved. Close and reopen it.'
+        : err.message, { error: true });
       return entryRef.current;
     }
   }, []);
@@ -711,8 +765,17 @@ export function EntryEditor({ spec, settings, onClose }) {
   // one-click rule the AI path uses: borrowed text is the attorney's own
   // narrative now, so AUTO steps aside and hands over what it had generated
   // as the text being added to — no dead end, nothing silently overwritten.
-  function insertFromHistory(text) {
+  function insertFromHistory(text, srcCm) {
+    // The dialog only ever lists one matter's entries and hands that matter
+    // back with the text. If it is not the matter on this form, the sentence is
+    // not this entry's to carry — refuse rather than write and hope the server
+    // catches it.
+    if (srcCm != null && (!local.cm || srcCm !== local.cm.id)) {
+      emitToast('That list is for another matter — nothing was inserted.', { error: true });
+      return;
+    }
     if (aiUndo) setAiUndo(null);
+    suggestedFrom.current = local.cm ? local.cm.id : null;
     const base = autoOn ? (autoText || '') : local.narrative;
     update({ auto: false, aiAuto: false, narrative: insertNarrative(base, text) });
   }
@@ -819,11 +882,17 @@ export function EntryEditor({ spec, settings, onClose }) {
               <${Icon} name="history" size=${14} /> Reuse</button>` : null}
         </div>
         <div class="narrative-preview">${narrativeField}</div>
+        ${/* This matter's own wording only (useOwnMatterPhrases), and the write
+              it triggers says which matter that was. */''}
         ${!finalized && suggestionChips.length > 0 ? html`
           <div class="editor-suggest-chips">
             ${suggestionChips.map((t) => html`
               <button key=${t} type="button" title=${t}
-                onClick=${() => { if (aiUndo) setAiUndo(null); update({ narrative: t }); }}>${t}</button>`)}
+                onClick=${() => {
+    if (aiUndo) setAiUndo(null);
+    suggestedFrom.current = local.cm ? local.cm.id : null;
+    update({ narrative: t });
+  }}>${t}</button>`)}
           </div>` : null}
         <${ValidationList} findings=${narrativeFindings} compact=${true} />
         <${SaveShortcutBar} selection=${selText} />

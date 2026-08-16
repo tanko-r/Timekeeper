@@ -117,7 +117,16 @@ export function matterAiContext(db, cmId, today) {
   if (!cmId) return null;
   const names = matterPeopleList(db, cmId);
   const sugg = matterSuggestions(db, cmId, today);
-  const phrases = (sugg ? sugg.phrases : []).slice(0, 6).map((p) => `- ${p.text}`);
+  // OWN-MATTER phrases only. Both blocks below are captioned as this matter's
+  // history, and the model is told to resolve names against them — so anything
+  // in here becomes a candidate fact for THIS matter's billing narrative. A
+  // phrase flagged source:'client' is wording borrowed from a sibling matter;
+  // it stays shared in the phrasebook and ghost text, where sharing is the
+  // point, but it never rides into a prompt that writes another matter's
+  // sentence (docs/ui/BRIEF.md, "The AI prompts obey the same line").
+  const phrases = (sugg ? sugg.phrases : [])
+    .filter((p) => p.source === 'matter')
+    .slice(0, 6).map((p) => `- ${p.text}`);
   const parts = [];
   if (names.length) parts.push(`People from this matter's history: ${names.join(', ')}.`);
   if (phrases.length) parts.push(`The attorney's recent work on this matter:\n${phrases.join('\n')}`);
@@ -160,9 +169,25 @@ export const SEED_PAIRS = [
 //     would be taught as readily as the wording he settled on.
 const FINAL = "deleted_at IS NULL AND status = 'finalized' AND narrative_ai = 0";
 
+// Fully synthetic house-voice examples for a matter with no history of its own.
+// The seed pairs are hand-authored and name no real client, so they teach
+// length, rhythm and register without a single borrowed fact — which is exactly
+// what the brief prescribes for the cold-matter case.
+const SYNTHETIC_EXEMPLARS = SEED_PAIRS.map((p) => p.narrative);
+
 export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
   if (!db) return { prompt: '', turns: [] };
 
+  // MATTER-SCOPED, both pools (2026-08-15). These two blocks paste the
+  // attorney's real finished narratives into the prompt — the exemplars as
+  // "The attorney's entries", the pairs as prior chat turns to imitate. They
+  // used to be drawn from the whole database, with cmId acting only as a sort
+  // key, so a brand-new matter got the *maximum* dose of other clients' work:
+  // whole billing sentences naming other clients' parties and documents, shown
+  // to a model that was about to write this matter's sentence. docs/ui/BRIEF.md
+  // is explicit — "those pairs come from the same matter; where a matter has
+  // none, use fully synthetic examples. Never put one client's or one matter's
+  // real narrative into a prompt that writes another's."
   const own = cmId == null ? [] : db.prepare(`
     SELECT narrative FROM entries
     WHERE ${FINAL} AND cm_id = ?
@@ -170,24 +195,20 @@ export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
     ORDER BY date DESC LIMIT 60
   `).all(cmId).map((r) => r.narrative);
 
-  const recent = db.prepare(`
-    SELECT narrative FROM entries
-    WHERE ${FINAL}
-      AND narrative IS NOT NULL AND length(trim(narrative)) > 0
-    ORDER BY date DESC LIMIT 200
-  `).all().map((r) => r.narrative);
-
-  const exemplars = pickExemplars(own.concat(recent), { count: 6 });
+  const ownExemplars = pickExemplars(own, { count: 6 });
+  const exemplars = ownExemplars.length
+    ? ownExemplars
+    : pickExemplars(SYNTHETIC_EXEMPLARS, { count: 6 });
   const glossary = renderGlossary(db.prepare(
     'SELECT abbrev, phrase FROM shortcuts ORDER BY id DESC').all());
 
-  const pool = db.prepare(`
+  const pool = cmId == null ? [] : db.prepare(`
     SELECT ai_brief AS brief, narrative, cm_id, date FROM entries
-    WHERE ${FINAL}
+    WHERE ${FINAL} AND cm_id = ?
       AND ai_brief IS NOT NULL AND length(trim(ai_brief)) > 0
       AND narrative IS NOT NULL AND length(trim(narrative)) > 0
     ORDER BY date DESC LIMIT 300
-  `).all();
+  `).all(cmId);
   const pairs = pickPairs(pool, SEED_PAIRS, { count: 6, cmId, brief });
 
   // Two blocks, because they are not wanted on the same occasions. The
@@ -300,8 +321,13 @@ export function buildNarrateMessages({ instructions, brief, narrative, mode = 'd
 // llama3.1 pass"). FIRE-AND-FORGET: callers must never block a request on
 // this — timers.js calls it as `refineSuggestedNarrative(deps, id).catch(...)`.
 // No-op when AI is disabled (the default, so tests without a stub are
-// unaffected). The UPDATE is guarded by running=1 so a refinement finishing
-// after the stop (llama3.1:8b can take minutes) can't clobber anything.
+// unaffected). The UPDATE is guarded by running=1 AND by the matter the
+// refinement was BUILT for: llama3.1:8b can take minutes and the fetch timeout
+// is 180s, so the timer can be re-pointed at another client while the request
+// is in flight. running=1 alone let a sentence written from matter A's history
+// re-stamp itself onto a timer now pointing at client B (docs/ui/BRIEF.md,
+// "Data integrity"). cm_id is captured before the request and re-checked in the
+// WHERE clause, so a moved timer simply keeps whatever its new matter gave it.
 export async function refineSuggestedNarrative({ db, clock }, timerId) {
   const cfg = getSetting(db, 'ai') || {};
   if (!cfg.enabled) return;
@@ -309,12 +335,14 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     'SELECT t.id, t.name, t.cm_id, m.short_name FROM timers t JOIN matters m ON m.id = t.cm_id WHERE t.id=?'
   ).get(timerId);
   if (!timer) return;
+  // The matter this refinement is FOR, captured before a single byte goes out.
+  const sourceCmId = timer.cm_id;
   const brief = `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`;
   const messages = buildNarrateMessages({
     instructions: cfg.systemPrompt,
     brief,
-    context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
-    voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name }),
+    context: matterAiContext(db, sourceCmId, todayLocal(clock ? clock() : new Date())),
+    voice: buildVoiceContext(db, { cmId: sourceCmId, brief: timer.name }),
   });
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
@@ -328,7 +356,10 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     .trim().replace(/^["']|["']$/g, '').slice(0, 300);
   if (!text || text.includes('{')) return; // refuse JSON-ish garbage
   if (containsTimeAmounts(text)) return; // refuse invented durations — keep the phrasebook suggestion
-  db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1').run(text, timerId);
+  // still running AND still the same matter — otherwise this sentence belongs
+  // to a matter the timer has left, and writing it would be a cross-matter leak
+  db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1 AND cm_id IS ?')
+    .run(text, timerId, sourceCmId);
 }
 
 export function aiRouter({ db }) {

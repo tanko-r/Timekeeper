@@ -1,5 +1,14 @@
 # UI overhaul — session handoff
 
+> **Start here, then read these three, in this order:**
+> 1. `docs/ui/STATUS.md` — the status board. One file, updated every session.
+> 2. `docs/ui/PLAN.md` — the staged plan. Integrity first; nothing else ships before it.
+> 3. `docs/ui/INTEGRITY.md` — 33 confirmed defects that can misbill. Written for the owner.
+>
+> `docs/ui/BRIEF.md` is the contract (three owner rules). `docs/ui/teardown.md`
+> is the design standard. Everything below is the session-1 record.
+
+
 Written 2026-08-15, ~17:00 PDT, when the session ran low on usage. Read this
 plus `docs/ui/BRIEF.md` (the contract) and `docs/ui/teardown.md` (the design
 standard, with two appended owner constraints) to pick the work back up.

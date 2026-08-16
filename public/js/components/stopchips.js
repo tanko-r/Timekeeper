@@ -11,6 +11,36 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { formatSuggestion } from '/js/lib/narrativesync.js';
 
 // ---------------------------------------------------------------------------
+// THE MATTER IS THE AXIS  (wave-2c — the data-integrity fence; read first)
+//
+// docs/ui/BRIEF.md, "Data integrity", outranks everything else in this file:
+// a NARRATIVE — the client-facing sentence that lands on a bill — may never be
+// shown as belonging to, suggested for, pre-filled into or written onto an
+// entry for a different matter. Not across clients, and not between two
+// matters of the SAME client. Reusable WORDING (the phrasebook as a concept,
+// ghost text, text expansions, task-line fragments) is shared by design and
+// stays shared. Three things in here crossed that line, and all three are
+// fenced below — each one is marked "MATTER FENCE" where it lives:
+//
+//   1. THE OFFER OUTLIVED ITS MATTER. Everything here was keyed to the ENTRY,
+//      and an entry's matter can change while the offer is still mounted (row
+//      menu → Open entry… → change the matter → Done). Nothing re-derived: the
+//      heading still named the old matter, the caption still said "already
+//      saved", and the old matter's second sentence was still on offer under
+//      key cap 1. The matter is captured at mount now and re-read on every
+//      entry write; if it no longer matches, the offer dismisses itself.
+//   2. A BORROWED SENTENCE WAS A CHIP, AND CLAIMED PROVENANCE. On a thin
+//      matter the suggestions endpoint blends in the client's OTHER matters
+//      (`source: 'client'`); those arrived here as chips wearing the ⟲ history
+//      icon and the title "You wrote this on this matter before", which was
+//      false. They are dropped from the chip list entirely now.
+//   3. NO WRITE NAMED ITS MATTER. Every PATCH from this surface now carries
+//      `source_cm_id` — the matter the suggestion was built for — and the
+//      server refuses (409) if the entry has moved since. A conflict says so
+//      and writes nothing.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // WHAT THE STOP OFFER IS FOR  (wave-2b — read this before the history below)
 //
 // Measured on a five-entry day at 390×844, after wave 2a:
@@ -60,7 +90,20 @@ import { formatSuggestion } from '/js/lib/narrativesync.js';
 //   AND IT IS REVERSIBLE THREE WAYS: Undo in the toast the write raises, the
 //   alternatives right there, and the row's own narrative field.
 //
-// Re-measured, same five-entry day: chipped 12, unchipped 12 (see the report).
+// THE DAY COUNT, HONESTLY (wave-2c). This block used to end "Re-measured, same
+// five-entry day: chipped 12, unchipped 12", and a later comment claimed 12/13.
+// Nobody has reproduced either figure. The only count that has been reproduced
+// is the one at the top of this block — 12 ignored, 17 chipped — and it is
+// still what a five-entry day costs if the lawyer answers every offer.
+//
+// So the claim is withdrawn rather than restated at a different number. What
+// the design above actually rests on is a structural argument, which does not
+// need a measurement to be checked: doing NOTHING at a stop costs nothing (the
+// entry is already written, and a pure confirmation retires itself), so the
+// offer cannot make an ignored day longer than it was. Every remaining tap is
+// a lawyer choosing different words, which is work no design can delete.
+// Whoever next measures a five-entry day should put the number here with the
+// date and the viewport it was measured at, and nothing else should quote it.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -221,6 +264,28 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
   const cmId = timer.cm_id || entry.cm?.id || null;
   const cmLabel = entry.cm ? entry.cm.short_name : (timer.cm_short_name || null);
 
+  // ---- MATTER FENCE 1: THIS OFFER BELONGS TO ONE MATTER ----
+  //
+  // Captured at mount and never recomputed from props, because it is the thing
+  // every other piece of state here is derived FROM: the suggestions were built
+  // for this matter, the caption speaks for this matter, the undo target is
+  // this matter's entry as the stop found it, and the hot keys index this
+  // matter's alternatives. An entry can change matter while the offer stands —
+  // the row menu's "Open entry…" is two taps away and correcting a mis-keyed
+  // matter is an ordinary thing to do — and when it does, none of that state is
+  // true any more. So the matter is re-read on every entry write (below) and a
+  // mismatch takes the whole offer down rather than re-dressing it.
+  const mountCm = useRef(cmId);
+  const [moved, setMoved] = useState(false);
+
+  // Every write from this surface names the matter the suggestion was built
+  // for. PATCH /api/entries/:id refuses (409) when the entry has since moved,
+  // so a sentence cannot land on a matter it was not written for even if this
+  // component never noticed the move (another tab, the float window, a stale
+  // render). Matterless stops send nothing — there is no matter to claim.
+  const stamped = (body) => (
+    mountCm.current == null ? body : { ...body, source_cm_id: mountCm.current });
+
   // The narrative as the SERVER has it right now. It seeds from the stop
   // payload and re-reads on every entry write, which is what makes Undo honest
   // once the offer can stand for ten minutes: if the lawyer wrote the
@@ -251,6 +316,33 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
     // voice from, spec §5) and `own` decides what may be written WITHOUT
     // being asked for.
     const build = (phrases) => {
+      // ---- MATTER FENCE 2: NOTHING BORROWED IS EVER A CHIP ----
+      //
+      // /api/matters/:id/suggestions blends this matter's own phrases with the
+      // client's OTHER matters' whenever this matter's history is thin, and
+      // marks the blended ones `source: 'client'`. That blend is right for
+      // reusable wording — ghost text and expansions are shared by design — and
+      // wrong for a chip, because a chip is a whole client-facing SENTENCE that
+      // gets written to this entry, under the ⟲ icon and the title "You wrote
+      // this on this matter before". He did not: he wrote it on a different
+      // matter, sometimes for a different client. Marking it "not own" was not
+      // enough — it was still on offer, still one tap from the database, and
+      // still labelled as his own history.
+      //
+      // So a borrowed phrase is DROPPED here, by text, before anything else
+      // runs. By text rather than by flag because the same sentence reaches
+      // this pipeline twice: once from the endpoint, and once as the timer's
+      // stamped `suggested_narrative`, which routes/timers.js takes from the
+      // same blended list and which arrives wearing the ✦ instead. A matter
+      // with no wording of its own gets the narrative FIELD instead (see
+      // `noHistory`), which is what the brief asks for: generic phrasing or
+      // nothing, never another matter's sentence.
+      const borrowed = new Set();
+      for (const p of phrases || []) {
+        if (p.source !== 'client') continue;
+        const text = formatSuggestion(String(p.text || '').trim());
+        if (text) borrowed.add(text.toLowerCase());
+      }
       const byKey = new Map();
       const order = [];
       const add = (raw, meta) => {
@@ -263,6 +355,7 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
         const text = formatSuggestion(src);
         if (!text) return;
         const k = text.toLowerCase();
+        if (borrowed.has(k)) return; // fence 2 — another matter's sentence
         const had = byKey.get(k);
         if (had) {
           // PROVENANCE MERGES, IT DOES NOT COLLIDE. The line computed at timer
@@ -281,7 +374,14 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
         order.push(chip);
       };
       add(timer.suggested_narrative, { ai: true, own: false });
-      for (const p of phrases) add(p.text, { ai: false, own: p.source !== 'client' });
+      // Only this matter's own wording reaches the list at all now, so every
+      // phrasebook chip is `own` by construction. The flag stays because it is
+      // what decides the unasked pre-fill, and a chip that lost it silently
+      // would go back to being written without being asked for.
+      for (const p of phrases) {
+        if (p.source === 'client') continue; // fence 2
+        add(p.text, { ai: false, own: true });
+      }
       return order.slice(0, 3);
     };
     api.get(`/api/matters/${cmId}/suggestions`)
@@ -299,6 +399,18 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
       if (doneRef.current) return;
       api.get(`/api/entries/${entry.id}`).then((e) => {
         if (!alive || doneRef.current) return;
+        // ---- MATTER FENCE 1, the re-read ----
+        //
+        // This runs on EVERY entry write, and the entry fetch already carries
+        // the matter, so the axis that matters costs nothing extra to check.
+        // A mismatch is not something to re-render around: the suggestions,
+        // the "already saved" caption, the ticked settled sentence, the undo
+        // target and the 1/2/3 keys all describe a matter this entry no longer
+        // has, so the offer goes. Whatever wrote the entry is now responsible
+        // for it — and if the lawyer wants a suggestion for the NEW matter, the
+        // row's own narrative field and "Reuse" are both one tap away.
+        const nowCm = e.cm ? e.cm.id : (e.cm_id ?? null);
+        if (nowCm !== mountCm.current) { setMoved(true); finish(false); return; }
         const narrative = String(e.narrative || '');
         // Whatever else this write was, it is the truth about this entry now,
         // and the confirmation on screen is checked against it.
@@ -357,7 +469,7 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
     if (own.length === 0) return;
     autoRef.current = true;
     const chip = own[0];
-    api.patch(`/api/entries/${entry.id}`, { narrative: chip.text, narrative_ai: 0 })
+    api.patch(`/api/entries/${entry.id}`, stamped({ narrative: chip.text, narrative_ai: 0 }))
       .then(() => {
         if (doneRef.current) return;
         ownWriteRef.current = chip.text;
@@ -373,20 +485,39 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
           action: () => undoAuto(),
         });
       })
-      .catch(() => { autoRef.current = false; }); // leave it a plain chip list
+      .catch((err) => {
+        if (matterConflict(err)) return;
+        autoRef.current = false; // leave it a plain chip list
+      });
   }, [chips]); // eslint-disable-line
+
+  // ---- MATTER FENCE 3: A REFUSED WRITE IS SAID OUT LOUD ----
+  //
+  // The server compares `source_cm_id` against the entry's matter as it stands
+  // right now and answers 409 when they differ. That is not an error to swallow
+  // and not one to report as "failed": nothing was written, the reason is
+  // something the lawyer did (or another surface did) and can understand, and
+  // the offer itself is no longer about this entry. So it says so and goes.
+  // A 409 from the finalize lock is a different thing and keeps its own words.
+  function matterConflict(err) {
+    if (!err || err.status !== 409) return false;
+    if (/finaliz/i.test(String(err.body?.error || err.message || ''))) return false;
+    emitToast('That entry moved to another matter — nothing was written.', { error: true });
+    finish(false);
+    return true;
+  }
 
   async function undoAuto() {
     const before = liveRef.current;
     try {
-      await api.patch(`/api/entries/${entry.id}`, {
+      await api.patch(`/api/entries/${entry.id}`, stamped({
         narrative: before.narrative, narrative_ai: before.narrative_ai,
-      });
+      }));
       ownWriteRef.current = before.narrative;
       setApplied(null); // …and the offer stands, so a different phrase is one tap away
       setSaved(before.narrative);
       emitToast('Narrative put back');
-    } catch (e) { emitToast(e.message, { error: true }); }
+    } catch (e) { if (!matterConflict(e)) emitToast(e.message, { error: true }); }
   }
 
   // ---- WHAT IS ACTUALLY ON THIS ENTRY ----
@@ -398,7 +529,13 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
   // rewritten from the row can never leave a tick on screen against text the
   // entry does not carry, and can never hand a lawyer another client's
   // sentence to accept.
-  const settled = (applied !== null && String(saved).trim() === String(applied).trim())
+  //
+  // …and the matter is part of that gate. Comparing the TEXT alone is exactly
+  // how "already saved" survived the entry being re-pointed at another client:
+  // the sentence on screen really was the sentence in the database, and the
+  // claim was still false, because it was the wrong matter's sentence sitting
+  // on this entry. `moved` is the other half of the comparison.
+  const settled = (!moved && applied !== null && String(saved).trim() === String(applied).trim())
     ? applied : null;
 
   // ---- what retires itself: an offer that is asking for nothing ----
@@ -423,23 +560,26 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
     const before = liveRef.current;
     setBusy(true);
     try {
-      await api.patch(`/api/entries/${entry.id}`, {
+      await api.patch(`/api/entries/${entry.id}`, stamped({
         narrative: chip.text, narrative_ai: chip.ai ? 1 : 0,
-      });
+      }));
       doneRef.current = true;
       // The row is the confirmation — it redraws with the narrative on it and
       // its "needs a narrative" rail cleared. The toast only carries the way
       // back, because a pick overwrites.
       emitToast('Narrative saved', {
         actionLabel: 'Undo',
-        action: () => api.patch(`/api/entries/${entry.id}`, {
+        action: () => api.patch(`/api/entries/${entry.id}`, stamped({
           narrative: before.narrative, narrative_ai: before.narrative_ai,
-        }).then(() => { emitToast('Narrative put back'); onFiled(); })
-          .catch((err) => emitToast(err.message, { error: true })),
+        })).then(() => { emitToast('Narrative put back'); onFiled(); })
+          .catch((err) => emitToast(err.status === 409
+            ? 'That entry moved to another matter — nothing was written.'
+            : err.message, { error: true })),
       });
       onFiled();
     } catch (e) {
       setBusy(false);
+      if (matterConflict(e)) return;
       emitToast(e.message, { error: true });
     }
   }
@@ -459,8 +599,8 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
   // So the settled sentence is TEXT now, with a quiet way to change it, and a
   // chip means "tap this and the entry says something different". The 1 2 3
   // caps index the alternatives alone, because those are the only keys that do
-  // anything. Re-measured: 12 when the pre-fill is right (nothing to tap), 13
-  // when it is not (one alternative).
+  // anything. (This used to end with a re-measured "12, or 13" day count. It is
+  // withdrawn — see THE DAY COUNT, HONESTLY at the top of this file.)
   const alternatives = settled === null
     ? (chips || []) : (chips || []).filter((c) => c.text !== settled);
   const shown = alternatives;
@@ -513,6 +653,12 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
     // `saved` is in here because `shown` is derived from it: the digit keys
     // must index exactly the chips on screen, never a list from a moment ago.
   }, [chips, applied, saved, busy]); // eslint-disable-line
+
+  // The entry is not on this matter any more. The refresh above has already
+  // called finish(), so this render is the last one before the mount site drops
+  // the component — and there is nothing in the offer that would be true on it.
+  // Drawing nothing is the only honest frame to end on.
+  if (moved) return null;
 
   const hoursFiled = fmtHours(result.hours);
   const body = html`
@@ -665,10 +811,21 @@ function StopOffer({ popup, openEditor, onFiled, onClose, onClockDeduct }) {
         </button>
       </div>
 
+      ${/* The full phrasebook, and it is matter-scoped at both ends: the dialog
+            only ever lists the matter it was opened for (narrativehistory.js
+            drops a feed that arrives for a different one), and the write it
+            hands back is stamped with the matter this offer belongs to, so a
+            sentence chosen here cannot land on an entry that has moved. */''}
       ${historyOpen && cmId ? html`
         <${NarrativeHistory} cmId=${cmId} cmLabel=${cmLabel || 'this matter'}
           insertLabel="Use it" announce=${false}
-          onInsert=${(text) => pick({ text, ai: false })}
+          onInsert=${(text, srcCm) => {
+    if (srcCm != null && srcCm !== mountCm.current) {
+      emitToast('That list is for another matter — nothing was written.', { error: true });
+      return;
+    }
+    pick({ text, ai: false });
+  }}
           onClose=${() => setHistoryOpen(false)} />` : null}
     </div>`;
 

@@ -91,18 +91,25 @@ export function QuickCapture({ onClose, onFiled }) {
   const openerRef = useRef(null); // the chip that opened the picker, to focus back
   const timer = useRef(null);
   const seq = useRef(0);
+  // Enter was pressed while the parse on screen was still catching up with the
+  // line. See THE PARSE ON SCREEN IS NOT ALWAYS THE LINE below.
+  const fileWhenFresh = useRef(false);
 
   useEffect(() => { api.get('/api/ai/status').then(setAi).catch(() => {}); }, []);
   useEffect(() => { api.get('/api/task-codes').then(setCodes).catch(() => {}); }, []);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  function requestParse(text, useAi = false) {
+  // The parse REMEMBERS THE LINE IT IS ABOUT. Without that the component holds
+  // "a parse" with no way to tell whether it describes the sentence on screen
+  // or the one before it — which is the whole of the defect fenced below.
+  function requestParse(text, useAi = false, immediate = false) {
     const mySeq = ++seq.current;
     const run = () => api.post('/api/quickcapture', { line: text, ai: useAi })
-      .then((p) => { if (seq.current === mySeq) { setParsed(p); setMatterIdx(0); } })
+      .then((p) => { if (seq.current === mySeq) { setParsed({ ...p, line: text }); setMatterIdx(0); } })
       .catch(() => {})
       .finally(() => { if (useAi) setAiBusy(false); });
-    if (useAi) { setAiBusy(true); run(); }
+    if (useAi) { setAiBusy(true); clearTimeout(timer.current); run(); }
+    else if (immediate) { clearTimeout(timer.current); run(); }
     else { clearTimeout(timer.current); timer.current = setTimeout(run, 200); }
   }
 
@@ -112,11 +119,36 @@ export function QuickCapture({ onClose, onFiled }) {
     // The line is the source of truth: a pick describes the sentence that was
     // on screen when it was made, so editing the sentence retires it.
     setPickMatter(null); setPickHours(null); setPickCode(null);
+    // …and so does a queued file: more typing means he is not finished.
+    fileWhenFresh.current = false;
     if (text.trim().length >= 3) requestParse(text);
     // Nothing left to fill: the chips go with the parse, so the picker hanging
     // off one of them goes too rather than being orphaned open.
     else { setParsed(null); setFill(null); }
   }
+
+  // ---------------------------------------------------------------------------
+  // THE PARSE ON SCREEN IS NOT ALWAYS THE LINE ON SCREEN  (matter fence)
+  //
+  // The parse is debounced by 200ms and the dialog deliberately keeps the last
+  // one visible while the next is in flight, so the preview does not flicker on
+  // every keystroke. That is right for the preview and wrong for the FILE:
+  // Enter pressed inside that window filed the PREVIOUS sentence's parse.
+  //
+  // Reproduced: type "acme lease dispute review notice .3", wait for the
+  // preview, then correct the head of the line to "northgate diligence review
+  // notice .3" and press Enter. The entry landed on Acme — a different client —
+  // with the corrected line's own words, because `parsed.matches` still held
+  // the Acme ranking. Nothing on screen said so; the line said Northgate.
+  // That is time and a client-facing sentence filed against the wrong client
+  // from the app's fastest path, and the brief puts it above every other rule.
+  //
+  // So the parse now carries the line it was made from, and a parse that does
+  // not match the line is STALE: it may still be shown (the preview is only a
+  // preview), but it may never be filed. Enter on a stale parse re-parses the
+  // real line at once and files when that answer lands — the keystroke is not
+  // lost, it just waits for the truth.
+  const stale = !!parsed && parsed.line !== line;
 
   // What the entry WILL be: an explicit pick, else what the parser found.
   const matter = pickMatter || (parsed && parsed.matches[matterIdx]) || null;
@@ -165,11 +197,29 @@ export function QuickCapture({ onClose, onFiled }) {
   // being left below the fold.
   useEffect(() => { if (fill) focusFill(); }, [fill]); // eslint-disable-line
 
+  // The keystroke that arrived while the parse was catching up, honoured the
+  // moment the parse describes the line the lawyer actually typed. It runs
+  // exactly the same `advance` the key and the button run, so Enter-during-the
+  // -debounce and Enter-after-it can never do two different things.
+  useEffect(() => {
+    if (!fileWhenFresh.current) return;
+    if (!parsed || parsed.line !== line) return;
+    fileWhenFresh.current = false;
+    advance(null);
+  }, [parsed, line]); // eslint-disable-line
+
   async function file() {
-    if (!canFile) return;
+    if (!canFile || stale) return;
     try {
       await api.post('/api/entries', {
         date: todayStr(), cm_id: matter.id, narrative: parsed.narrative,
+        // The matter this sentence was composed for, named on the write itself.
+        // On a POST it is the same matter the entry is being created on, so it
+        // can only ever agree — which is the point: every surface that writes a
+        // suggested narrative says which matter it meant, and the one surface
+        // that cannot disagree still says it, so the rule has no exceptions to
+        // remember.
+        source_cm_id: matter.id,
         tasks: [{ task_code: code || '', duration: hours, fragment: '' }],
       });
       emitToast(code
@@ -177,12 +227,25 @@ export function QuickCapture({ onClose, onFiled }) {
         : `Filed as draft — ${fmtHours(hours)}h on ${matter.short_name} · no action code yet`);
       onFiled();
       onClose();
-    } catch (e) { emitToast(e.message, { error: true }); }
+    } catch (e) {
+      emitToast(e.status === 409 && !/finaliz/i.test(String(e.body?.error || e.message || ''))
+        ? 'That matter changed while this was filing — nothing was written.'
+        : e.message, { error: true });
+    }
   }
 
   // ONE next step, shared by Enter and by the primary button, so the keyboard
   // and the thumb can never disagree about what happens next.
   function advance(e) {
+    // A stale parse decides nothing — not what to file, and not which picker
+    // is "next". Re-parse the real line now and pick this up again when the
+    // answer lands (the effect below).
+    if (stale) {
+      fileWhenFresh.current = true;
+      if (line.trim().length >= 3) requestParse(line, false, true);
+      else { fileWhenFresh.current = false; setParsed(null); setFill(null); }
+      return;
+    }
     if (canFile) { file(); return; }
     if (!parsed) return;
     // Never a toggle here: pressing Enter (or the primary) a second time while

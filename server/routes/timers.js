@@ -483,7 +483,16 @@ export function timersRouter({ db, clock }) {
       // unknown at start (often zero) and must never be invented.
       if (timer.cm_id) {
         const sugg = matterSuggestions(db, timer.cm_id, todayLocal(clock()));
-        const cleanPhrase = sugg && sugg.phrases.find((p) => !containsTimeAmounts(p.text));
+        // source === 'matter' is the matter boundary (docs/ui/BRIEF.md, "Data
+        // integrity"). suggested_narrative becomes a whole billing sentence —
+        // the stop chip offers it, the close-out sheet prefills it — so it may
+        // only ever be THIS matter's own text. matterSuggestions blends sibling
+        // wording when a matter is thin, which is exactly when a first timer is
+        // started on a brand-new matter; taking phrases[0] unchecked stamped
+        // the sibling's phrase onto it. If this matter has nothing of its own,
+        // the suggestion stays NULL — the brief's "offer nothing" case.
+        const cleanPhrase = sugg && sugg.phrases.find(
+          (p) => p.source === 'matter' && !containsTimeAmounts(p.text));
         db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=?')
           .run(cleanPhrase ? cleanPhrase.text : null, timer.id);
         refineSuggestedNarrative({ db, clock }, timer.id).catch(() => {});

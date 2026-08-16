@@ -191,15 +191,39 @@ export function CloseOut({ onClose, openEditor }) {
     return m;
   }, [drafts]);
 
+  // ---- MATTER FENCE: A PRE-FILL MAY ONLY EVER BE THIS MATTER'S OWN WORDING --
+  //
+  // docs/ui/BRIEF.md, "Data integrity": a narrative written for matter A may
+  // never be pre-filled into an entry for matter B, not even between two
+  // matters of the same client. /api/matters/:id/suggestions blends in the
+  // client's OTHER matters whenever this matter's history is thin, and marks
+  // those `source: 'client'`. This component used to map that response to bare
+  // strings — `r.phrases.map((p) => p.text)` — which threw the one field that
+  // says where a sentence came from, and then put `[0]` straight into the
+  // row's textarea. Finalize & export saves every box that has text, so a
+  // sibling matter's billing sentence reached the database and the CSV without
+  // anybody choosing it.
+  //
+  // The source rides through the mapping now, and the PRE-FILL takes the first
+  // phrase that is this matter's own. An empty box is the correct fallback: it
+  // stays a draft, nothing is lost, and it will be here tomorrow — which is
+  // exactly what the panel already promises. (The suggestion list handed to
+  // GhostInput is untouched: ghost text is reusable wording and the brief says
+  // it is shared by design.)
+  const prefillOf = useCallback((cmId) => {
+    const own = (sugg[cmId] || []).find((p) => p.source !== 'client');
+    return own ? own.text : '';
+  }, [sugg]);
+
   // The box's value: what the lawyer typed, else the matter's top clean
-  // phrasebook line, so the primary CONFIRMS rather than composes. Resolved at
-  // render instead of synced by an effect — an effect that pre-fills has to
-  // know whether the field was touched, and the touched case is exactly
-  // `texts[key] !== undefined`.
+  // phrasebook line OF ITS OWN, so the primary CONFIRMS rather than composes.
+  // Resolved at render instead of synced by an effect — an effect that
+  // pre-fills has to know whether the field was touched, and the touched case
+  // is exactly `texts[key] !== undefined`.
   const valueOf = useCallback((g) => {
     if (texts[g.key] !== undefined) return texts[g.key];
-    return (sugg[g.cm?.id] || [])[0] || '';
-  }, [texts, sugg]);
+    return prefillOf(g.cm?.id);
+  }, [texts, prefillOf]);
 
   // ---- THE ONE NUMBER, and its complement ----
   // Counted in ENTRIES, because an entry is what gets locked and what becomes a
@@ -261,7 +285,12 @@ export function CloseOut({ onClose, openEditor }) {
     if (ids.length === 0) return undefined;
     let alive = true;
     Promise.all(ids.map((id) => api.get(`/api/matters/${id}/suggestions`)
-      .then((r) => [id, r.phrases.map((p) => p.text).filter((t) => !containsTimeAmounts(t))])
+      // `source` survives the mapping — see the fence above `prefillOf`. It is
+      // the difference between "he wrote this on this matter" and "somebody
+      // wrote this on a different one", and the pre-fill turns on it.
+      .then((r) => [id, r.phrases
+        .filter((p) => !containsTimeAmounts(p.text))
+        .map((p) => ({ text: p.text, source: p.source }))])
       .catch(() => [id, []])))
       .then((pairs) => {
         if (!alive) return;
@@ -290,17 +319,29 @@ export function CloseOut({ onClose, openEditor }) {
 
   // ---------- writes ----------
 
+  // Every narrative written from this panel names the matter its row was built
+  // for. The list is frozen at open and the primary can be pressed minutes
+  // later, so "the matter this row is about" and "the matter this entry is on"
+  // are two different facts; the server compares them and refuses (409) if they
+  // have come apart. A refusal writes nothing, and the caller stops rather than
+  // finalizing past it.
   async function save(d, text) {
     if (d.narrative_auto) return true;
     if (text === (d.narrative || '')) return true;
     try {
-      await api.patch(`/api/entries/${d.id}`, { narrative: text });
+      await api.patch(`/api/entries/${d.id}`, {
+        narrative: text,
+        ...(d.cm && d.cm.id != null ? { source_cm_id: d.cm.id } : {}),
+      });
       changedRef.current = true;
       savedRef.current += 1;
       setDrafts((list) => list.map((x) => (x.id === d.id ? { ...x, narrative: text } : x)));
       return true;
     } catch (e) {
-      emitToast(e.message, { error: true });
+      const moved = e.status === 409 && !/finaliz/i.test(String(e.body?.error || e.message || ''));
+      emitToast(moved
+        ? `${label(d)} moved to another matter — that narrative was not written.`
+        : e.message, { error: true });
       return false;
     }
   }
@@ -380,11 +421,24 @@ export function CloseOut({ onClose, openEditor }) {
     try {
       // Everything the lawyer left in a field is his answer — write it before
       // the day is locked, or the primary would finalize past his own text.
+      //
+      // …and if one of those writes is REFUSED, stop. A refusal here means the
+      // entry is not the entry this row described any more (it moved matter),
+      // and finalizing on past it would lock a draft whose narrative never
+      // landed — time filed under words nobody chose for it. The day is
+      // re-read instead, which puts the panel back on what is actually true.
       if (!ack) {
         for (const g of needs) {
           const text = valueOf(g);
           if (!String(text).trim()) continue;
-          for (const d of g.blank) await save(d, text); // eslint-disable-line no-await-in-loop
+          for (const d of g.blank) {
+            const ok = await save(d, text); // eslint-disable-line no-await-in-loop
+            if (!ok) {
+              emitToast('Nothing was finalized — the day has been re-read.', { error: true });
+              await load(false); // eslint-disable-line no-await-in-loop
+              return;
+            }
+          }
         }
       }
       if (ack) {
@@ -615,7 +669,7 @@ export function CloseOut({ onClose, openEditor }) {
                         <span class="co-item-had" title=${g.written[0].narrative}>${g.written[0].narrative}</span>` : null}
                     </p>` : null}
                   <${GhostInput} multiline rows=${2} value=${valueOf(g)}
-                    suggestions=${sugg[g.cm?.id] || []} expand=${expand}
+                    suggestions=${(sugg[g.cm?.id] || []).map((p) => p.text)} expand=${expand}
                     aria-label=${`Narrative for ${g.label}`}
                     placeholder="What did you do?"
                     onChange=${(t) => setTexts((p) => ({ ...p, [g.key]: t }))} />

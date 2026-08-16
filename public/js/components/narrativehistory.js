@@ -23,17 +23,49 @@ import { joinNarratives } from '/js/lib/narrativejoin.js';
 // "Insert" when the text goes straight onto the entry), and `announce=false`
 // lets it stay quiet because the stop chips raise their own toast — the one
 // carrying **Undo**, since applying a narrative over an entry overwrites.
+// MATTER FENCE (docs/ui/BRIEF.md, "Data integrity"). Everything in this dialog
+// is a whole client-facing sentence, so every one of them is matter-bound. Two
+// things follow, and both are here rather than at the call sites, because a
+// third call site would otherwise have to remember them:
+//
+//   1. THE LIST IS EMPTIED THE INSTANT THE MATTER CHANGES. `cmId` is a prop; a
+//      caller can change it under a mounted instance (the editor's matter
+//      picker does exactly that). Without this the previous matter's sentences
+//      stayed on screen — ticked, previewed and one "Use it" from an entry —
+//      under the NEW matter's title, for the length of one fetch.
+//   2. A FEED IS ONLY EVER RENDERED FOR THE MATTER IT WAS ASKED FOR. The
+//      response carries `matter_id`; a late answer for a matter we are no
+//      longer showing is dropped rather than displayed.
+//
+// …and `onInsert` hands the caller the matter the text came from, so the write
+// itself can be stamped with it (`source_cm_id`) and refused by the server if
+// the entry has moved meanwhile.
 export function NarrativeHistory({
   cmId, cmLabel, onInsert, onClose, insertLabel = 'Insert', announce = true,
 }) {
   const [rows, setRows] = useState(null);
   const [picked, setPicked] = useState([]); // entry ids, in pick order
   const [error, setError] = useState(null);
+  // The matter the rows on screen actually belong to. Never read from the prop:
+  // the prop is what we ASKED for, and the gap between the two is the leak.
+  const [rowsCm, setRowsCm] = useState(null);
 
   useEffect(() => {
     let alive = true;
+    // Nothing from the old matter survives the switch — not the rows, not the
+    // ticks, not the preview the primary would write.
+    setRows(null);
+    setRowsCm(null);
+    setPicked([]);
+    setError(null);
     api.get(`/api/matters/${cmId}/recent-narratives?limit=20`)
-      .then((r) => { if (alive) setRows(r.entries); })
+      .then((r) => {
+        if (!alive) return;
+        // eslint-disable-next-line eqeqeq
+        if (r.matter_id != null && r.matter_id != cmId) return; // another matter's feed
+        setRows(r.entries);
+        setRowsCm(r.matter_id != null ? r.matter_id : cmId);
+      })
       .catch((e) => { if (alive) setError(e.message); });
     return () => { alive = false; };
   }, [cmId]);
@@ -48,7 +80,12 @@ export function NarrativeHistory({
 
   function insert() {
     if (!preview) return;
-    onInsert(preview);
+    // The second argument is the matter these sentences were read from, not the
+    // matter currently asked for. They are the same in every shipped flow; if
+    // they ever were not, the caller stamps the write with the wrong one and
+    // the server would be the last thing standing between one client's sentence
+    // and another client's bill.
+    onInsert(preview, rowsCm);
     if (announce) {
       emitToast(`Narrative from ${chosen.length} ${chosen.length === 1 ? 'entry' : 'entries'} inserted`);
     }
