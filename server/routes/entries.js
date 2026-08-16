@@ -100,33 +100,45 @@ export function applyCustomValues(db, entryId, ops) {
   }
 }
 
-// Regenerate the stored narrative when the entry is multi-line. Consolidation
-// format follows the entry's matter → client task_billing flag (LEFT JOIN;
-// a matter with no linked client defaults to task-billed, same as loadEntry's
-// cm payload). Skipped entirely when the entry's narrative has been detached
-// from its task lines (narrative_manual=1) — that's the durability contract:
-// once the user has typed over the AUTO box past the point it parses back,
-// task-touching saves must not silently revert the manual text.
-export function syncNarrative(db, entryId) {
+// The task-line join this entry WOULD carry in AUTO, or null when it has too
+// few substantive lines to have one. Consolidation format follows the entry's
+// matter → client task_billing flag (LEFT JOIN; a matter with no linked client
+// defaults to task-billed, same as loadEntry's cm payload). Exposed on its own
+// so a caller can ask "is this text the machine text?" before deciding
+// anything — the PATCH route does, to tell a chosen sentence from AUTO's.
+export function autoNarrativeFor(db, entryId) {
   const tasks = db.prepare(
     'SELECT task_code, duration, fragment FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(entryId);
   const rounding = getSetting(db, 'rounding') || {};
-  const client = db.prepare(`
-    SELECT COALESCE(clients.task_billing, 1) AS task_billing,
-      entries.narrative_manual AS narrative_manual, entries.narrative AS narrative
+  const row = db.prepare(`
+    SELECT COALESCE(clients.task_billing, 1) AS task_billing
     FROM entries
     LEFT JOIN matters ON matters.id = entries.cm_id
     LEFT JOIN clients ON clients.id = matters.client_id
     WHERE entries.id = ?
   `).get(entryId);
+  return buildNarrative(tasks, {
+    increment: rounding.increment,
+    taskBilling: !row || !!row.task_billing,
+  });
+}
+
+// Regenerate the stored narrative when the entry is multi-line. Skipped
+// entirely when the entry's narrative has been detached from its task lines
+// (narrative_manual=1) — that's the durability contract: once the user has
+// typed over the AUTO box past the point it parses back, or picked a sentence
+// of his own (see the PATCH route's "chosen sentence"), task-touching saves
+// must not silently revert it.
+export function syncNarrative(db, entryId) {
+  const client = db.prepare(
+    'SELECT narrative_manual, narrative FROM entries WHERE id=?').get(entryId);
   // An EMPTY narrative is never a manual narrative worth protecting. Clearing
   // the AUTO box detaches it (narrative_manual=1) with nothing left to keep,
   // and the entry would then sit blank forever with fully written task lines
   // right above it — no way back short of toggling AUTO (2026-08-14 feedback:
   // "task filling doesn't seem to be working here").
   if (client && client.narrative_manual && String(client.narrative || '').trim()) return;
-  const taskBilling = !client || !!client.task_billing;
-  const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling });
+  const generated = autoNarrativeFor(db, entryId);
   if (generated != null) {
     // Clear the detach flag alongside the refill, or the entry would keep a
     // regenerated narrative that no longer tracks its task lines, and reopen
@@ -462,6 +474,30 @@ export function entriesRouter({ db, clock }) {
     const aiDraft = b.ai_draft !== undefined && String(b.ai_draft || '').trim()
       ? String(b.ai_draft).trim().slice(0, 2000)
       : row.ai_draft;
+    // ── the chosen sentence ────────────────────────────────────────────────
+    // A PATCH that carries narrative TEXT and says nothing about
+    // narrative_manual is a suggestion surface writing a sentence the lawyer
+    // picked: a stop chip, "More from this matter", the PiP narrative box, a
+    // close-out prefill. Until 2026-08-15 syncNarrative() then ran after the
+    // UPDATE and rebuilt the task-line join straight over it on any ≥2-line
+    // entry that was not already detached — the request answered 200, the
+    // response echoed the machine text and the toast said "Narrative saved",
+    // while the row never held the chosen sentence at all. docs/ui/BRIEF.md is
+    // absolute on this: no narrative may be lost, and nothing may be silently
+    // overwritten. So text that is NOT the join this entry would generate
+    // detaches the narrative, exactly as the editor's own AUTO-off rule does
+    // (entryeditor.js sends narrative_manual=1 for the same situation), and
+    // syncNarrative then leaves it standing.
+    //
+    // Deliberately narrow, so the ordinary AUTO sync is untouched:
+    //   • a client that states narrative_manual itself stays in charge;
+    //   • replaying identical text (every editor autosave) changes nothing;
+    //   • a blank narrative still refills from the task lines;
+    //   • text that IS the generated join stays attached — that is the Undo
+    //     path putting the AUTO sentence back, and it must land in AUTO.
+    const chosen = b.narrative !== undefined && b.narrative_manual === undefined
+      && nextNarrative.trim() && nextNarrative !== String(row.narrative ?? '')
+      ? nextNarrative : null;
     let timersSynced = [];
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
@@ -478,6 +514,16 @@ export function entriesRouter({ db, clock }) {
         now(), row.id);
       if (norm) writeTasks(db, row.id, norm.tasks);
       applyCustomValues(db, row.id, cv.ops);
+      // Measured against the task lines as they stand AFTER this write, so a
+      // save that changes lines and narrative together is judged on what the
+      // entry actually holds now. An entry with no join to regenerate (fewer
+      // than two substantive lines) has no AUTO box to detach from and keeps
+      // its flag, exactly as entryeditor.js does.
+      const join = chosen === null ? null : autoNarrativeFor(db, row.id);
+      if (join != null) {
+        db.prepare('UPDATE entries SET narrative_manual=? WHERE id=?')
+          .run(chosen === join ? 0 : 1, row.id);
+      }
       syncNarrative(db, row.id);
       if (cmId !== row.cm_id) touchCm(db, cmId, now());
       // Association glue (2026-07-13): a matterless timer feeding this entry
