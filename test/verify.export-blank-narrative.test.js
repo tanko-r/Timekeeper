@@ -58,13 +58,27 @@ test('PROVES: POST /api/export writes a .TIM line and a CSV row with an empty na
     const narrCol = csv[0].indexOf('narrative');
     const csvNarratives = csv.slice(1).map((row) => row[narrCol]);
 
+    // SCAFFOLD REPAIR (2026-08-16): the expected value was left as the literal
+    // placeholder 'SOMETHING', which no implementation can produce. The
+    // specification the auditor was writing down is stated instead: a blank
+    // narrative is a blank bill, so it must reach NEITHER file. The stimulus
+    // and the shape of the check are untouched.
     assert.deepEqual(
       { tim: timNarratives(r.body.tim), csv: csvNarratives },
-      { tim: ['SOMETHING'], csv: ['SOMETHING'] },
+      { tim: [], csv: [] },
       'DEFECT: the server emits a blank billing line. Neither POST /api/export nor '
       + 'formatTimEntries checks that an exported entry has a narrative; the only guard in '
       + 'the app is ExportDialog disabling its two file buttons in public/js/views/search.js.',
     );
+    assert.equal(r.body.count, 0, 'and it is not counted as something the file holds');
+    assert.deepEqual(r.body.entry_ids, [], 'and it is not queued for an exported stamp');
+    // …but it is not hidden either: the screen built to find leaking time must
+    // still show the 0.4 h this entry is holding.
+    const p = await t.fetchJson(
+      'GET', '/api/export/preview?from=2026-07-06&to=2026-07-06&includeDrafts=1');
+    assert.deepEqual(p.body.entries.map((x) => x.id), [e.id],
+      'the blank entry is still reported to the export screen as time in range');
+    assert.equal(p.body.count, 0, 'but the preview agrees the file will not hold it');
   } finally { await t.close(); }
 });
 
@@ -84,8 +98,11 @@ test('PROVES: an attention-scoped export reaches the same blank draft with no in
     const r = await t.fetchJson('POST', '/api/export', {
       from: '2026-07-06', to: '2026-07-06', attention: 'either',
     });
+    // SCAFFOLD REPAIR (2026-08-16): same unfilled 'SOMETHING' placeholder as
+    // above, replaced by the specification — the blank draft must not reach the
+    // .TIM down this second server path either.
     assert.deepEqual(
-      timNarratives(r.body.tim), ['SOMETHING'],
+      timNarratives(r.body.tim), [],
       'DEFECT: attention=either exports drafts without includeDrafts, so the blank line '
       + 'reaches the file down a second server path.',
     );

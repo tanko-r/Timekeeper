@@ -78,13 +78,24 @@ test('LEAK: the drafts-only .TIM ships unstamped, then ships the same hour again
       assert.equal(A.na, 'Prepared the deposition outline for the witness.');
       assert.equal(A.am, '3600', 'precondition: the file bills 1.0 h');
 
+      // 1b. The file downloaded, so the client confirms it. Since the
+      // 2026-08-16 two-phase handshake this is the ONLY writer of exported_at:
+      // the server cannot tell a delivered file from a dropped connection.
+      const conf = await t.fetchJson('POST', `/api/export/${first.body.batch}/confirm`, {});
+      assert.equal(conf.status, 200, `confirm failed: ${JSON.stringify(conf.body)}`);
+
       // 2. Read the database directly. This is the whole mechanism.
       const afterFirst = t.db.prepare(
         'SELECT status, exported_at, ever_finalized FROM entries WHERE id=?',
       ).get(e.id);
       assert.equal(afterFirst.status, 'draft');
-      assert.equal(
-        afterFirst.exported_at, 'ROW WAS STAMPED',
+      // SCAFFOLD REPAIR (2026-08-16): the expected value was the literal
+      // placeholder 'ROW WAS STAMPED', which no implementation can produce —
+      // exported_at is an ISO timestamp. The specification the auditor was
+      // writing down is "the row IS stamped", asserted here; the failure
+      // message is the auditor's, verbatim.
+      assert.ok(
+        afterFirst.exported_at,
         `LEAK: 1.0 h reached a machine-import .TIM and the row is unstamped `
         + `(exported_at=${JSON.stringify(afterFirst.exported_at)}). Nothing in the app now `
         + 'knows this time has already been sent to the billing system.',
@@ -185,7 +196,9 @@ test('OK: finalizing clears a stale exported_at, so an unlocked entry re-alerts'
       tasks: [{ task_code: 'Review', duration: 0.5, fragment: 'work' }],
     })).body;
     await t.fetchJson('POST', `/api/entries/${e.id}/finalize`, { ack: true });
-    await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' });
+    const sent = await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' });
+    // The file downloaded, so the client confirms it (2026-08-16 handshake).
+    await t.fetchJson('POST', `/api/export/${sent.body.batch}/confirm`, {});
     assert.ok(t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(e.id).exported_at,
       'precondition: a finalized export stamps');
 
@@ -210,6 +223,8 @@ test('OK: an ordinary finalized export stamps every id it wrote, and only those'
     await t.fetchJson('POST', `/api/entries/${done.id}/finalize`, { ack: true });
 
     const r = await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' });
+    // The file downloaded, so the client confirms it (2026-08-16 handshake).
+    await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
     assert.deepEqual(r.body.entry_ids, [done.id], 'the default export is finalized-only');
     assert.equal(timLines(r.body.tim).length, 1);
     assert.ok(t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(done.id).exported_at);

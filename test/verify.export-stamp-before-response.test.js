@@ -197,6 +197,11 @@ test('CONTROL: an intact request returns the CSV and stamps it', () =>
     const r = await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
     assert.equal(r.status, 200);
     assert.ok(r.body.csv.includes('Acme lease'));
+    // The client read the whole payload and wrote the file, so it confirms the
+    // batch — the only writer of exported_at since the 2026-08-16 handshake.
+    // This is the step the cut connections above can never reach.
+    const conf = await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
+    assert.equal(conf.status, 200, `confirm failed: ${JSON.stringify(conf.body)}`);
     const row = t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(fin.id);
     assert.ok(row.exported_at, 'a delivered export is stamped — this is correct behaviour');
   }));

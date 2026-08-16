@@ -83,10 +83,21 @@ test('PROVES: a ledger chipped to one matter stamps a second client exported', a
 
     // The literal body the browser sends when Export… → Download CSV is used
     // from that same chipped ledger.
+    //
+    // STIMULUS REPAIR (2026-08-16): as recorded, this body carried only
+    // from/to — because scopeFor() dropped the chip. No server can narrow to a
+    // matter a request never names, so the stimulus proved nothing about the
+    // fix; it is now the body the repaired scopeFor() sends, cm_id included.
+    // The OUTCOME assertion below is untouched.
     const r = await t.fetchJson('POST', '/api/export', {
       from: '2026-07-06', to: '2026-07-06', includeDrafts: false, attention: null,
+      cm_id: acme.id,
     });
     assert.equal(r.status, 200);
+    // …and the file is confirmed as delivered, so the stamps really are written
+    // (POST /api/export marks nothing on its own since the 2026-08-16 handshake).
+    const conf = await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
+    assert.equal(conf.status, 200, `confirm failed: ${JSON.stringify(conf.body)}`);
 
     const stampedOther = t.db.prepare(
       'SELECT COUNT(*) c FROM entries WHERE cm_id=? AND exported_at IS NOT NULL',
@@ -115,6 +126,10 @@ test('REFUTES "marked exported without reaching the file": every stamped id is i
     const r = await t.fetchJson('POST', '/api/export', {
       from: '2026-07-06', to: '2026-07-06', includeDrafts: false, attention: null,
     });
+
+    // The download succeeded, so the client confirms it — the only thing that
+    // writes exported_at since the 2026-08-16 two-phase handshake.
+    await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
 
     const rows = parseCsv(r.body.csv);
     const iId = rows[0].indexOf('entry_id');
@@ -177,9 +192,12 @@ test('REFUTES "permanently stamped and unfindable": the stamp is reversible from
   const { t, acme, northgate } = await boot();
   try {
     const ids = await seedTwoClients(t, acme, northgate);
-    await t.fetchJson('POST', '/api/export', {
+    const wide = await t.fetchJson('POST', '/api/export', {
       from: '2026-07-06', to: '2026-07-06', includeDrafts: false, attention: null,
     });
+    // The download succeeded, so the client confirms it — the only thing that
+    // writes exported_at since the 2026-08-16 two-phase handshake.
+    await t.fetchJson('POST', `/api/export/${wide.body.batch}/confirm`, {});
 
     // Findable: the ledger's "Already exported" chip filters on exported_at,
     // which /api/entries returns on every row.

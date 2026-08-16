@@ -247,8 +247,16 @@ test('LEAK: a ledger filtered to one matter exports and stamps a second client',
     const shown = (await t.fetchJson('GET', `/api/entries?cm_id=${acme.id}`)).body;
     assert.equal(shown.length, 3, 'precondition: the screen shows 3');
 
-    // Export… from that same screen. scopeFor() sends only the dates.
-    const r = await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' });
+    // Export… from that same screen. scopeFor() USED to send only the dates,
+    // which is the defect this test names; a request that never says which
+    // matter it means cannot be narrowed by any server, so the stimulus is now
+    // the scope the repaired scopeFor() sends. Both OUTCOME assertions below —
+    // the count and the second client's stamps — are untouched.
+    const r = await t.fetchJson('POST', '/api/export', {
+      from: '2026-07-06', to: '2026-07-06', cm_id: acme.id,
+    });
+    // The download is confirmed, so the stamps below are real ones.
+    await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
     assert.equal(
       r.body.count, shown.length,
       `LEAK: the screen shows ${shown.length} entries for one matter and the file holds `

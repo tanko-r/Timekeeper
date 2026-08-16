@@ -138,10 +138,17 @@ test('PROVING FAIL: a connection that dies between headers and payload still sta
 // ---------------------------------------------------------------------------
 // 3. EVIDENCE — how far the damage goes. After the orphaned request above, is
 //    the time still findable by the backstops built to find it?
-//    This test asserts what the app ACTUALLY does today, so it passes; read the
-//    assertion messages as the finding.
+//
+//    UPDATED 2026-08-16, with the two-phase handshake landed. This test used to
+//    record the damage — alerts 0, chip 0 — because the stamp was written
+//    inside the request. That is the very defect the two PROVING FAIL tests
+//    above assert against, so once they pass this one MUST read the other way:
+//    the same orphaned request now leaves the entry exactly where it was, and
+//    every backstop still reports the 2.0 h as owed. The assertions are
+//    inverted, not relaxed; the stimulus is byte-for-byte the one the auditor
+//    wrote, and the audit_log observation at the end is untouched.
 // ---------------------------------------------------------------------------
-test('EVIDENCE: after the undelivered export the unexported backstops report nothing owed',
+test('EVIDENCE: after the undelivered export the unexported backstops still report the time owed',
   async () => {
     const { t, acme } = await boot();
     try {
@@ -171,11 +178,13 @@ test('EVIDENCE: after the undelivered export the unexported backstops report not
       const alertsAfter = (await t.fetchJson('GET', '/api/dashboard')).body.alerts.unexported;
       const chipAfter = await t.fetchJson('GET',
         `/api/export/preview?from=${DAY}&to=${DAY}&attention=unexported`);
-      assert.equal(alertsAfter.count, 0,
-        'the dashboard stalled-time callout has gone silent about 2.0 h that never reached a file');
-      assert.equal(alertsAfter.hours, 0);
-      assert.equal(chipAfter.body.count, 0,
-        'and "Not exported yet" / attention=unexported no longer lists it');
+      assert.equal(alertsAfter.count, 1,
+        'the dashboard stalled-time callout must still name the 2.0 h that never reached a file');
+      assert.equal(alertsAfter.hours, 2.0);
+      assert.equal(chipAfter.body.count, 1,
+        'and "Not exported yet" / attention=unexported must still list it');
+      assert.equal(t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(e.id).exported_at,
+        null, 'nothing was marked sent, because nothing was delivered');
 
       // No audit trail of the export at all — the table exists and other
       // destructive actions write to it.
@@ -197,6 +206,9 @@ test('EVIDENCE: the same range re-exports byte-identically afterwards, so the ti
       const e = await finalized(t, acme.id, 'Attended to the closing checklist.', 2.0);
       const first = await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
       assert.equal(first.body.count, 1);
+      // The file arrived, so the client confirms the batch — the only writer of
+      // exported_at since the 2026-08-16 two-phase handshake.
+      await t.fetchJson('POST', `/api/export/${first.body.batch}/confirm`, {});
       const stamped = t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(e.id).exported_at;
       assert.ok(stamped, 'precondition: it is stamped');
 
@@ -219,7 +231,9 @@ test('EVIDENCE: a wrong stamp can only be cleared by unlocking and re-finalizing
     const { t, acme } = await boot();
     try {
       const e = await finalized(t, acme.id, 'Attended to the closing checklist.', 2.0);
-      await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
+      const sent = await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
+      // The file arrived, so the client confirms it (2026-08-16 handshake).
+      await t.fetchJson('POST', `/api/export/${sent.body.batch}/confirm`, {});
       assert.ok(t.db.prepare('SELECT exported_at FROM entries WHERE id=?').get(e.id).exported_at);
 
       // re-finalizing is a no-op on an already finalized entry

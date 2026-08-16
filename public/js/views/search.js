@@ -561,10 +561,15 @@ export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }
   const { from, to, attention } = scope;
   const drafting = attention ? null : includeDrafts;
 
+  // The preview must ask for the SAME scope the download will send, or the
+  // number under the button is not the number the file holds.
   const attQs = attention ? `&attention=${attention}` : '';
+  const scopeQs = (scope.cm_id ? `&cm_id=${scope.cm_id}` : '')
+    + (scope.ids ? `&ids=${scope.ids.join(',')}` : '');
+  const scopeKey = `${scope.cm_id || ''}|${(scope.ids || []).join(',')}`;
   const { loading, data, error } = useAsync(
-    () => api.get(`/api/export/preview?from=${from}&to=${to}&includeDrafts=${includeDrafts ? 1 : 0}${attQs}`),
-    [from, to, attention, includeDrafts]);
+    () => api.get(`/api/export/preview?from=${from}&to=${to}&includeDrafts=${includeDrafts ? 1 : 0}${attQs}${scopeQs}`),
+    [from, to, attention, includeDrafts, scopeKey]);
 
   // The preview returns every row in range (matterless included, so the count
   // of time that cannot leave is visible); the rows that become a file are the
@@ -587,7 +592,12 @@ export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }
     if (busy) return;
     setBusy(true);
     try {
-      const body = { from, to, includeDrafts, attention, ...(format === 'text' ? { markExported: false } : {}) };
+      const body = {
+        from, to, includeDrafts, attention,
+        cm_id: scope.cm_id || null,
+        ids: scope.ids || null,
+        ...(format === 'text' ? { markExported: false } : {}),
+      };
       const r = await api.post('/api/export', body);
       if (r.count === 0) { emitToast('Nothing in that range to send.'); return; }
       if (format === 'text') {
@@ -595,11 +605,14 @@ export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }
         emitToast('Plain-text summary copied to the clipboard');
       } else {
         const range = `${from}${from !== to ? `_${to}` : ''}`;
-        if (format === 'tim') {
-          downloadText(`time_${range.replace(/-/g, '')}.TIM`, r.tim, 'text/plain');
-        } else {
-          downloadText(`timekeeper-${range}.csv`, r.csv);
-        }
+        const wrote = format === 'tim'
+          ? downloadText(`time_${range.replace(/-/g, '')}.TIM`, r.tim, 'text/plain')
+          : downloadText(`timekeeper-${range}.csv`, r.csv);
+        // The stamp happens HERE and nowhere else. The server built the payload
+        // but marked nothing: only this side knows the file was really written,
+        // so only this side may say the time has been sent. downloadText throws
+        // rather than returning if it could not hand over a file.
+        if (wrote && r.batch) await api.post(`/api/export/${r.batch}/confirm`);
         emitToast(`${r.count} ${r.count === 1 ? 'entry' : 'entries'} written to a ${format === 'tim' ? '.TIM' : 'CSV'} file`);
       }
       onDone();
@@ -655,7 +668,8 @@ export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }
           ${drafting === true ? html`
             <${Note} actionLabel="Leave drafts out" onAction=${() => setIncludeDrafts(false)}>
               ${drafts.length} ${drafts.length === 1 ? 'draft is' : 'drafts are'} included.
-              A draft goes into the file but is never stamped exported.
+              A draft that goes into the file is marked sent like anything else — it is a real
+              billing line once it is imported.
             <//>` : null}
 
           ${blank.length > 0 ? html`
@@ -698,8 +712,9 @@ export function ExportDialog({ scope, increment, onClose, onDone, onShowDrafts }
           </div>
 
           <p class="export-foot muted small">
-            Downloading a file stamps each finalized entry as exported; you can re-export any time.
-            Range and status come from the ledger’s filters behind this dialog.
+            An entry is marked exported once the file has actually downloaded, and not before;
+            you can re-export any time. Range, status, client/matter and any picked rows all come
+            from the ledger behind this dialog.
           </p>
         <//>`}
     <//>`;
@@ -751,7 +766,9 @@ function attentionOf(filters) {
 function caveatsOf(filters) {
   const c = [];
   if (filters.q) c.push('the search text');
-  if (filters.cm) c.push('the client/matter filter');
+  // The client/matter filter USED to be listed here. It travels now: scopeFor
+  // sends cm_id and POST /api/export narrows on it, so a ledger chipped to one
+  // matter writes and stamps that matter only.
   if (filters.task) c.push('the task filter');
   if (filters.billable !== '') c.push('the billable filter');
   if (filters.exported === 'yes') c.push('the “already exported” filter');
@@ -771,6 +788,11 @@ function scopeFor(filters, list, { ids = null, useListDates = false } = {}) {
     attention: attentionOf(filters),
     includeDrafts: list.some((e) => e.status === 'draft') && !attentionOf(filters) && !!ids,
     caveats: caveatsOf(filters),
+    // The two narrowings a file can carry. A date range on its own is WIDER
+    // than what the screen is showing, and the export stamps whatever it wrote:
+    // without these, chipping the ledger to one matter still wrote — and marked
+    // exported — a second client's time.
+    cm_id: filters.cm ? filters.cm.id : null,
     ids,
   };
 }

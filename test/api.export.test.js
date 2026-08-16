@@ -50,10 +50,43 @@ test('export: finalized only by default, exact CSV shape, stamps exported_at', (
     assert.match(r.body.text, /Acme lease/);
     assert.match(r.body.text, /1\.5/);
 
+    // The payload alone stamps nothing: since the 2026-08-16 two-phase
+    // handshake the client confirms the batch once the file has downloaded,
+    // and that is the only writer of exported_at.
+    const midway = (await t.fetchJson('GET', `/api/entries/${fin.id}`)).body;
+    assert.equal(midway.exported_at, null, 'building the file marks nothing sent');
+    const conf = await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
+    assert.equal(conf.status, 200, `confirm failed: ${JSON.stringify(conf.body)}`);
+
     const after = (await t.fetchJson('GET', `/api/entries/${fin.id}`)).body;
     assert.ok(after.exported_at);
     const draftAfter = (await t.fetchJson('GET', `/api/entries/${draft.id}`)).body;
     assert.equal(draftAfter.exported_at, null);
+  }));
+
+test('a confirm is idempotent and stamps only the ids its own batch recorded', () =>
+  withData(async (t, { fin, draft }) => {
+    const r = await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06' });
+    assert.deepEqual(r.body.entry_ids, [fin.id]);
+
+    const first = await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
+    assert.equal(first.body.stamped, 1);
+    const stamp = (await t.fetchJson('GET', `/api/entries/${fin.id}`)).body.exported_at;
+    assert.ok(stamp);
+
+    // A retried confirm — the phone that resent the request — writes nothing.
+    const again = await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`,
+      { ids: [draft.id] });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.repeat, true, 'the second confirm is recognised as a repeat');
+    assert.equal((await t.fetchJson('GET', `/api/entries/${fin.id}`)).body.exported_at, stamp,
+      'and the original stamp is untouched');
+    // …and an id smuggled into the body is never stamped: only the batch says
+    // what reached the file.
+    assert.equal((await t.fetchJson('GET', `/api/entries/${draft.id}`)).body.exported_at, null);
+
+    const bogus = await t.fetchJson('POST', '/api/export/not-a-batch/confirm', {});
+    assert.equal(bogus.status, 404, 'an unknown batch cannot stamp anything');
   }));
 
 test('export can include drafts explicitly', () =>
@@ -110,11 +143,22 @@ test('dashboard: today totals, alerts for invalid drafts and unexported finalize
     assert.ok(Array.isArray(d.timers));
   }));
 
-test('export stamps only finalized entries; finalize clears exported_at', () =>
+// A draft written into a file is a real billing line the moment it is imported.
+// Leaving it unstamped (the rule until 2026-08-16) meant the same hour shipped
+// AGAIN as soon as it was finalized, with nothing in either file to tie the two
+// import lines together. What reached the file is recorded as sent, draft or not.
+test('export stamps every entry that reached the file, drafts included; finalize clears exported_at', () =>
   withData(async (t, { fin, draft }) => {
-    await t.fetchJson('POST', '/api/export', { from: '2026-07-06', to: '2026-07-06', includeDrafts: true });
+    const r = await t.fetchJson('POST', '/api/export',
+      { from: '2026-07-06', to: '2026-07-06', includeDrafts: true });
+    assert.ok(r.body.entry_ids.includes(draft.id), 'precondition: the draft is in the file');
+    const midway = (await t.fetchJson('GET', `/api/entries/${draft.id}`)).body;
+    assert.equal(midway.exported_at, null, 'building the file marks nothing sent');
+
+    await t.fetchJson('POST', `/api/export/${r.body.batch}/confirm`, {});
     const draftAfter = (await t.fetchJson('GET', `/api/entries/${draft.id}`)).body;
-    assert.equal(draftAfter.exported_at, null, 'drafts must not be stamped');
+    assert.ok(draftAfter.exported_at,
+      'a draft that shipped in the file is recorded as shipped — otherwise it ships again once finalized');
 
     // exported finalized entry gets unlocked, edited, re-finalized → needs re-export
     await t.fetchJson('POST', `/api/entries/${fin.id}/unlock`);
@@ -124,6 +168,11 @@ test('export stamps only finalized entries; finalize clears exported_at', () =>
     assert.equal(refin.exported_at, null, 'finalize must clear exported_at so it re-alerts');
   }));
 
+// The export never re-rounds: it writes the number the database holds. What the
+// database holds is a tenth of an hour, quantised at the point of STORAGE
+// (owner decision 2026-08-16 — all billing in 1/10 h increments), so a 1.25 h
+// line is stored and exported as 1.3, and the ledger, the CSV, the .TIM and the
+// narrative brackets agree by construction.
 test('CSV emits stored durations exactly (no display re-rounding)', () =>
   withData(async (t, { acme }) => {
     const e = (await t.fetchJson('POST', '/api/entries', {
@@ -131,9 +180,11 @@ test('CSV emits stored durations exactly (no display re-rounding)', () =>
       tasks: [{ task_code: 'Draft', duration: 1.25, fragment: '' }],
     })).body;
     await t.fetchJson('POST', `/api/entries/${e.id}/finalize`);
+    const stored = t.db.prepare('SELECT duration FROM entry_tasks WHERE entry_id=?').get(e.id).duration;
     const r = await t.fetchJson('POST', '/api/export', { from: '2026-07-05', to: '2026-07-05' });
     const line = r.body.csv.split('\r\n')[1];
-    assert.ok(line.includes(',Draft,1.25,'), `duration must stay 1.25, got: ${line}`);
+    assert.ok(line.includes(`,Draft,${stored},`),
+      `the CSV must carry the stored duration ${stored} unchanged, got: ${line}`);
   }));
 
 test('CSV grows field:<Name> columns; no fields = legacy header', () =>

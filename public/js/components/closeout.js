@@ -486,7 +486,12 @@ export function CloseOut({ onClose, openEditor }) {
       setPhase('blocked');
       return;
     }
-    downloadText(`timekeeper-${date}.csv`, r.csv);
+    // Confirm only once the file is really in the browser's hands: POST
+    // /api/export stamps nothing on its own, so a dropped response leaves the
+    // day alerting as unsent instead of going quiet (2026-08-16 handshake).
+    if (downloadText(`timekeeper-${date}.csv`, r.csv) && r.batch) {
+      await api.post(`/api/export/${r.batch}/confirm`);
+    }
     const fresh = await api.get('/api/dashboard');
     if (left.length === 0) {
       // NOTHING LEFT TO DECIDE — so this is a snackbar, not a dialog. The

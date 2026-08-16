@@ -107,7 +107,12 @@ test('export preview filters to exactly what each flag means', () =>
     await t.fetchJson('POST', `/api/entries/${unsent.id}/finalize`);
     const sent = await mk('2026-07-04', 0.6);
     await t.fetchJson('POST', `/api/entries/${sent.id}/finalize`);
-    await t.fetchJson('POST', '/api/export', { from: '2026-07-04', to: '2026-07-04' });
+    // Export is a two-step handshake: POST builds the file and stamps NOTHING;
+    // the client confirms once the download has actually reached it, and only
+    // that confirm writes exported_at. Without the confirm this entry is —
+    // correctly — still unexported, so the confirm is part of the stimulus.
+    const ex = await t.fetchJson('POST', '/api/export', { from: '2026-07-04', to: '2026-07-04' });
+    await t.fetchJson('POST', `/api/export/${ex.body.batch}/confirm`, {});
 
     const q = async (attention) => (await t.fetchJson(
       'GET', `/api/export/preview?from=2026-07-01&to=${TODAY}&attention=${attention}`)).body;

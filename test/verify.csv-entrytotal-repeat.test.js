@@ -217,6 +217,9 @@ test('FACT: across a mixed day nothing is dropped, and the honest reads agree wi
     });
 
     const exp = (await t.fetchJson('POST', '/api/export', { from: TODAY, to: TODAY })).body;
+    // The file downloaded, so the client confirms the batch — the only writer
+    // of exported_at since the 2026-08-16 two-phase handshake.
+    await t.fetchJson('POST', `/api/export/${exp.batch}/confirm`, {});
     const c = csv(exp.csv);
 
     assert.equal(exp.count, 3, 'three entries in the payload');
@@ -257,11 +260,16 @@ test('FACT: across a mixed day nothing is dropped, and the honest reads agree wi
 test('FACT: the app itself never sums the entry_total column anywhere', async () => {
   const { execFileSync } = await import('node:child_process');
   const root = new URL('..', import.meta.url).pathname;
+  // SCAFFOLD REPAIR (2026-08-16): the expected value pinned the grep's LINE
+  // NUMBER, so any edit above the header in export.js failed this test while
+  // the fact it asserts — exactly one mention, and it is the CSV header name —
+  // was still true. The line number is dropped from the comparison; the file,
+  // the text and the "exactly one hit" specification are unchanged.
   const hits = execFileSync('grep', [
     '-rn', 'entry_total', `${root}server`, `${root}public`, `${root}scripts`,
   ], { encoding: 'utf8' }).trim().split('\n');
-  assert.deepEqual(hits.map((h) => h.replace(root, '')), [
-    'server/routes/export.js:12:  \'narrative\', \'entry_total\', \'entry_id\',',
+  assert.deepEqual(hits.map((h) => h.replace(root, '').replace(/^([^:]+):\d+:/, '$1:')), [
+    'server/routes/export.js:  \'narrative\', \'entry_total\', \'entry_id\',',
   ], `the only mention of entry_total in shipped code is the header name:\n${hits.join('\n')}`);
 });
 
@@ -287,7 +295,11 @@ test('SCOPE: every CSV narrative belongs to the matter on its own row', () =>
     for (const r of c.body) {
       const id = Number(c.cell(r, 'entry_id'));
       const row = t.db.prepare('SELECT cm_id, narrative FROM entries WHERE id=?').get(id);
-      const cm = t.db.prepare('SELECT cm_number, short_name FROM cms WHERE id=?').get(row.cm_id);
+      // SCAFFOLD REPAIR (2026-08-16): this read named the `cms` table, which
+      // migration v6 renamed to `matters` — every run threw SQLITE_ERROR before
+      // reaching the assertion, so the matter-boundary check below had never
+      // actually run. Table name only; the assertions are the auditor's.
+      const cm = t.db.prepare('SELECT cm_number, short_name FROM matters WHERE id=?').get(row.cm_id);
       assert.equal(c.cell(r, 'cm_number'), cm.cm_number, 'row is keyed to its own matter');
       assert.equal(c.cell(r, 'narrative'), row.narrative,
         'the narrative on the row is the narrative stored on that entry, not another matter\'s');

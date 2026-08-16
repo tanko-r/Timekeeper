@@ -142,7 +142,16 @@ export async function streamNdjson(path, body, onLine, signal) {
   }
 }
 
+// Hands the browser a file and answers whether it really did. The export flow
+// stamps entries "exported" only after this returns truthy, so it must never
+// report success it did not have: a missing or empty payload (a response the
+// client never finished reading) throws instead of quietly writing a 0-byte
+// file, and nothing here is wrapped in a try/catch — a caller that cannot make
+// a file must land in its own catch and leave the time alerting as unsent.
 export function downloadText(filename, text, mime = 'text/csv') {
+  if (typeof text !== 'string' || text === '') {
+    throw new Error('Nothing to save — the file was empty, so no time has been marked exported.');
+  }
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -150,4 +159,5 @@ export function downloadText(filename, text, mime = 'text/csv') {
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+  return true;
 }

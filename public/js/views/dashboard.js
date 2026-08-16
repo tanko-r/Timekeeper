@@ -147,7 +147,12 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       emitToast('No finalized entries today — finalize first (or use the Export page for drafts).');
       return;
     }
-    downloadText(`timekeeper-${d.date}.csv`, r.csv);
+    // Confirm only once the file is really in the browser's hands: POST
+    // /api/export stamps nothing on its own, so a dropped response leaves the
+    // time alerting as unsent instead of going quiet (2026-08-16 handshake).
+    if (downloadText(`timekeeper-${d.date}.csv`, r.csv) && r.batch) {
+      await api.post(`/api/export/${r.batch}/confirm`);
+    }
     emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'} as CSV`);
     bumpRefresh();
   }
