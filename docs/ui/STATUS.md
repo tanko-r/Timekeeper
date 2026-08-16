@@ -4,7 +4,7 @@
 last, commit it with the work. If it disagrees with reality, reality is right
 and this file is stale — fix it.
 
-Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-15, end of session 1
+Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 2
 
 ---
 
@@ -13,10 +13,27 @@ Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-15, end of session 1
 | | |
 |---|---|
 | Suites | 902 tests, 811 pass, 91 fail — **the failures are deliberate leak proofs**, not regressions. The 633 pre-audit tests all pass. |
-| e2e | `node scripts/e2e-smoke.mjs` green as of the last commit |
-| Working tree | **Uncommitted**: the integrity fence (server + client), written before a usage limit hit. `test/integrity.fence.test.js` passes 17/17. Review, then commit. |
+| e2e | `node scripts/e2e-smoke.mjs` green — re-verified at the start of session 2 |
+| Working tree | Clean. |
 | Preview | Infrastructure ready, **not started** — blocked on Stage 1 |
-| Next action | `PLAN.md` Stage 1a: review and commit the fence |
+| Next action | `PLAN.md` Stage 1d |
+
+### Correction to session 1's handoff
+
+Session 1 reported the fence as uncommitted. It was not. The usage limit hit
+**after** the commit, so `e36d705` — whose message says only "docs" — in fact
+carries all of 1a, all of 1b, and most of 1c. Session 2 verified this by
+diffing that commit and by running both suites. The commit message is
+misleading but the code is correct; the history is already pushed and is not
+being rewritten to fix a message.
+
+A per-file map of the 91 deliberate failures is the real work list. Regenerate
+it any time with:
+
+```bash
+npm test > /tmp/tk.txt 2>&1
+grep -oE "^test at (test/[^:]+):" /tmp/tk.txt | sed 's/test at //; s/:$//' | sort | uniq -c | sort -rn
+```
 
 ---
 
@@ -28,10 +45,10 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 
 | Item | State | Notes |
 |---|---|---|
-| 1a Land the written fence | todo | uncommitted in tree; 17/17 green |
-| 1b Scope `matterSuggestions` | todo | closes 4 confirmed leaks at once |
-| 1c Scope both AI pools | todo | highest stakes |
-| 1d Pin timer write-backs to their matter | todo | 3 places |
+| 1a Land the written fence | done | `e36d705` (bundled into the docs commit) — `integrity.fence` 17/17 green |
+| 1b Scope `matterSuggestions` | done | `e36d705` — the sibling-narrative UNION arm is gone; `source` labels are honest |
+| 1c Scope both AI pools | mostly done | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. Residue: `verify.matterctx.thinsibling:404` |
+| 1d Pin timer write-backs to their matter | doing | 24 failing proofs: stash, template, ghost text, stop-chip provenance |
 | 1e Time-loss family | todo | 6 confirmed defects |
 | 1f Export correctness | todo | 8 confirmed defects |
 | 1g Records and recovery | todo | 5 confirmed defects |
