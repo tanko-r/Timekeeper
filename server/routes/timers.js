@@ -316,6 +316,33 @@ export function timersRouter({ db, clock }) {
       : null;
     const associate = cmChanged && b.cm_id != null
       && linked && !linked.deleted_at && linked.status === 'draft';
+
+    // A timer carries THREE pieces of armed narrative state — draft_narrative
+    // (the float window's stash), narrative_template (the Edit-timer dialog's
+    // seed) and suggested_narrative — and syncToEntry() writes the first two
+    // onto every entry the timer opens from then on. All three are composed
+    // for a SPECIFIC matter, so re-pointing the timer must disarm them:
+    // docs/ui/INTEGRITY.md — a narrative may never cross a matter boundary,
+    // not even between two matters of the same client. Leaving them armed put
+    // one client's sentence on another's entry, and it finalized and exported
+    // there.
+    //
+    // Two cases are NOT a carry and must survive:
+    //  - matterless → matter (a quick timer being named): the text was never
+    //    written against another matter, so it follows the timer as designed;
+    //  - a value the SAME request supplies that differs from what the timer
+    //    was holding: that is the user typing for the NEW matter, and it is
+    //    honoured. TimerModal.save() re-sends the template textarea exactly as
+    //    it loaded it, so an identical value is the old matter's text coming
+    //    back round, not intent — it still goes.
+    const disarm = cmChanged && timer.cm_id != null;
+    const nextNarrative = (bodyValue, current) => {
+      const next = bodyValue !== undefined
+        ? (String(bodyValue ?? '').trim() || null)
+        : current;
+      return disarm && next === current ? null : next;
+    };
+
     db.prepare('UPDATE timers SET name=?, cm_id=?, task_code=?, group_id=?, linked_entry_id=?, suggested_narrative=?, pinned=?, draft_narrative=?, narrative_template=? WHERE id=?').run(
       name,
       b.cm_id !== undefined ? b.cm_id : timer.cm_id,
@@ -324,14 +351,10 @@ export function timersRouter({ db, clock }) {
       cmChanged && !associate ? null : timer.linked_entry_id, // new CM → old entry no longer its home
       cmChanged ? null : timer.suggested_narrative, // suggestion belonged to the old matter
       b.pinned !== undefined ? (b.pinned ? 1 : 0) : timer.pinned,
-      // user text — deliberately SURVIVES cmChanged; the next entry the
-      // timer creates is where the stash gets consumed
-      b.draft_narrative !== undefined
-        ? (String(b.draft_narrative ?? '').trim() || null)
-        : timer.draft_narrative,
-      b.narrative_template !== undefined
-        ? (String(b.narrative_template ?? '').trim() || null)
-        : timer.narrative_template,
+      // user text — survives everything EXCEPT a move off a real matter,
+      // where it belonged to the matter left behind (see nextNarrative above)
+      nextNarrative(b.draft_narrative, timer.draft_narrative),
+      nextNarrative(b.narrative_template, timer.narrative_template),
       timer.id);
 
     let entry = null;
