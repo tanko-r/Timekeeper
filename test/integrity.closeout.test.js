@@ -367,21 +367,57 @@ test('OK: a timer running through midnight banks yesterday and restarts today', 
   } finally { await t.close(); }
 });
 
+// -- Correction, 2026-08-16 ---------------------------------------------------
+// This test used to be called "…and throws its unfiled seconds away" and it
+// asserted `after.accumulated_seconds >= 3600 + 180`. That assertion stated the
+// defect, not the spec, and was retired for a demonstrably false premise:
+//
+//   * Its comment claimed a three-minute stretch is "under the 0.1h minimum
+//     increment, so the stop files nothing". Not true under the shipped
+//     defaults. server/db.js seeds rounding {enabled, increment 0.1, mode 'up'}
+//     and validation.minIncrement 0.1; server/lib/rounding.js rounds 180 s UP
+//     to 0.1 h, which is NOT below the minimum. The stop FILES 0.1 h. Probed:
+//     POST /stop returns hours 0.1 and an entry whose total is 0.1.
+//   * So the three minutes are already on the books. Demanding that the clock
+//     ALSO carry them onto the next entry asks for them to be billed twice —
+//     syncToEntry SETS an entry's total from accumulated_seconds (the clock is
+//     a day accumulator per linked entry), it does not add to it. Probed:
+//     carrying 3780 s instead of 3600 s and stopping 30 min later files 1.6 h
+//     onto an entry that is owed 1.5 h, on top of the 0.1 h already banked.
+//     No correct implementation can satisfy the old assertion.
+//
+// The family's intent — "no time may be lost on start-for-entry" — is kept and
+// stated correctly below: the ledger after the hijack must equal the time
+// actually worked, neither lost NOR double-counted. What IS wrong on this path
+// is covered too: the hijack strands the entry the clock used to serve as a
+// timed, narrative-less draft that nothing points at, and that orphan
+// hard-blocks close-out.
+// -----------------------------------------------------------------------------
 test('LOSS: start-for-entry hijacks a paused timer that belongs to another entry '
-  + 'and throws its unfiled seconds away', () =>
+  + 'and strands that entry as a timed, narrative-less draft that blocks close-out', () =>
   withClock('09:00', async (t, set) => {
     const cm = await mkMatter(t, '100001-000012', 'Acme lease');
     const timer = (await t.fetchJson('POST', '/api/timers', {
       name: 'Acme lease', cm_id: cm.id,
     })).body;
 
-    // A three-minute stretch: under the 0.1h minimum increment, so the stop
-    // files nothing and the seconds WAIT on the clock for more work.
+    // A three-minute stretch. Rounding is "up to the next tenth" and the
+    // minimum increment is 0.1 h, so 180 s rounds UP to 0.1 h and the stop
+    // files it into the entry the start opened. Those minutes are on the books
+    // from here on — anything that counts them a second time is over-billing.
     await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
     set('09:03');
-    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    const held = t.db.prepare('SELECT accumulated_seconds FROM timers WHERE id=?').get(timer.id);
-    assert.equal(held.accumulated_seconds, 180, 'the clock is holding the unfiled stretch');
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.hours, 0.1, 'a three-minute stretch rounds up onto the books');
+    const opened = stop.entry;
+    assert.equal(opened.total, 0.1, 'the start-created entry now holds the three minutes');
+    assert.equal(String(opened.narrative || '').trim(), '',
+      'and it still has no narrative — the stop chip is where that sentence gets written');
+    const held = t.db.prepare('SELECT accumulated_seconds, linked_entry_id FROM timers WHERE id=?')
+      .get(timer.id);
+    assert.equal(held.accumulated_seconds, 180,
+      'the clock reads the same three minutes it just filed (day accumulator, not an increment)');
+    assert.equal(held.linked_entry_id, opened.id, 'and it is still serving that entry');
 
     // A separate entry on the same matter — a manual one, say — gets its own
     // timer started from the entry card.
@@ -389,15 +425,59 @@ test('LOSS: start-for-entry hijacks a paused timer that belongs to another entry
       date: DAY, cm_id: cm.id, tasks: [{ task_code: 'Draft', duration: 1.0, fragment: 'draft notice' }],
       narrative: 'Drafted the notice of intent to renew and circulated it internally.',
     })).body;
+    assert.equal(other.total, 1);
     await t.fetchJson('POST', '/api/timers/start-for-entry', { entry_id: other.id });
 
-    const after = t.db.prepare('SELECT accumulated_seconds FROM timers WHERE id=?').get(timer.id);
-    // ⚠️ FAILS. start-for-entry finds no timer linked to `other`, grabs the
-    // most recent PAUSED same-matter timer — this one, which is still holding
-    // three unfiled minutes and is still linked to its own entry — and
-    // overwrites accumulated_seconds with the target entry's total.
-    assert.ok(after.accumulated_seconds >= 3600 + 180,
-      `the 180 unfiled seconds were discarded (clock is now ${after.accumulated_seconds}s)`);
+    const after = t.db.prepare('SELECT accumulated_seconds, linked_entry_id FROM timers WHERE id=?')
+      .get(timer.id);
+    // start-for-entry finds no timer linked to `other`, so it grabs the most
+    // recent PAUSED same-matter timer — this one — and re-points it. Re-seeding
+    // the clock with the TARGET entry's own total is the correct move: the
+    // clock is that entry's running total, and the 180 s it was carrying are
+    // already 0.1 h on `opened`. Carrying them across would bill them twice.
+    assert.equal(after.linked_entry_id, other.id, 'the clock now serves the target entry');
+    assert.equal(after.accumulated_seconds, 3600,
+      `a re-pointed clock must read the target entry's own time — no more (double billing), `
+      + `no less (lost time); it reads ${after.accumulated_seconds}s`);
+
+    // Half an hour of real work against `other`, then stop.
+    set('09:33');
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    // The ledger. Claimed: 1.0 h keyed by hand + 3 min on the clock before the
+    // hijack + 30 min after it = 1.55 h. Filed: 0.1 h on `opened` (180 s rounded
+    // up) + 1.5 h on `other` (3600 + 1800 s, exact) = 1.6 h. Round-up may only
+    // ever push a filing to the next tenth; it may never drop a stretch, and it
+    // may never book the same stretch onto two entries.
+    const rows = (await t.fetchJson('GET', '/api/entries')).body;
+    const recorded = Math.round(rows.reduce((a, e) => a + e.total, 0) * 100) / 100;
+    assert.ok(recorded >= 1.55,
+      `time went missing across the hijack: ${recorded} h recorded for 1.55 h worked`);
+    assert.equal(recorded, 1.6,
+      `1.55 h worked files as 1.6 h once round-up is applied per entry; got ${recorded} h`);
+    assert.equal(rows.find((e) => e.id === other.id).total, 1.5,
+      'the target entry holds its own hour plus the half hour actually timed against it');
+    assert.equal(rows.find((e) => e.id === opened.id).total, 0.1,
+      'and the three minutes stay where they were filed');
+
+    // ⚠️ FAILS — and this is what is actually broken on this path. `opened` is
+    // now a 0.1 h draft with an EMPTY narrative and NO timer pointing at it:
+    // one ordinary click on another entry's start button took away the clock
+    // whose stop chip was the only prompt to write that sentence. The user is
+    // told nothing.
+    const orphan = rows.find((e) => e.id === opened.id
+      && e.total > 0
+      && !String(e.narrative || '').trim()
+      && !t.db.prepare('SELECT 1 FROM timers WHERE linked_entry_id=?').get(e.id));
+    assert.equal(orphan, undefined,
+      'start-for-entry left a timed, narrative-less draft behind with no timer to explain it');
+
+    // …and that orphan is not a cosmetic loose end: it hard-blocks close-out on
+    // narrative_empty, and "accept warnings & finalize" cannot clear a block.
+    const fin = await t.fetchJson('POST', '/api/finalize-day', { date: DAY, ack: true });
+    const stuck = (fin.body.blocked || []).find((b) => b.id === opened.id);
+    assert.equal(stuck, undefined,
+      `an ordinary click manufactured an entry that blocks the day: ${JSON.stringify(stuck)}`);
   }));
 
 // ---------------------------------------------------------------------------
