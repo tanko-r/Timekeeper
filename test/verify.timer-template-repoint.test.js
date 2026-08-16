@@ -16,15 +16,34 @@
 // SQLite row on a real server started by test/helpers.js, and reports which
 // matter the offending text actually belongs to.
 //
-// Expected on current code: LEAK 1-3 FAIL, both CONTROLs pass.
+// Expected when written: LEAK 1-3 FAIL, both CONTROLs pass.
+//
+// 2026-08-16 (Stage 1d): the fence landed in server/routes/timers.js PATCH
+// /:id (`disarm`), so all four LEAKs now PASS. LEAK 4 needed its SCAFFOLD
+// repaired, not its assertion. Two scaffold faults, both masking the CSV
+// check: (1) it stopped the timer within the 2-second misclick grace, which
+// files nothing AND deletes the untouched entry the start opened, so finalize
+// returned 404; (2) it assumed the entry arrived pre-seeded with the template.
+// It now advances a fake clock by half an hour, reads the seeded row directly
+// (the stronger check), then supplies the NEW matter's own words so the chain
+// can still be driven to the CSV. Verified by disabling `disarm`: all four
+// LEAKs fail again. No assertion was removed or relaxed.
 // =========================================================================
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers.js';
 
-async function withServer(fn) {
-  const t = await startTestServer();
-  try { return await fn(t); } finally { await t.close(); }
+function makeClock(startIso) {
+  let now = new Date(startIso).getTime();
+  const clock = () => new Date(now);
+  clock.advance = (seconds) => { now += seconds * 1000; };
+  return clock;
+}
+
+async function withServer(fn, startIso = '2026-08-14T09:00:00-07:00') {
+  const clock = makeClock(startIso);
+  const t = await startTestServer({ clock });
+  try { return await fn(t, clock); } finally { await t.close(); }
 }
 
 const mkCm = async (t, cm_number, short_name, client_name) => {
@@ -169,7 +188,7 @@ test('LEAK: the carried template keeps seeding new entries on the new matter', (
 // and "the wrong client's facts left the building".
 // -------------------------------------------------------------------------
 test('LEAK: the carried template reaches the exported CSV under the new matter', () =>
-  withServer(async (t) => {
+  withServer(async (t, clock) => {
     const harbor = await mkCm(t, CM_HARBOR, 'Harbor Lease', 'Northgate Partners');
     const borealis = await mkCm(t, CM_BOREALIS, 'Borealis Merger', 'Acme Holdings');
 
@@ -179,13 +198,30 @@ test('LEAK: the carried template reaches the exported CSV under the new matter',
     await t.fetchJson('PATCH', `/api/timers/${timer.id}`, { cm_id: borealis.id });
     const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
     const entryId = started.entry.id;
-    // a real half-hour of work on the NEW matter. Pause first, then set the
-    // clock: a stop within 2s of a start is the misclick grace and files
-    // nothing (routes/timers.js stopAndFile).
+    // a real half-hour of work on the NEW matter. The clock is advanced rather
+    // than set through PUT /clock: a stop within 2s of a start is the misclick
+    // grace, which files nothing AND deletes the untouched entry the start
+    // opened (routes/timers.js stopAndFile → deleteIfUntouched).
+    clock.advance(1800);
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
-    await t.fetchJson('PUT', `/api/timers/${timer.id}/clock`, { hours: 0.5 });
 
-    const fin = await t.fetchJson('POST', `/api/entries/${entryId}/finalize`);
+    // Read the seeded row BEFORE writing anything of our own. This is the
+    // assertion that catches a regression of the template fence, and it names
+    // the offending row when it fires.
+    const seeded = t.db.prepare(
+      'SELECT id, cm_id, narrative, deleted_at FROM entries WHERE id=?').get(entryId);
+    assert.ok(seeded && !seeded.deleted_at, `the half-hour entry survived the stop: ${JSON.stringify(seeded)}`);
+    assert.equal(String(seeded.narrative || '').includes('Harbor Lease'), false,
+      `the Borealis entry opened already carrying Harbor Lease’s template: ${JSON.stringify(seeded)}`);
+
+    // With the fence holding, the entry opens blank, so the attorney types
+    // Borealis’s OWN words before finalizing. This cannot mask a leak: the
+    // seeded value was already asserted on above.
+    if (!String(seeded.narrative || '').trim()) {
+      await t.fetchJson('PATCH', `/api/entries/${entryId}`,
+        { narrative: 'Attend weekly Borealis Merger status call regarding the termination notice;' });
+    }
+    const fin = await t.fetchJson('POST', `/api/entries/${entryId}/finalize`, { ack: true });
     assert.equal(fin.status, 200, JSON.stringify(fin.body));
 
     const stored = t.db.prepare(

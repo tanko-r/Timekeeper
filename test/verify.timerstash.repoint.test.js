@@ -15,7 +15,17 @@
 // row on a real server started by test/helpers.js — nothing is judged from
 // an API response body alone.
 //
-// Expected on current code: LEAK 1, LEAK 2 and LEAK 3 FAIL; the CONTROLs pass.
+// Expected when written: LEAK 1, LEAK 2 and LEAK 3 FAIL; the CONTROLs pass.
+//
+// 2026-08-16 (Stage 1d): the fence landed in server/routes/timers.js PATCH
+// /:id (`disarm`), so all four LEAKs now PASS. LEAK 4 needed its SCAFFOLD
+// repaired, not its assertion: it drove finalize→export assuming the entry
+// arrived pre-seeded with the leaked sentence, so once the fence held, the
+// entry opened blank and finalize returned 422 narrative_empty before the CSV
+// assertion was ever evaluated. It now reads the seeded row directly (the
+// stronger check), then supplies the NEW matter's own words so the chain can
+// still be driven to the CSV. Verified by disabling `disarm`: all four LEAKs
+// fail again. No assertion was removed or relaxed.
 // =========================================================================
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -205,6 +215,23 @@ test('LEAK 4: the leaked sentence reaches the export CSV under the other client�
     const started = (await t.fetchJson('POST', `/api/timers/${timer.id}/start`)).body;
     clock.advance(1800);
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+
+    // Read the seeded row BEFORE writing anything of our own. This is the
+    // assertion that catches a regression of the stash fence, and it names the
+    // offending row when it fires.
+    const seeded = t.db.prepare('SELECT id, cm_id, narrative FROM entries WHERE id=?')
+      .get(started.entry.id);
+    assert.equal(String(seeded.narrative || '').includes('Harbor Lease estoppel certificate'), false,
+      'the Borealis entry opened already carrying Harbor Lease’s sentence: '
+      + JSON.stringify(seeded));
+
+    // With the fence holding, the entry opens blank, so the attorney types
+    // Borealis’s OWN words before finalizing. This cannot mask a leak: the
+    // seeded value was already asserted on above.
+    if (!String(seeded.narrative || '').trim()) {
+      await t.fetchJson('PATCH', `/api/entries/${started.entry.id}`,
+        { narrative: 'Review Borealis Merger disclosure schedules.' });
+    }
     const fin = await t.fetchJson('POST', `/api/entries/${started.entry.id}/finalize`, { ack: true });
     assert.equal(fin.status, 200, `finalize failed: ${JSON.stringify(fin.body)}`);
     const out = (await t.fetchJson('POST', '/api/export', {
