@@ -106,6 +106,7 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 | Make the suggestion path cheaper than ignoring it (17 vs 12) | todo | |
 
 ### Stage 4 — Screens not yet rebuilt
+| **Timer board restored as its own section** | **todo — owner instruction, highest UI priority** | compact multi-column tiles + separate entries list; trimmed controls back on screen. See the owner decision above. Reverses the merge in `timergrid.js`. |
 | Ledger: pagination, export-as-dialog, drop subnav | todo | |
 | Calendar: roving grid, day-tap, empty weeks, fold Stats | todo | |
 | Settings: one row component, theme first-class | todo | |
@@ -178,6 +179,44 @@ What that means for the implementation:
 Not yet built — it is the last open piece of 1e and it touches
 `server/routes/timers.js`, the timer edit dialog, and the shared overlay
 primitive.
+
+## Owner decision 2026-08-16 — THE TIMER BOARD COMES BACK
+
+**This reverses the single change the teardown called its highest-value one.**
+It is an owner instruction and it outranks the teardown, every critic, and the
+comment at the top of `public/js/components/timergrid.js` that argues for the
+merge. Do not re-merge the lists.
+
+The owner saw the preview and said the timer buttons appeared to be missing.
+They were not — but the overhaul had merged the timer BOARD and the day's
+entry list into one full-width row list, so his persistent bank of buttons had
+become a day log. His words:
+
+> "The original base app has approximately the structure I want. A list of
+> buttons that persist day-to-day. I don't recreate them. They are very
+> compact, sortable, editable, etc. It should follow that."
+
+The reference is `shots/baseline/dashboard.desktop.light.png`: a **Timers**
+board of compact tiles, three across, each showing the name, the clock, the
+hours and one start/stop control, with the running one visibly distinct — and
+below it, a **separate** "Today's entries" list.
+
+What to build:
+
+- **Two sections again.** A dedicated timer board of compact, persistent
+  buttons, with the day's recorded entries as a distinct list beneath it.
+- **Compact tiles, multi-column** — not one full-width row per timer. Density
+  is the point; he scans a bank of buttons and presses one.
+- **Controls back on screen, trimmed.** Grouping (group / client / flat),
+  search, A–Z and New timer sit permanently above the board. Import, New
+  group and the batch actions stay in the `⋯` menu. The overhaul's complaint
+  — fourteen controls before a single timer was visible — is answered by
+  trimming, not by hiding all of them.
+- **Keep what the overhaul got right:** labelled controls rather than bare
+  icons, a touch path for every action, the persisted density control, and the
+  `/` timer filter.
+
+Not yet built. It is Stage 4/5 work and it comes after Stage 1 integrity.
 
 ## Owner decision 2026-08-16 — all billing is in tenths of an hour
 

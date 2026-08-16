@@ -44,15 +44,24 @@ export async function seedDemo(base, { today }) {
   await mk('admin', '999000-000001', 'Firm administration', { client_name: 'Internal', billable: 0 });
 
   // Timers: one running, two idle with time on the clock, one quick timer.
+  //
+  // Most carry a TEMPLATE NARRATIVE — the opening words every entry that timer
+  // opens starts with, so a stop only has to finish the sentence. It is the
+  // point of a per-matter timer button and it was invisible in this dataset
+  // until 2026-08-16, which read as the feature being missing. One timer is
+  // deliberately left without a template, so both states are on screen.
   const timers = {};
   timers.lease = await post('/api/timers', {
     name: 'Acme — lease dispute', cm_id: matters.lease.id, task_code: 'Review',
+    narrative_template: 'Review correspondence and lease provisions regarding',
   });
   timers.merger = await post('/api/timers', {
     name: 'Acme — merger', cm_id: matters.merger.id, task_code: 'Draft',
+    narrative_template: 'Draft and revise merger agreement provisions concerning',
   });
   timers.diligence = await post('/api/timers', {
     name: 'Northgate — diligence', cm_id: matters.diligence.id, task_code: 'Due Diligence',
+    narrative_template: 'Review diligence materials and update the issues list regarding',
   });
   timers.appeal = await post('/api/timers', {
     name: 'Verity — appeal brief', cm_id: matters.appeal.id, task_code: 'Draft',
