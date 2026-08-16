@@ -4,7 +4,9 @@ import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts, stripTimeAmounts } from '../lib/timeAmounts.js';
-import { pickExemplars, pickPairs, renderGlossary } from '../lib/exemplars.js';
+import {
+  pickExemplars, pickPairs, renderGlossary, foreignTerms, vocabulary,
+} from '../lib/exemplars.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
 // Brief description in → professional narrative + optional task split out.
@@ -316,6 +318,43 @@ export function buildNarrateMessages({ instructions, brief, narrative, mode = 'd
   return [{ role: 'system', content: system }, ...shots, { role: 'user', content: user }];
 }
 
+// Every word this matter is entitled to use: its own entries (narratives and
+// task fragments), its own roster, its own identifiers, and whatever the caller
+// put in front of the model (the timer label / brief). Drafts count as well as
+// finalized text — the question here is provenance, not quality.
+function ownVocabulary(db, cmId, extra = []) {
+  const rows = db.prepare(`
+    SELECT narrative AS text FROM entries WHERE cm_id = ? AND deleted_at IS NULL
+    UNION ALL
+    SELECT et.fragment FROM entry_tasks et JOIN entries e ON e.id = et.entry_id
+      WHERE e.cm_id = ? AND e.deleted_at IS NULL
+    UNION ALL
+    SELECT name FROM matter_people WHERE matter_id = ?
+    UNION ALL
+    SELECT m.short_name FROM matters m WHERE m.id = ?
+    UNION ALL
+    SELECT m.cm_number FROM matters m WHERE m.id = ?
+    UNION ALL
+    SELECT c.name FROM clients c JOIN matters m ON m.client_id = c.id WHERE m.id = ?
+  `).all(cmId, cmId, cmId, cmId, cmId, cmId).map((r) => r.text);
+  return vocabulary(rows.concat(extra));
+}
+
+// The same, for every OTHER matter in the database — siblings of the same
+// client included, because the boundary is the matter and not the client.
+function otherMatterVocabulary(db, cmId) {
+  const rows = db.prepare(`
+    SELECT narrative AS text FROM entries
+      WHERE cm_id IS NOT NULL AND cm_id IS NOT ? AND deleted_at IS NULL
+    UNION ALL
+    SELECT et.fragment FROM entry_tasks et JOIN entries e ON e.id = et.entry_id
+      WHERE e.cm_id IS NOT NULL AND e.cm_id IS NOT ? AND e.deleted_at IS NULL
+    UNION ALL
+    SELECT name FROM matter_people WHERE matter_id IS NOT ?
+  `).all(cmId, cmId, cmId).map((r) => r.text);
+  return vocabulary(rows);
+}
+
 // Background refinement of a timer's pre-computed narrative (spec §6,
 // "suggested narrative on timer start": phrasebook first, "optional async
 // llama3.1 pass"). FIRE-AND-FORGET: callers must never block a request on
@@ -356,6 +395,20 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     .trim().replace(/^["']|["']$/g, '').slice(0, 300);
   if (!text || text.includes('{')) return; // refuse JSON-ish garbage
   if (containsTimeAmounts(text)) return; // refuse invented durations — keep the phrasebook suggestion
+  // THE OUTPUT-SIDE MATTER BOUNDARY. The prompt above is matter-scoped, but
+  // that is a promise about the model's INPUT, and this value is stored with no
+  // human in the loop: it becomes the AI stop chip, one tap from a bill. So the
+  // answer itself is checked — if it names a party or document that belongs to
+  // another matter and appears nowhere in this matter's own vocabulary, it is
+  // refused outright and the timer keeps the deterministic phrasebook
+  // suggestion. The brief allows exactly this ("offer generic phrasing or offer
+  // nothing"); a borrowed sentence is the one outcome it does not allow.
+  const foreign = foreignTerms(
+    text,
+    ownVocabulary(db, sourceCmId, [timer.name, timer.short_name, brief]),
+    otherMatterVocabulary(db, sourceCmId),
+  );
+  if (foreign.length) return;
   // still running AND still the same matter — otherwise this sentence belongs
   // to a matter the timer has left, and writing it would be a cross-matter leak
   db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1 AND cm_id IS ?')

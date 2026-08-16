@@ -220,6 +220,61 @@ export function pickPairs(pool, seeds = [], { count = 6, cmId = null, brief = ''
   return chosen;
 }
 
+// ── the output-side matter boundary ───────────────────────────────────────
+//
+// Everything above scopes what goes INTO a prompt. This scopes what is allowed
+// to come back OUT of one and be stored as a matter's own text. The two are not
+// the same promise: a scoped prompt is a claim about the model's input, and the
+// one write in this app that is never seen by a human before it lands —
+// timers.suggested_narrative, offered as a one-tap stop chip — deserves a check
+// on the value itself (docs/ui/BRIEF.md, "Data integrity").
+//
+// The test is deliberately narrow, so ordinary model output is untouched: a
+// proper noun in the answer is refused only when it belongs to ANOTHER matter's
+// text and to no part of this matter's own vocabulary. A name the model
+// invented, or one the attorney typed, appears in no other matter and passes;
+// only a term that provably names another matter's party or document fails.
+
+const TERM_MIN_LETTERS = 3;
+
+// Lowercase content tokens of every supplied text, used as an allow-list.
+export function vocabulary(texts) {
+  const v = new Set();
+  for (const t of texts || []) {
+    for (const w of String(t ?? '').toLowerCase().match(/[a-z][a-z'’-]*/g) || []) {
+      const c = w.replace(/[^a-z]/g, '');
+      if (c.length >= TERM_MIN_LETTERS) v.add(c);
+    }
+  }
+  return v;
+}
+
+// The proper nouns of a narrative: capitalised words that are not the first
+// word of a sentence (every billing narrative opens with a capitalised verb,
+// which carries no client fact). Initials such as "R." are below the length
+// floor and are dropped — a single letter identifies nobody on its own.
+export function distinctiveTerms(text) {
+  const out = new Set();
+  for (const sentence of String(text ?? '').split(/(?<=[.!?])\s+/)) {
+    const words = sentence.match(/[A-Za-z][A-Za-z'’-]*/g) || [];
+    for (let i = 1; i < words.length; i++) {
+      if (!/^[A-Z]/.test(words[i])) continue;
+      const t = words[i].replace(/[^A-Za-z]/g, '').toLowerCase();
+      if (t.length >= TERM_MIN_LETTERS) out.add(t);
+    }
+  }
+  return out;
+}
+
+// Terms in `text` that belong to another matter and not to this one. Empty
+// array = nothing in the text traces to a foreign matter, so it is safe to
+// store against this one.
+export function foreignTerms(text, ownVocab, otherVocab) {
+  const own = ownVocab || new Set();
+  const other = otherVocab || new Set();
+  return [...distinctiveTerms(text)].filter((t) => !own.has(t) && other.has(t));
+}
+
 // An ARROW, not an equals sign (2026-08-06 feedback). "ah = A. Hessburg" is a
 // symmetric claim, and an 8B model asked to shorten a narrative will happily
 // read it right-to-left and put the shorthand back into finished prose. The
