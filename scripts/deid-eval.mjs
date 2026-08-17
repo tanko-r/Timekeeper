@@ -126,13 +126,20 @@ function redact(narrative, spans) {
 
 const SYSTEM = `You extract identifying details from attorney time entries.
 
-An identifying detail is anything that names a specific real party: a person, a
-company, a property, a case number, a deal name. Generic role words (client,
-opposing counsel, lender, the county) are NOT identifying.
+An identifying detail is anything that names a specific real party or piece of
+work: a person, a company, a property, a case number, a deal name, or the name
+of a matter or project. Generic role words (client, opposing counsel, lender,
+the county) are NOT identifying.
 
 Reply with JSON only, in this exact shape: {"found": ["...", "..."]}
 If there is nothing identifying, reply {"found": []}`;
 
+// The first run scored 90.8% overall but only 60% on matter names and lost more
+// entries to the "M. Smith" form than to any other shape. Both faults were the
+// prompt's, not the models': all three sizes failed matter names identically,
+// which is the signature of a bad question rather than a weak model. These
+// shots demonstrate the two shapes instead of describing them — a rule tells an
+// 8B what to argue with, an example tells it what to copy.
 const SHOTS = [
   ['tc w/ JMS re Acme Holdings MSA indemnity carve-out',
    '{"found": ["JMS", "Acme Holdings"]}'],
@@ -142,6 +149,14 @@ const SHOTS = [
    '{"found": ["Northwind Trading", "M. Okonkwo"]}'],
   ['prep for closing on 1420 Harbor St; conf w/ lender counsel',
    '{"found": ["1420 Harbor St"]}'],
+  // matter/project names — the 60% category
+  ['rev Harborview Refi loan docs; update closing checklist',
+   '{"found": ["Harborview Refi"]}'],
+  ['Project Redwood diligence summary; circulate to team',
+   '{"found": ["Project Redwood"]}'],
+  // initial + surname, and a bare surname — the largest miss shape
+  ['tc w/ R. Vance re scheduling; f/u email to Ortega',
+   '{"found": ["R. Vance", "Ortega"]}'],
 ];
 
 function buildMessages(narrative) {
@@ -226,6 +241,10 @@ const overlaps = (a, b) => {
 // ---------------------------------------------------------------------------
 
 const hash = (s) => createHash('sha1').update(s).digest('hex').slice(0, 12);
+// The prompt is part of the cache key. Without this, editing SYSTEM or SHOTS
+// silently replays the old answers and the prompt change looks like it did
+// nothing — which is the one experiment this script exists to run.
+const PROMPT_V = hash(SYSTEM + JSON.stringify(SHOTS)).slice(0, 8);
 const cache = new Map();
 
 if (!has('fresh') && existsSync(CACHE)) {
@@ -233,7 +252,7 @@ if (!has('fresh') && existsSync(CACHE)) {
     if (!line.trim()) continue;
     try {
       const rec = JSON.parse(line);
-      cache.set(`${rec.model} ${rec.id} ${rec.h}`, rec);
+      cache.set(`${rec.model} ${rec.p || 'v0'} ${rec.id} ${rec.h}`, rec);
     } catch { /* a torn last line from an interrupted run — ignore it */ }
   }
 }
@@ -273,7 +292,7 @@ for (const model of models) {
   let done = 0; let fromCache = 0; const started = Date.now();
 
   for (const row of entries) {
-    const key = `${model} ${row.id} ${hash(row.narrative)}`;
+    const key = `${model} ${PROMPT_V} ${row.id} ${hash(row.narrative)}`;
     let out = cache.get(key);
     if (out) {
       fromCache += 1;
@@ -283,7 +302,7 @@ for (const model of models) {
       } catch (err) {
         out = { raw: '', found: [], malformed: true, ms: 0, error: String(err.message || err) };
       }
-      const rec = { model, id: row.id, h: hash(row.narrative), ...out };
+      const rec = { model, p: PROMPT_V, id: row.id, h: hash(row.narrative), ...out };
       appendFileSync(CACHE, `${JSON.stringify(rec)}\n`);
       out = rec;
     }
