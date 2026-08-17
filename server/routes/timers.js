@@ -670,6 +670,44 @@ export function timersRouter({ db, clock }) {
     return { status: 200, body: out };
   }
 
+  // ── a re-pointed clock may not strand the entry it was serving ────────────
+  // start-for-entry, finding no clock on the entry the attorney pressed, adopts
+  // the most recent PAUSED timer on the same matter. That timer may still be
+  // serving an earlier entry which holds filed time but no sentence yet — the
+  // ordinary result of stopping a timer and dismissing the stop chip. Taking
+  // the clock away left that entry with time on it, no words, and NOTHING on
+  // the board pointing at it: the attorney was told nothing, and the entry then
+  // hard-blocked close-out hours later, at the worst possible moment.
+  //
+  // So before the clock is re-pointed, leave a replacement clock on the entry
+  // it is leaving. The tile stays on the board carrying that entry's own time,
+  // which is the prompt to write the sentence, and the surprise at 6pm becomes
+  // a visible, fixable row at the moment it is created.
+  //
+  // Only an entry that still OWES something gets one — live, still a draft,
+  // holding time, and with no narrative. A settled entry needs no clock, and
+  // manufacturing timers for those would litter a board that already carries
+  // dozens. Nothing is copied across from the departing timer except its name:
+  // `suggested_narrative` is a whole billing sentence and stays with the matter
+  // it was composed for (docs/ui/BRIEF.md, "Data integrity").
+  function keepClockOnStrandedEntry(timer, targetEntryId) {
+    const strandedId = timer.linked_entry_id;
+    if (!strandedId || strandedId === targetEntryId) return null;
+    const stranded = loadEntry(db, strandedId);
+    if (!stranded || stranded.deleted_at || stranded.status !== 'draft') return null;
+    if (!(Number(stranded.total) > 0)) return null;
+    if (String(stranded.narrative || '').trim()) return null;
+
+    const max = db.prepare('SELECT COALESCE(MAX(sort_order), -1) m FROM timers').get().m;
+    const info = db.prepare(
+      `INSERT INTO timers (name, cm_id, task_code, sort_order, last_reset_date, created_at,
+         linked_entry_id, accumulated_seconds, last_stopped_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(timer.name, stranded.cm_id, timer.task_code, max + 1, todayLocal(clock()), now(),
+      stranded.id, Math.round(Number(stranded.total) * 3600), now());
+    return getTimer.get(info.lastInsertRowid);
+  }
+
   r.post('/:id/start', (req, res) => {
     applyRollovers(db, clock);
     const timer = getTimer.get(req.params.id);
@@ -712,6 +750,8 @@ export function timersRouter({ db, clock }) {
           (entry.tasks[0] && entry.tasks[0].task_code) || null,
           max + 1, todayLocal(clock()), now());
         timer = getTimer.get(info.lastInsertRowid);
+      } else {
+        keepClockOnStrandedEntry(timer, entry.id);
       }
       db.prepare('UPDATE timers SET linked_entry_id=?, accumulated_seconds=? WHERE id=?')
         .run(entry.id, Math.round(entry.total * 3600), timer.id);

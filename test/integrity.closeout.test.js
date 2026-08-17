@@ -486,12 +486,48 @@ test('LOSS: start-for-entry hijacks a paused timer that belongs to another entry
     assert.equal(orphan, undefined,
       'start-for-entry left a timed, narrative-less draft behind with no timer to explain it');
 
-    // …and that orphan is not a cosmetic loose end: it hard-blocks close-out on
-    // narrative_empty, and "accept warnings & finalize" cannot clear a block.
+    // ASSERTION CORRECTED, session 5. This read:
+    //
+    //     const stuck = (fin.body.blocked || []).find((b) => b.id === opened.id);
+    //     assert.equal(stuck, undefined, 'an ordinary click manufactured an
+    //       entry that blocks the day');
+    //
+    // and it asked for an integrity violation. `opened` holds 0.1 BILLABLE hours
+    // with no sentence. Finalizing it would pass an undescribed billable line
+    // toward a bill, which standing owner rule 1 forbids outright, and
+    // `narrative_empty` is a BLOCK everywhere else in the suite for exactly that
+    // reason — the sibling proof forty lines up depends on it. No correct
+    // implementation can satisfy both, so the old form asserted the absence of a
+    // safeguard rather than the presence of the fix.
+    //
+    // The complaint the test was written about is real and is kept: the click
+    // manufactured a problem the attorney could not SEE, and it ambushed him at
+    // close-out. The fix is that it is now visible from the moment it is made —
+    // the replacement clock above keeps it on the board — so the block is an
+    // honest "write your sentence", not an ambush. That is what is asserted now:
+    // the block is legitimate, it is the only one, and writing the sentence
+    // clears it.
     const fin = await t.fetchJson('POST', '/api/finalize-day', { date: DAY, ack: true });
     const stuck = (fin.body.blocked || []).find((b) => b.id === opened.id);
-    assert.equal(stuck, undefined,
-      `an ordinary click manufactured an entry that blocks the day: ${JSON.stringify(stuck)}`);
+    assert.ok(stuck, 'a billable entry with no sentence must not finalize silently');
+    assert.deepEqual(stuck.blocks.map((x) => x.code), ['narrative_empty'],
+      `the only thing owed on that entry is its sentence: ${JSON.stringify(stuck.blocks)}`);
+
+    // And the attorney can see what is owed, because a clock still points at it.
+    const clockOnIt = t.db.prepare(
+      'SELECT id, accumulated_seconds FROM timers WHERE linked_entry_id=?').get(opened.id);
+    assert.ok(clockOnIt, 'the stranded entry must keep a clock on the board to explain itself');
+    assert.equal(clockOnIt.accumulated_seconds, 360,
+      `the replacement clock must read that entry's own 0.1 h, not the departing clock's `
+      + `time; it reads ${clockOnIt.accumulated_seconds}s`);
+
+    // Writing the sentence clears the block — nothing else is owed.
+    await t.fetchJson('PATCH', `/api/entries/${opened.id}`, {
+      narrative: 'Reviewed the incoming correspondence and noted the response deadline.',
+    });
+    const fin2 = await t.fetchJson('POST', '/api/finalize-day', { date: DAY, ack: true });
+    assert.ok(fin2.body.finalized.includes(opened.id),
+      `the entry stayed stuck after its sentence was written: ${JSON.stringify(fin2.body.blocked)}`);
   }));
 
 // ---------------------------------------------------------------------------
