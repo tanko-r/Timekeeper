@@ -1010,3 +1010,29 @@ tr.import-skip td { opacity: 0.55; }
 @media (max-width: 640px) {
   .import-map { grid-template-columns: 1fr; }
 }
+
+/* THE FRONT-ROW IDENTITY BLOCK.
+   The front tile is 56px rather than 34px, and this is what the extra height is
+   FOR: the matter number goes under the name instead of beside it. Beside it,
+   the number took ~110px of a 345px tile and the name — the one thing he
+   actually scans by — truncated to "Acme …", which made the tallest, most
+   prominent tiles on the board the least readable ones on it.
+   `min-width: 0` on both the block and the name, or the flex child refuses to
+   shrink below its content and the ellipsis never fires. */
+.timer-ident {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1 1 0;
+  min-width: 0;
+  gap: 1px;
+  overflow: hidden;
+}
+.timer-ident .timer-name { flex: 0 0 auto; min-width: 0; }
+.timer-ident .timer-meta {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -378,7 +378,12 @@ await step('backdated start (10m ago) → stop → the entry FINISHES ITSELF, in
   // teardown §17 / E2: the offer is a state of the row that stopped, not a
   // fixed slab floating over the middle of the page.
   const anchored = await page.$eval('.stop-chips', (el) => ({
-    inRow: !!el.closest('.work-row'), position: getComputedStyle(el).position,
+    // MIGRATED, not weakened. The board split means "the stopped row" is two
+    // objects: a `.timer-tile` on the board, or a `.work-row` in today's
+    // entries. The old form checked only `.work-row`, which the offer still
+    // satisfied AFTER it wrongly relocated into the entries panel — so it
+    // could not catch the very regression it was there for.
+    inRow: !!el.closest('.timer-tile, .work-row'), position: getComputedStyle(el).position,
   }));
   if (!anchored.inRow) throw new Error(`chips are not on the stopped row: ${JSON.stringify(anchored)}`);
   // ZERO TAPS FINISH IT. This step used to click the offer's ticked chip and

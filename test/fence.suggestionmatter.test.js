@@ -196,8 +196,9 @@ async function startAndStop(page, u, cmId, name) {
   const timer = await u.api('POST', '/api/timers', { name, cm_id: cmId });
   await u.api('POST', `/api/timers/${timer.id}/start`, { minutesAgo: 10 });
   await page.reload({ waitUntil: 'networkidle0' });
-  await page.waitForSelector(`.today-list .work-row[data-timer-id="${timer.id}"]`, { timeout: 10_000 });
-  await page.click(`.work-row[data-timer-id="${timer.id}"] .timer-stop-btn`);
+  // MIGRATED: a timer is a tile on the board now, not a row in the merged list.
+  await page.waitForSelector(`.timer-board .timer-tile[data-timer-id="${timer.id}"]`, { timeout: 10_000 });
+  await page.click(`.timer-tile[data-timer-id="${timer.id}"] .timer-stop-btn`);
   await page.waitForSelector('.stop-chips', { timeout: 10_000 });
   await sleep(900); // the suggestions fetch and the unasked pre-fill both land
   const entry = u.db.prepare(
@@ -285,7 +286,7 @@ test('F1: an entry re-pointed at another matter takes its stop offer down with i
       `the pre-fill must name the matter it drew from — ${JSON.stringify(prefill.body)}`);
 
     // ---- the row menu → Open entry… → change the matter → Done ----
-    await page.click(`.work-row[data-timer-id="${timer.id}"] button[title="Row menu"]`);
+    await page.click(`.timer-tile[data-timer-id="${timer.id}"] button[title="Row menu"]`);
     await page.waitForSelector('.ctx-menu', { timeout: 5000 });
     await page.evaluate(() => {
       const el = [...document.querySelectorAll('.ctx-menu button')]

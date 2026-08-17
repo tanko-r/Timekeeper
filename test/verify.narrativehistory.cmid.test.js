@@ -391,14 +391,14 @@ test('REACHABILITY: neither call site can hand a live NarrativeHistory a second 
     await u.api('POST', `/api/timers/${tA.id}/start`, { minutesAgo: 30 });
 
     await page.goto(`${u.base}/#/`, { waitUntil: 'networkidle0' });
-    await page.waitForSelector('.today-list .work-row', { timeout: 10_000 });
+    await page.waitForSelector('.timer-board .timer-tile, .today-list .work-row', { timeout: 10_000 });
 
     const rowAct = async (name, title) => {
-      await page.waitForFunction((nm, ti) => [...document.querySelectorAll('.today-list .work-row')]
+      await page.waitForFunction((nm, ti) => [...document.querySelectorAll('.timer-board .timer-tile, .today-list .work-row')]
         .some((r) => r.textContent.includes(nm) && r.querySelector(`button[title="${ti}"]`)),
       { timeout: 8000 }, name, title);
       await page.evaluate((nm, ti) => {
-        const row = [...document.querySelectorAll('.today-list .work-row')].find((r) => r.textContent.includes(nm));
+        const row = [...document.querySelectorAll('.timer-board .timer-tile, .today-list .work-row')].find((r) => r.textContent.includes(nm));
         row.scrollIntoView({ block: 'center' });
         row.querySelector(`button[title="${ti}"]`).click();
       }, name, title);

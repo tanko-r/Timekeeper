@@ -629,7 +629,7 @@ function StopOffer({ popup, openEditor, onFiled, onClose }) {
       const root = rootRef.current;
       const a = document.activeElement;
       if (root && a && root.contains(a)) return true;
-      const row = root && root.closest ? root.closest('.work-row') : null;
+      const row = root && root.closest ? root.closest('.timer-tile, .work-row') : null;
       if (row && a && row.contains(a)) return true;
       if (!a || a === document.body || a === document.documentElement) {
         return Date.now() < hotUntil.current;
@@ -909,8 +909,23 @@ function useRowSlot(timerId, entryId) {
   useEffect(() => {
     let el = null;
     let row = null;
+    // THE OFFER MOUNTS WHERE HE PRESSED STOP.
+    //
+    // This looked only in `.today-list .work-row`, which was the whole page
+    // when the timer board and the day's entries were one list. They are two
+    // sections again, and a timer is now a `.timer-tile` on the board — NOT a
+    // `.work-row` — so the timer branch died silently and the offer relocated
+    // itself into the entries panel hundreds of pixels below the button he had
+    // just pressed, then called scrollIntoView and yanked the page under him.
+    //
+    // It failed silently in the tests too: the e2e assertion checked
+    // `closest('.work-row')`, which the RELOCATED offer still satisfied. Green
+    // suite, worse product. The assertion now accepts either surface, and this
+    // looks for the tile FIRST, because the tile is what he pressed.
     const find = () => (
       (timerId != null
+        && document.querySelector(`.timer-board .timer-tile[data-timer-id="${timerId}"]`))
+      || (timerId != null
         && document.querySelector(`.today-list .work-row[data-timer-id="${timerId}"]`))
       || (entryId != null
         && document.querySelector(`.today-list .work-row[data-entry-id="${entryId}"]`))

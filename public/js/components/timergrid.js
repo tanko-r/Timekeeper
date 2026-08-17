@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, Field, Icon, clientLabel,
+  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, Field, Icon, clientLabel, todayStr,
   BillableBadge, StatusChip, ValidationList, fmtStamp, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
@@ -15,6 +15,9 @@ import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
 import { compareTimersAZ } from '/js/lib/timersort.js';
+import { selectBands, nextRecentOrder, matchTimers } from '/js/lib/boardselect.js';
+import { TimerBoard } from '/js/components/timerboard.js';
+import { TimerTile } from '/js/components/timertile.js';
 
 // ---------------------------------------------------------------------------
 // ONE LIST OF TODAY'S WORK  (teardown §5/§6, E1 — "the single highest-value
@@ -187,6 +190,53 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   const [gridFilter, setGridFilter] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef(null);
+
+  // ── the board's own state ────────────────────────────────────────────────
+  // WHY IT LIVES HERE AND NOT IN TimerBoard. The two previous attempts at this
+  // split broke on shared refs and cross-list state with no owner — a drag id
+  // read by a handler it was never passed, a focus event that could not reach
+  // the state it had to change. So the coordinator keeps ALL of it and the
+  // board is layout. Every prop it gets is derived here.
+  //
+  // `scope` is persisted, and DELIBERATELY RESET ON A NEW DAY: an evening spent
+  // with all eighty-four on screen must not become tomorrow's cold open.
+  const [scope, setScopeState] = useState(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('tk:board') || '{}');
+      return raw.scopeDate === todayStr() && raw.scope === 'all' ? 'all' : 'working';
+    } catch { return 'working'; }
+  });
+  const [boardMenu, setBoardMenu] = useState(null);
+  const [matterHits, setMatterHits] = useState([]);
+  const boardPrefs = useRef(null);
+
+  const setScope = useCallback((v) => {
+    setScopeState(v);
+    try {
+      const raw = JSON.parse(localStorage.getItem('tk:board') || '{}');
+      localStorage.setItem('tk:board', JSON.stringify({ ...raw, scope: v, scopeDate: todayStr() }));
+    } catch { /* private mode — the board still works, it just forgets */ }
+  }, []);
+
+  // His front row, and today's Recent order. Both are read once and written
+  // back as they change; a browser that refuses localStorage simply gets the
+  // computed defaults every time, which is a worse board but never a wrong one.
+  if (boardPrefs.current === null) {
+    let raw = {};
+    try { raw = JSON.parse(localStorage.getItem('tk:board') || '{}'); } catch { raw = {}; }
+    boardPrefs.current = {
+      front: Array.isArray(raw.front) ? raw.front : [],
+      recentOrder: Array.isArray(raw.recentOrder) ? raw.recentOrder : [],
+      recentDate: raw.recentDate || null,
+    };
+  }
+  const writeBoardPrefs = useCallback((patch) => {
+    boardPrefs.current = { ...boardPrefs.current, ...patch };
+    try {
+      const raw = JSON.parse(localStorage.getItem('tk:board') || '{}');
+      localStorage.setItem('tk:board', JSON.stringify({ ...raw, ...patch }));
+    } catch { /* ignore */ }
+  }, []);
 
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
@@ -667,6 +717,45 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     if (next) { setFocusKey(next.dataset.rowKey); next.focus(); }
   });
 
+  // THE DEAD END, CLOSED. He has 84 timers and 89 matters and he searches by
+  // what he remembers — the client and the matter — so a query naming a matter
+  // with no timer used to return nothing at all while a partner listened to him
+  // type. Matters are fetched only while filtering, and only those that have no
+  // timer already, because offering to make a second timer for a matter that
+  // has one is noise.
+  useEffect(() => {
+    const q = gridFilter.trim();
+    if (q.length < 2) { setMatterHits([]); return undefined; }
+    let alive = true;
+    const id = setTimeout(() => {
+      api.get(`/api/cms/picker?q=${encodeURIComponent(q)}`)
+        .then((rows) => {
+          if (!alive) return;
+          const taken = new Set((timers || []).map((t) => t.cm_id).filter(Boolean));
+          setMatterHits((rows || []).filter((m) => !taken.has(m.id)).slice(0, 4));
+        })
+        .catch(() => { if (alive) setMatterHits([]); });
+    }, 180);
+    return () => { alive = false; clearTimeout(id); };
+  }, [gridFilter, timers]);
+
+  // ⏎ from the filter. One timer matches → start it. None match but exactly one
+  // matter does → make its timer and start it. Anything else does nothing, and
+  // the field says so out loud rather than failing in silence: he types this
+  // while saying "sure, let me pull that up" and has already looked away.
+  const createAndStart = useCallback(async (matter) => {
+    const made = await api.post('/api/timers', { name: matter.short_name, cm_id: matter.id });
+    await api.post(`/api/timers/${made.id}/start`, {});
+    setGridFilter('');
+    await reload();
+    emitToast(`Started ${matter.short_name}`, {
+      actionLabel: 'Undo',
+      action: () => api.post(`/api/timers/${made.id}/stop`, {})
+        .then(() => api.del(`/api/timers/${made.id}`))
+        .then(() => { onEntryChanged(); return reload(); }),
+    });
+  }, [reload, onEntryChanged]);
+
   if (!timers) return null;
   const idleAfter = (settings.idleNudgeHours ?? 3) * 3600;
   const roundMode = settings.rounding?.enabled === false ? 'nearest' : (settings.rounding?.mode || 'up');
@@ -881,10 +970,65 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   const visible = renderedSections.flatMap((sec) => sec.list);
   const tabbableKey = visible.some((r) => r.key === focusKey) ? focusKey : (visible[0] && visible[0].key);
 
+  // ── the board ────────────────────────────────────────────────────────────
+  // Which nine of eighty-four are on screen. The rules are pure and live in
+  // lib/boardselect.js with 31 tests; this is only the wiring.
+  const hoursByTimer = {};
+  for (const r of timerRows) hoursByTimer[r.timer.id] = r.entries.reduce((a, e) => a + e.total, 0);
+
+  // SEEDING THE FRONT ROW. Left to itself it would fill from manual order,
+  // which at eighty-three timers is whatever accident of creation date the
+  // database holds — three arbitrary matters at eye level, and nothing ever
+  // telling him they are wrong. Most-recently-active is a far better first
+  // guess and it is one he can see the sense of. It is written once and then
+  // it is HIS: nothing recomputes it behind him.
+  if (timers.length > 9 && boardPrefs.current.front.length === 0) {
+    const seed = [...timers]
+      .sort((a, b) => Date.parse(b.last_stopped_at || b.last_started_at || 0)
+        - Date.parse(a.last_stopped_at || a.last_started_at || 0))
+      .slice(0, 3).map((t) => t.id);
+    if (seed.length) writeBoardPrefs({ front: seed });
+  }
+
+  const bands = selectBands(timers, {
+    front: boardPrefs.current.front,
+    recentOrder: boardPrefs.current.recentOrder,
+    recentDate: boardPrefs.current.recentDate,
+    today: todayStr(),
+    now: new Date(),
+    entriesByTimer: hoursByTimer,
+    scope,
+  });
+
+  // Persist the append-only Recent order the moment it changes, so the digit a
+  // tile carries at 11am is the digit it carries at 4pm. Compared as a string
+  // because the array is rebuilt every render.
+  const wantRecent = nextRecentOrder(timers, {
+    front: boardPrefs.current.front,
+    recentOrder: boardPrefs.current.recentOrder,
+    recentDate: boardPrefs.current.recentDate,
+    today: todayStr(),
+    now: new Date(),
+    entriesByTimer: hoursByTimer,
+  });
+  if (boardPrefs.current.recentDate !== todayStr()
+    || String(wantRecent) !== String(boardPrefs.current.recentOrder)) {
+    writeBoardPrefs({ recentOrder: wantRecent, recentDate: todayStr() });
+  }
+
+  const boardMatches = matchTimers(timers, gridFilter);
+
+
   const focusRow = (key) => {
     setFocusKey(key);
     requestAnimationFrame(() => {
-      document.querySelector(`.today-list .work-row[data-row-key="${key}"]`)?.focus();
+      // TWO SURFACES NOW. A row key beginning `t` is a tile on the board; `e`
+      // is a row in today's entries. Querying only `.today-list .work-row`
+      // silently focused nothing whenever the key belonged to a tile, which is
+      // most of them.
+      const el = document.querySelector(`.timer-board [data-row-key="${key}"]`)
+        || document.querySelector(`.today-list .work-row[data-row-key="${key}"]`);
+      el?.focus();
     });
   };
 
@@ -1051,171 +1195,120 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
   const nothingAtAll = timers.length === 0 && todayEntries.length === 0;
 
+  // ── the day's record, as its own list ─────────────────────────────────────
+  // TWO SECTIONS AGAIN. The overhaul merged the timer board and the day's
+  // entries into one row list; measured at his real density that produced a
+  // 4,438px page with 445 controls. The board above is BUTTONS — what he
+  // presses. This is the RECORD — what he actually billed, with room for the
+  // sentence a client reads. One row per entry, not one per matter: the merged
+  // row hid a matter's second entry behind the first.
+  const entryListRows = todayEntries.map((e) => ({
+    key: `e${e.id}`, timer: null, entries: [e], focus: e,
+  }));
+  const shownEntryRows = norm
+    ? entryListRows.filter((r) => matchesFilter(r))
+    : entryListRows;
+  const entryHours = Math.round(todayEntries.reduce((a, e) => a + e.total, 0) * 100) / 100;
+
+  const renderTile = (t, digit, isFront) => {
+    const row = rowByTimerId.get(t.id);
+    const focus = row ? row.focus : null;
+    return html`
+      <${TimerTile} key=${`tile-${t.id}`} timer=${t} digit=${digit} front=${isFront}
+        secs=${liveElapsed(t)} filed=${hoursByTimer[t.id] || 0} roundMode=${roundMode}
+        tabbable=${tabbableKey === `t${t.id}`}
+        onFocusRow=${() => setFocusKey(`t${t.id}`)}
+        selectMode=${selectMode} selected=${selected.has(t.id)}
+        onToggleSelected=${() => toggleSelected(t.id)}
+        onSelect=${(e) => selectCard(e, t, timers)}
+        needsNarrative=${!!focus && focus.status === 'draft' && !(focus.narrative || '').trim()
+          && focus.total > 0 && !t.running}
+        canDrag=${!selectMode} dragging=${draggingId === t.id}
+        menuOpen=${!!menu && menu.rowKey === `t${t.id}`}
+        onStart=${() => guard(start(t))}
+        onStop=${() => guard(stop(t))}
+        onMenu=${(at) => {
+          if (selected.size > 1 && selected.has(t.id)) setMenu({ ...at, ids: [...selected] });
+          else { clearSelection(); setMenu({ ...at, rowKey: `t${t.id}` }); }
+        }}
+        onDragStart=${() => { dragId.current = t.id; setDraggingId(t.id); }}
+        onDragEnd=${endDrag}
+        onDragOverRow=${() => setDropBeforeId(draggingId === t.id ? null : t.id)}
+        onDropOn=${() => { endDrag(); guard(dropOn({ kind: 'timer', timer: t })); }} />`;
+  };
+
+
   return html`
-    <div class="today-head">
-      <h2>Today’s work</h2>
-      ${activeFilters.map((f, i) => html`
-        <button key=${i} class="filter-pill" title="Remove this filter" onClick=${f.clear}>
-          ${f.label} <${Icon} name="x" size=${12} />
-        </button>`)}
-      <div class="spacer" style=${{ flex: 1 }}></div>
-      ${/* A TOGGLE THAT NEVER NO-OPS. With a query typed this button did
-            nothing at all: the bar could only be closed from an EMPTY field,
-            so on a phone — where the native ✕ is not drawn — a filter could be
-            entered and never left except by selecting the text. It clears and
-            closes now, and it reports its own state with aria-pressed instead
-            of only painting it. */''}
-      <button class=${'btn btn-sm today-search-btn' + (norm ? ' on' : '')}
-        aria-pressed=${(searchOpen || !!gridFilter) ? 'true' : 'false'}
-        title=${norm ? `Clear the filter “${gridFilter.trim()}” and close the bar`
-          : searchOpen ? 'Close the filter bar ( / )' : 'Filter today’s work ( / )'}
-        aria-label=${norm ? 'Clear the filter and close the search bar' : 'Search timers and entries'}
-        onClick=${() => {
-          if (norm) {
-            clearFilter();
-            setSearchOpen(false);
-            if (tabbableKey != null) focusRow(tabbableKey);
-            return;
-          }
-          setSearchOpen((v) => !v);
-        }}>
-        ${/* It stays a magnifier: the field carries its own ✕, and two ✕ glyphs
-              four inches apart doing two different things is worse than one ✕
-              beside a lit-up toggle. */''}
-        <${Icon} name="search" size=${16} />
-      </button>
-      <button class="btn btn-sm today-menu-btn" title="List options — filter, group, order, import"
-        aria-label="List options" ...${menuTriggerProps(!!listMenu)}
-        onClick=${(e) => setListMenu({ anchor: e.currentTarget })}>
-        <${Icon} name="more" size=${16} />
-      </button>
-    </div>
-    ${(searchOpen || gridFilter) ? html`
-      <div class="timer-search-wrap">
-        <div class="timer-search-field">
-          <input ref=${searchInputRef} type="search" class="timer-search" placeholder="Filter today’s work…"
-            autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck=${false}
-            aria-label="Filter today’s work by matter, client, number or narrative"
-            value=${gridFilter}
-            onInput=${(e) => setGridFilter(e.target.value)}
-            onKeyDown=${onSearchKeyDown} />
-          ${/* A REAL BUTTON, not Chrome's ::-webkit-search-cancel-button — that
-                pseudo-element is not a DOM node, is not drawn by Chrome for
-                Android at all, and is 12px wide where it is drawn. This one is
-                44×44 under a thumb, keeps focus in the field so the next query
-                can be typed straight away, and is hidden the moment the field
-                is empty so it never sits there meaning nothing. */''}
-          ${gridFilter ? html`
-            <button type="button" class="timer-search-clear" aria-label="Clear the filter"
-              title="Clear the filter (Esc)"
-              onClick=${() => clearFilter('input')}>
-              <${Icon} name="x" size=${16} />
-            </button>` : null}
+    ${nothingAtAll ? html`
+      <${EmptyState} icon="timer" heading="Nothing tracked today"
+        description="Timekeeper starts with a timer. Make one for a matter you are working on, or start a quick timer now and assign the matter after the call."
+        actionLabel="New timer" onAction=${() => setEditing('new')}
+        secondaryLabel="Quick start" onSecondary=${() => guard(quickTimer())} />` : html`
+
+      <${TimerBoard}
+        bands=${bands} total=${timers.length}
+        running=${timers.some((t) => t.running)}
+        scope=${scope} query=${gridFilter} matches=${boardMatches}
+        matterMatches=${matterHits} density=${density} grouping=${grouping}
+        searchInputRef=${searchInputRef}
+        renderTile=${renderTile}
+        onQuery=${setGridFilter}
+        onSearchKeyDown=${onSearchKeyDown}
+        onClearQuery=${() => clearFilter('input')}
+        onToggleScope=${() => setScope(scope === 'all' ? 'working' : 'all')}
+        onNewTimer=${() => setEditing('new')}
+        onGrouping=${setGrouping}
+        onCreateAndStart=${(m) => guard(createAndStart(m))}
+        onBoardKey=${onBoardKey}
+        menuOpen=${!!boardMenu}
+        onMenu=${(at) => setBoardMenu(at)} />
+
+      <section class="panel entry-panel">
+        <div class="board-head">
+          <h2>Today’s entries</h2>
+          <span class="board-meta muted small">
+            ${shownEntryRows.length} ${shownEntryRows.length === 1 ? 'entry' : 'entries'} · ${fmtHours(entryHours)}h
+          </span>
         </div>
-        ${gridFilter ? html`<span class="muted small">${shown.length}/${allRows.length}</span>` : null}
-      </div>` : null}
+        ${selectMode || selected.size > 0 ? html`
+          <div class="timer-selbar" role="status">
+            <strong>${selected.size} selected</strong>
+            <span class="spacer" style=${{ flex: 1 }}></span>
+            <button class="btn btn-sm" disabled=${selected.size === 0}
+              ...${menuTriggerProps(!!menu && !!menu.ids)}
+              onClick=${(e) => setMenu({ anchor: e.currentTarget, ids: [...selected] })}>Actions…</button>
+            <button class="btn btn-sm" onClick=${exitSelectMode}>Done (Esc)</button>
+          </div>` : null}
+        <div class="today-list" tabIndex=${-1} onKeyDown=${onBoardKey}>
+          ${shownEntryRows.length === 0 ? html`
+            <${EmptyState} icon="clipboard" heading=${norm ? 'No entry matches' : 'No time recorded yet today'}
+              description=${norm
+                ? `Nothing in today’s record matches “${gridFilter.trim()}”.`
+                : 'Start a timer above, or use quick capture to file time you have already spent.'} />` : null}
+          <div class=${`work-rows density-${density}`}>
+            ${shownEntryRows.map((r) => html`
+              <${WorkRow} key=${r.key} row=${r} secs=${0} idleAfter=${idleAfter}
+                roundMode=${roundMode} canDrag=${false}
+                tabbable=${tabbableKey === r.key} onFocusRow=${() => setFocusKey(r.key)}
+                expanded=${expanded.has(r.key)} onToggleExpand=${() => toggleExpanded(r.key)}
+                writing=${writingKey === r.key}
+                onWritingDone=${() => { setWritingKey(null); setWriteEntryId(null); }}
+                onStart=${() => guard(startForEntry(r.focus))}
+                onStop=${() => {}}
+                onSet=${(h) => guard(entryTotalSet(r.focus, h))}
+                onSetHours=${(h) => r.focus && guard(entryTotalSet(r.focus, h))}
+                onOpenEntry=${() => r.focus && openEditor({ id: r.focus.id })}
+                onAssignMatter=${() => r.focus && openEditor({ id: r.focus.id })}
+                onEntryChanged=${onEntryChanged}
+                menuOpen=${!!menu && menu.rowKey === r.key}
+                onMenu=${(at) => { clearSelection(); setMenu({ ...at, rowKey: r.key }); }} />`)}
+          </div>
+        </div>
+      </section>`}
 
-    ${selectMode || selected.size > 0 ? html`
-      <div class="timer-selbar" role="status">
-        <strong>${selected.size} selected</strong>
-        <span class="muted small">Tick the rows you want, then choose an action.</span>
-        <span class="spacer" style=${{ flex: 1 }}></span>
-        <button class="btn btn-sm" disabled=${selected.size === 0}
-          ...${menuTriggerProps(!!menu && !!menu.ids)}
-          onClick=${(e) => setMenu({ anchor: e.currentTarget, ids: [...selected] })}>Actions…</button>
-        <button class="btn btn-sm" onClick=${exitSelectMode}>Done (Esc)</button>
-      </div>` : null}
-
-    <div class="today-list" tabIndex=${-1} onKeyDown=${onBoardKey}
-      onFocus=${(e) => { if (e.target === e.currentTarget && tabbableKey != null) focusRow(tabbableKey); }}>
-
-      ${nothingAtAll ? html`
-        <${EmptyState} icon="timer" heading="Nothing tracked today"
-          description="Timekeeper starts with a timer. Make one for a matter you are working on, or start a quick timer now and assign the matter after the call."
-          actionLabel="New timer" onAction=${() => setEditing('new')}
-          secondaryLabel="Quick start" onSecondary=${() => guard(quickTimer())} />` : null}
-
-      ${!nothingAtAll && visible.length === 0 ? html`
-        <${EmptyState} icon="search" heading="Nothing matches"
-          description=${norm ? `No timer or entry matches “${gridFilter.trim()}”.` : 'No work matches the filters on this list.'}
-          actionLabel="Clear filters"
-          onAction=${() => { setGridFilter(''); setActivityKey(''); setOnlyKey(''); }} />` : null}
-
-      ${renderedSections.map((sec) => {
-        const { group, list } = sec;
-        // An empty section is hidden when a search or an activity filter
-        // emptied it — but NOT when the reader explicitly asked for this one
-        // group ("Only"), where the empty section is the answer and the drop
-        // target.
-        if (list.length === 0 && (norm || activityKey)) return null;
-        if (!only && byGroupMode && !group && list.length === 0) return null;
-        const showHead = grouping !== 'flat' && !only;
-        return html`
-          <div key=${sec.key} class="timer-section"
-            onDragOver=${byGroupMode ? (e) => { e.preventDefault(); setDropBeforeId(null); } : undefined}
-            onDrop=${byGroupMode ? (e) => { e.preventDefault(); endDrag(); guard(dropOn({ kind: 'group', groupId: group ? group.id : null })); } : undefined}>
-            ${showHead ? html`
-              <div class="group-head">
-                <span class=${'group-name' + (group || sec.label !== 'Ungrouped' ? '' : ' muted')}>${sec.label ?? 'Ungrouped'}</span>
-                ${sec.unnamedClient ? html`
-                  <span class="muted small" title="Name this client in Clients & Matters (or the matter's edit dialog)">· unnamed</span>` : null}
-                <span class="muted small">${list.length}</span>
-              </div>` : null}
-            <div class=${`work-rows density-${density}`}>
-              ${list.flatMap((r) => {
-                const dropHere = () => { endDrag(); guard(dropOn({ kind: 'timer', timer: r.timer })); };
-                const row = html`
-                  <${WorkRow} key=${r.key} row=${r} secs=${rowSecs(r)} idleAfter=${idleAfter}
-                    roundMode=${roundMode}
-                    canDrag=${!!r.timer && !selectMode} dragging=${!!r.timer && draggingId === r.timer.id}
-                    selectMode=${selectMode}
-                    selected=${!!r.timer && selected.has(r.timer.id)}
-                    onToggleSelected=${() => r.timer && toggleSelected(r.timer.id)}
-                    onSelect=${(e) => r.timer && selectCard(e, r.timer, list)}
-                    tabbable=${tabbableKey === r.key} onFocusRow=${() => setFocusKey(r.key)}
-                    expanded=${expanded.has(r.key)} onToggleExpand=${() => toggleExpanded(r.key)}
-                    writing=${writingKey === r.key}
-                    onWritingDone=${() => { setWritingKey(null); setWriteEntryId(null); }}
-                    onStart=${() => guard(r.timer ? start(r.timer) : startForEntry(r.focus))}
-                    onStop=${() => r.timer && guard(stop(r.timer))}
-                    onSet=${(h) => guard(r.timer ? clockSet(r.timer, h) : entryTotalSet(r.focus, h))}
-                    onSetHours=${(h) => r.focus && guard(entryTotalSet(r.focus, h))}
-                    onRename=${(name) => r.timer && guard(api.patch(`/api/timers/${r.timer.id}`, { name }).then(reload))}
-                    onOpenEntry=${() => r.focus && openEditor({ id: r.focus.id })}
-                    onAssignMatter=${() => (r.focus ? openEditor({ id: r.focus.id }) : setEditing(r.timer))}
-                    onEntryChanged=${onEntryChanged}
-                    ${/* BY KEY, NOT BY OBJECT. Row objects are rebuilt from
-                          timers+entries on every render, so `menu.row === r`
-                          was false the moment the menu opened (opening it is a
-                          setState) — the ⋯ reported aria-expanded="false" while
-                          its own menu stood open, and the items were built from
-                          a stale snapshot of the row. `r.key` is stable
-                          (`t<id>` / `e<id>` / `m<id>`). */''}
-                    menuOpen=${!!menu && menu.rowKey === r.key}
-                    onMenu=${(at) => {
-                      if (r.timer && selected.size > 1 && selected.has(r.timer.id)) setMenu({ ...at, ids: [...selected] });
-                      else { clearSelection(); setMenu({ ...at, rowKey: r.key }); }
-                    }}
-                    onDragStart=${() => { dragId.current = r.timer.id; setDraggingId(r.timer.id); }}
-                    onDragEnd=${endDrag}
-                    onDragOverRow=${() => setDropBeforeId(draggingId === r.timer?.id ? null : r.timer?.id)}
-                    onDropOn=${dropHere} />`;
-                return r.timer && dropBeforeId === r.timer.id && draggingId !== null ? [html`
-                  <div key=${`slot-${r.key}`} class="timer-drop-slot" aria-hidden="true"
-                    onDragOver=${(e) => { e.preventDefault(); e.stopPropagation(); }}
-                    onDrop=${(e) => { e.preventDefault(); e.stopPropagation(); dropHere(); }}></div>`, row] : [row];
-              })}
-              ${byGroupMode && list.length === 0 ? html`<div class="muted small drop-hint">Drop timers here</div>` : null}
-            </div>
-          </div>`;
-      })}
-
-      ${!nothingAtAll ? html`
-        <button class="timer-new" onClick=${() => setEditing('new')}>
-          <${Icon} name="plus" size=${16} /> New timer
-        </button>` : null}
-    </div>
-
+    ${boardMenu ? html`
+      <${Menu} anchor=${boardMenu.anchor} title="Board options" items=${listMenuItems()}
+        onClose=${() => setBoardMenu(null)} />` : null}
     ${/* The open menu is re-read from the CURRENT rows every render, so a timer
           that starts, stops or files an entry while its menu is open rewrites
           the menu instead of acting on the row as it was when it opened. If the
