@@ -46,7 +46,7 @@ whole context to answer.
 - **THE BRANCH IS SHARED.** A de-identification lane (`1afcb1f`, `1d2100c`,
   `87d8b11`) is committing here too. `git pull --rebase` before assuming the
   tree is yours; keep commits atomic so the lanes stay separable.
-- **986 tests, 986 pass, 0 fail.** Re-measure with
+- **986 tests, 986 pass, 0 fail. e2e 50/50 steps.** Re-measure with
   `node scripts/handoff.mjs --test`; never quote a count without its commit.
 - `node scripts/e2e-smoke.mjs` clear apart from one aborted
   `/api/agent/todo/events` request on teardown, which **reproduces on a clean
@@ -68,9 +68,13 @@ whole context to answer.
    read, dump or screenshot anything from `data/`. Tests and e2e use temp
    databases. The dummy database is the preview's, at
    `~/Projects/timekeeper-poc/data/`.
-2. **e2e FLAKES when run right after `npm test`** on this four-core box. Five
-   steps failed back to back and every one passed on a solo run. Run them one at
-   a time before believing a failure.
+2. **e2e IS ORDER-DEPENDENT AND STILL A LITTLE UNSTABLE.** Two causes, one
+   fixed and one not. FIXED: the board hides 75 of 84, so a step looking for a
+   timer by name found it or not depending on how many existed at that moment
+   — every tile lookup now calls `revealAllTimers()` first. NOT FIXED: it
+   still flakes when run immediately after `npm test` on this four-core box.
+   Run them ONE AT A TIME, and re-run a failure once before believing it —
+   three consecutive runs once gave three different failure sets.
 3. **Never run an orchestrator with `claude -p`.** Print mode answers once and
    exits; a previous session killed its own five builders at the 600-second
    ceiling and left eight hours of work uncommitted. Use tmux.
