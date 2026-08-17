@@ -1,18 +1,352 @@
-/* timers.css — ONE LIST OF TODAY'S WORK (rows, list header, CSV timer import)
+/* timers.css — THE TIMER BOARD, plus ONE LIST OF TODAY'S WORK
    ==========================================================================
    This file used to style a timer BOARD: a multicolumn masonry grid of 32px
    cards under a fourteen-control header and a ten-tab strip, with a second,
    differently-shaped list of the same matters ("Today's entries") below it.
-   The teardown's §5/§6 verdict was to merge the two into one list of rows —
-   "the single highest-value change in the document" — and that is what these
-   rules dress.
+   The teardown's §5/§6 verdict was to merge the two into one list of rows,
+   which is the section below this one and still stands as written.
+
+   BOARD-BUILD-SCOPE.md (2026-08-17) brought the board back, on purpose, as a
+   SEPARATE section above the list — "two sections again" is owner instruction
+   #2 of that document. It is not the old masonry wall: three fixed bands (a
+   3-tile front row, `Recent`, and everything else behind `Show all N`) so the
+   84-timer seed renders 9 tiles on a cold open, not 84. See
+   docs/ui/BOARD-BUILD-SCOPE.md for the frozen contract and
+   docs/ui/TIMERBOARD-SPEC.md for the fuller reference it defers to.
 
    Density follows the reference set (docs/ui/reference-analysis.md §4): a
    scrolling list of same-kind items gets HAIRLINE DIVIDERS inside one bounded
    surface, never a bordered-and-shadowed card per item. Extra chrome is
    CONDITIONAL — a row that is fine is just text; a row that is running, or
-   that still owes a narrative, earns a leading state rail.
+   that still owes a narrative, earns a leading state rail. The board reuses
+   that same rail idea for its one loud state (§ THE RUNNING TILE, below).
    ========================================================================= */
+
+/* Not defined anywhere else under public/css/ (checked before adding it) —
+   the board's per-tile digit cap and running-state rail both want an
+   accessible label with no visible box. Standard clip-based recipe. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+
+/* ===========================================================================
+   THE TIMER BOARD
+   =========================================================================== */
+
+/* ---------- the panel and its local size tokens ----------
+   Four SIZE tokens live here rather than in tokens.css, per the build brief:
+   they belong to exactly one component and tokens.css is reserved for values
+   more than one file needs. No colour is declared here — every colour below
+   is a var() onto the existing ration (tokens.css §7a).
+
+   --tile-h-active / --tile-h-front-active are the two tokens the tiles
+   actually consume. They exist so density (a CLASS, landing on whichever
+   ancestor draws it — `.timer-board`, `.timer-grid`, or `.band-front`, see the
+   density block below) and the touch floor (a MEDIA QUERY, which must always
+   win regardless of density) never have to out-specificity each other: each
+   scope just REASSIGNS the custom property, and a directly-assigned custom
+   property always beats an inherited one at the same element, whatever the
+   selector's class count. Compare `.work-rows.density-*` a few hundred lines
+   down, which gets away with plain class selectors because nothing there also
+   has to answer to a touch floor. */
+.timer-board {
+  --tile-min: 280px;
+  --tile-h-compact: 34px;
+  /* 1.65×. Rationale below THE RUNNING TILE section: this is the ratio that
+     reads as "taller" in greyscale, from across a room, with zero colour
+     spent — and the ordinary tile (34px, "must never exceed 36px") is the
+     other half of that ratio. Bumping either number without the other undoes
+     the whole point of the front row. */
+  --tile-h-front: 56px;
+  --tile-h-touch: 44px;
+  /* 1.64× touch — same ratio as the desktop pair, so a thumb reads the same
+     hierarchy a mouse does. */
+  --tile-h-front-touch: 72px;
+  --tile-h-active: var(--tile-h-compact);
+  --tile-h-front-active: var(--tile-h-front);
+
+  background: var(--surface-1);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;           /* clips band dividers and the grid to the radius */
+}
+
+.board-head {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  padding: var(--space-4) var(--space-4) var(--space-1);
+}
+.board-head h2 { margin: 0; }
+/* The live meta line ("3 running · 6.2h today") is whatever text sits beside
+   the heading — no class of its own in the contract, so this catches any
+   direct child that is not the heading rather than naming one it might not
+   match. */
+.board-head > :not(h2) {
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  color: var(--text-secondary);
+}
+
+/* one row: grouping seg, filter, ⋯ — the controls themselves reuse .seg and
+   .timer-search-* below; this is only the row that holds them. */
+.board-controls {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  padding: 0 var(--space-4) var(--space-3);
+}
+
+/* ---------- bands ----------
+   `.band + .band` draws the hairline BETWEEN bands, matching `.group-head`'s
+   border-top a few hundred lines down rather than putting a border on every
+   band and doubling up where two meet. */
+.band { padding: var(--space-3) var(--space-4); min-width: 0; }
+.band + .band { border-top: var(--border-w) solid var(--border); }
+.band-label {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-label); line-height: var(--lh-label); font-weight: var(--fw-bold);
+  color: var(--text-secondary);
+}
+/* "front row has NO label — it is self-evident" (BOARD-BUILD-SCOPE #1).
+   Defensive rather than load-bearing: if the front band renders an empty
+   label node anyway (so `.band-label` stays a real element on every band,
+   which is one less thing for the component to special-case), it still
+   takes no space. */
+.band-front .band-label:empty { display: none; }
+
+/* THE GRID. `auto-fill` + `minmax(--tile-min, 1fr)` is what gives the three
+   named breakpoints (3 across ≥1024px, 2 at 768–1023px, 1 below) without a
+   single explicit media query — the browser recomputes the column count from
+   the available width and --tile-min on its own. `align-items: start` keeps a
+   short tile from stretching to match a tall neighbour on the row below it in
+   the flow (grid rows are independent; a stretched tile would just be dead
+   space, not a taller tile). */
+.timer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min), 1fr));
+  column-gap: var(--gap-block);
+  row-gap: var(--gap-stack);
+  align-items: start;
+}
+
+/* THE FRONT ROW IS NOT `.timer-grid`. It is always exactly 3 tiles in one
+   row — BOARD-BUILD-SCOPE #1's "9 tiles of 84" promise depends on the front
+   row NOT collapsing to 1 column on a phone the way the auto-fill bands
+   correctly do. `repeat(3, 1fr)` never reflows; the tiles inside it shrink
+   and truncate instead (see the ≤480px block at the foot of this file for how
+   far that truncation goes before the tile drops content outright). */
+.band-front {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  column-gap: var(--gap-block);
+}
+
+/* Density: the CLASS, landing on whichever element actually draws it. Every
+   scope it could plausibly land on is covered (see the token comment above)
+   so the tiles are correct regardless of which ancestor the board component
+   ends up choosing — the same defensiveness `.work-rows.density-*` gets away
+   with skipping only because it has no touch floor to out-rank. */
+.timer-board.density-comfortable,
+.timer-grid.density-comfortable,
+.band-front.density-comfortable {
+  /* Comfortable and touch ask for the same thing — more room per tile — so
+     they share numbers rather than inventing a fifth height. Nothing in the
+     brief specified a distinct comfortable figure; reusing the touch pair
+     keeps the two live states (finger, "give me more room") reconciled
+     instead of adding a third ratio nobody asked for. */
+  --tile-h-active: var(--tile-h-touch);
+  --tile-h-front-active: var(--tile-h-front-touch);
+}
+/* Touch: the FLOOR, which must win over density whatever a menu says, because
+   a 34px tile under a fingertip fails WCAG 2.5.5 outright. Reassigning the
+   custom property on `.timer-board` here works even though `.timer-board`
+   alone is less specific than `.timer-board.density-comfortable` above: a
+   directly-assigned custom property beats an inherited one at the SAME
+   element regardless of which selector is "stronger", and where both rules
+   can apply to one element (a phone with comfortable chosen) they resolve to
+   the identical touch numbers anyway, so there is nothing for the two rules
+   to actually fight over. */
+@media (max-width: 767px), (pointer: coarse) {
+  .timer-board {
+    --tile-h-active: var(--tile-h-touch);
+    --tile-h-front-active: var(--tile-h-front-touch);
+  }
+}
+
+/* ---------- the tile ---------- */
+.timer-tile {
+  position: relative;
+  display: flex; align-items: center;
+  gap: var(--gap-inline);
+  height: var(--tile-h-active);
+  min-width: 0;                /* lets the grid track shrink the tile instead
+                                   of the tile forcing the track wider */
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: var(--border-w) solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  overflow: hidden;            /* the fixed height is load-bearing (see the
+                                   ratio comment above) — content that does not
+                                   fit is clipped, never allowed to grow the
+                                   box, or the front row's height ratio drifts
+                                   tile by tile until it stops reading as a
+                                   ratio at all */
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.timer-tile:hover { background: var(--surface-row-hover); border-color: var(--border-strong); }
+/* Inset, not the double-ring `--focus-halo` default from base.css: the tile
+   sets its own `overflow: hidden` for the reason above, and an outward-facing
+   ring on a clipped box either gets clipped itself or spills into the grid's
+   gap and touches the next tile. Same fix `.work-row:focus-visible` already
+   uses a few hundred lines down. */
+.timer-tile:focus-visible { outline: var(--border-w-thick) solid var(--accent); outline-offset: calc(-1 * var(--border-w-thick)); }
+
+.band-front .timer-tile { height: var(--tile-h-front-active); }
+/* The front row earns its height with an extra type step too, not just more
+   air — the "distinguishable from across the room" requirement is about the
+   whole tile, and a bigger number resolves as far as a bigger box does. */
+.band-front .timer-name { font-size: var(--fs-subheading); line-height: var(--lh-subheading); }
+.band-front .timer-digit { min-width: var(--space-6); height: var(--space-6); font-size: var(--fs-label); }
+
+/* ---------- THE RUNNING TILE ----------
+   Must be unmistakable among eighty-three that are not, and colour cannot be
+   the only reason: he may be colour-blind, the room may be bright, and the
+   hue budget is already spent (tokens.css §7a — this is TIER 2, --live, the
+   same "state to notice, not a button to press" the running WORK ROW takes a
+   few hundred lines down; the numbers below are the same 7%/12% tint that
+   rule uses, so a running matter reads as one state whichever list it is
+   showing in). Three channels carry it, not one:
+     1. the leading rail (::before), same construction as `.work-row::before`
+     2. a heavier border — a SHAPE change a hover tint can't fake
+     3. the ticking clock, which exists on this tile and no other (below) —
+        and it MOVES, which is the strongest attention channel there is. */
+.timer-tile::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: var(--valid-mark-w); background: transparent;
+}
+.timer-tile.running::before { background: var(--live); }
+.timer-tile.running {
+  border-color: var(--live);
+  border-width: var(--border-w-thick);
+  background: color-mix(in srgb, var(--live) 7%, var(--surface-1));
+}
+.timer-tile.running:hover { background: color-mix(in srgb, var(--live) 12%, var(--surface-1)); }
+
+/* ---------- the tile's parts ---------- */
+.timer-digit {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--space-5); height: var(--space-5);
+  padding: 0 var(--space-1);
+  background: var(--surface-2);
+  border: var(--border-w) solid var(--border-input);
+  border-bottom-width: var(--border-w-thick);   /* the same `kbd` keycap
+                                                    treatment base.css already
+                                                    uses — this digit IS a
+                                                    keyboard shortcut */
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-caption); font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* `flex: 1 1 0`, never `1 1 auto` — the elastic half of the tile. `auto`
+   would size the flex basis from the name's own max-content width, so a
+   44-character name (measured up to a dozen sharing a client prefix) decides
+   how much room is LEFT for the transport button and the ⋯ instead of the
+   other way around; on a narrow grid column that pushes both off the edge of
+   the tile. A basis of 0 makes the name take only what the fixed-width
+   siblings leave it, which is the only order that guarantees the controls
+   are never the thing that gives. */
+.timer-name {
+  flex: 1 1 0; min-width: 0;
+  font-size: var(--fs-body); font-weight: var(--fw-semibold);
+  color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* The matter number. Readable on the front row (BOARD-BUILD-SCOPE #1); hidden
+   on an ordinary tile, which at 34px compact has no room for it and no need —
+   the number is what gets keyed at export time, not what identifies a tile
+   while scanning for the one to start (same reasoning `.work-cm` already
+   applies to the phone-width row a few hundred lines down). */
+.timer-meta {
+  flex: none;
+  font-size: var(--fs-caption); line-height: var(--lh-caption);
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: none;
+}
+.band-front .timer-meta { display: inline; }
+
+/* THE LIVE CLOCK, ON THE RUNNING TILE ONLY — same rule and same reason as
+   `.timer-clock-raw` on the running WORK ROW: an idle tile showing a static
+   00:00:00 says nothing a hidden clock doesn't say better, and it is channel
+   #3 of THE RUNNING TILE above. `display: none` here is a defensive floor,
+   not the primary mechanism — the component only renders the ticking value
+   on a running timer — but a CSS guarantee costs nothing and this tile has to
+   answer to a stricter contract than the row does.
+   Deliberately NOT re-declared here: font-family, tabular-nums, the dotted
+   underline and the hover tint. `.timer-clock` already carries all of those
+   from the generic rule a few hundred lines down — the row's "this figure is
+   tap-to-edit" affordance is exactly what this clock should offer too, so the
+   override below only touches what actually differs (size, and the accent
+   family: --live because this is a moving state, not a filed number). */
+.timer-tile .timer-clock {
+  display: none;
+  font-size: var(--fs-clock); letter-spacing: var(--ls-clock);
+  color: var(--live); text-decoration-color: var(--live);
+}
+.timer-tile.running .timer-clock { display: inline-flex; align-items: center; }
+.timer-tile.running .timer-clock:hover { color: var(--live-strong); }
+
+/* Filed hours today. Tier 3 (tokens.css §7a) — a FIGURE HAS NO HUE, including
+   this one: it is a filed total sitting still, not the thing that is moving,
+   so it never takes --live the way the clock above does. Rank comes from
+   `--fs-num-sm`/tabular figures against the caption-weight parts beside it. */
+.timer-hours {
+  flex: none;
+  font-family: var(--font-clock); font-variant-numeric: tabular-nums;
+  font-size: var(--fs-num-sm); font-weight: var(--fw-num-sm); letter-spacing: var(--ls-num-sm);
+  color: var(--figure);
+  white-space: nowrap;
+}
+
+/* THE ONE START/STOP BUTTON. Idle carries no hue (tokens.css §7, --transport)
+   — a transport control looks like any other row action until the timer it
+   owns is actually running, which is when it takes the exact --live dress
+   `.timer-stop-btn` already uses on the work row (same 45%-mix border, same
+   soft fill, same hover step) so a running control reads as one component
+   whichever list drew it. */
+.timer-transport { flex: none; color: var(--transport); }
+.timer-transport:hover { color: var(--transport-hover); }
+.timer-tile.running .timer-transport {
+  color: var(--live-strong);
+  border-color: color-mix(in srgb, var(--live) 45%, var(--border));
+  background: var(--live-soft);
+}
+.timer-tile.running .timer-transport:hover { background: color-mix(in srgb, var(--live) 26%, var(--surface-1)); }
+
+/* THE ⋯. `.timer-more` already exists a few hundred lines down as a bare
+   colour rule with `flex: none` — Carbon's "mobile and touch devices persist
+   the overflow menu" reasoning applies here even more than it does on the
+   row: a tile has no hover-revealed anything, because there is no room on a
+   34px tile to hide a control and still have somewhere to reveal it FROM.
+   Nothing to add here; the existing rule already gives it a permanent, quiet
+   presence that steps forward on hover/focus. */
+
+/* ---------- the "add a timer" line and the disclosure ----------
+   `＋ New timer  ·  Show all N timers` — left-aligned as one line (not spread
+   to the panel's edges), the same adjacency `.attn-line`'s middot-joined
+   links use in entries.css. Both items are ordinary `.btn`/`.btn-ghost`
+   buttons from base.css; this only lays out the row that holds them. */
+.board-foot {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--gap-inline);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--border-w) dashed var(--border);
+}
 
 /* ---------- the list header: two controls, not fourteen ---------- */
 .today-head {
@@ -574,6 +908,11 @@ button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-p
   /* The matter NUMBER stays in the row's tooltip, the entry editor and every
      export; at 390px it costs the matter NAME the width it needs. */
   .work-cm { display: none; }
+  /* Same trade on the board's front-row tile — the one tile shape that shows
+     the matter number at all above this width (see .band-front .timer-meta
+     up top). Written at the same specificity as that rule, not a bare
+     `.timer-meta`, so it actually wins instead of losing quietly to it. */
+  .timer-meta, .band-front .timer-meta { display: none; }
   .timer-search-field { max-width: none; }
   .filter-pill { min-height: var(--tap-min); }
   /* base.css's phone tier lists the controls it knows by name; the recorded-
@@ -601,6 +940,28 @@ button.timer-clock-raw:hover { background: var(--surface-2); color: var(--text-p
   .work-rows.density-comfortable .work-row:not(.expanded) .work-body {
     min-height: calc(var(--tap-min) + var(--space-2));
   }
+}
+
+/* ---------- the front row at 412px and below ----------
+   `.band-front` never drops to fewer than 3 columns (see the comment on the
+   rule itself) — that is the whole point of the front row surviving a phone
+   the way the old masonry wall did not. At a true phone width that leaves
+   roughly 100–110px per tile after the board's own padding and the two
+   column gaps, which is not enough for digit + name + meta + hours +
+   transport + ⋯ side by side without the tile clipping something. The tile's
+   fixed height (load-bearing, see THE RUNNING TILE) rules out wrapping onto a
+   second line as the fix, so the fix is the same one the day's numbers use a
+   few hundred lines up in entries.css: drop the least essential figure first,
+   never the name.
+     .timer-meta is already gone here (the ≤767px block above). Next to go is
+   .timer-hours — a filed-hours total that is one tap (or one press of the
+   digit) away in the tile's own editor — which buys back enough width that
+   the name, the transport button and the ⋯ all keep a legible amount of
+   room instead of the name shrinking to a sliver to make space for a number
+   nobody is scanning THIS tile shape for. */
+@media (max-width: 480px) {
+  .band-front .timer-hours { display: none; }
+  .band-front .timer-tile { gap: var(--space-1); padding: 0 var(--space-1) 0 var(--space-2); }
 }
 
 /* ---------- the Edit-timer dialog's "This timer" section ----------
