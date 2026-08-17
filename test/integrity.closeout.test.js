@@ -88,6 +88,27 @@ test('LEAK: a sibling matter’s narrative is served as this matter’s top sugg
       'the Borealis-merger narrative must never be offered on the office-lease matter');
   }));
 
+// -----------------------------------------------------------------------------
+// SCAFFOLD REPAIR (session 5) — this proof was red on its own setup, not on the
+// leak it was written for, exactly as the four 1d proofs were.
+//
+// As written it did: fetch the suggestion, PATCH it onto the draft, finalize,
+// export, then assert `leaseRows.length === 1` before checking that row for
+// "Borealis". That first assertion could only ever hold BECAUSE of the leak.
+// Once 1b/1c closed the sibling union, the endpoint correctly returns NO
+// phrases for a cold matter, so nothing is pre-filled, so the draft stays
+// narrative-empty — and a narrative-empty entry is now correctly BLOCKED by
+// finalize-day and correctly kept OUT of the CSV by 1f. Zero lease rows. The
+// proof went red for the fix.
+//
+// The intent — "the close-out pre-fill must not put a sibling's sentence on
+// this matter's bill" — is kept and STRENGTHENED. It now checks the whole
+// phrase list rather than only phrases[0], asserts the safe fallback the panel
+// promises (empty box → stays a draft → blocked → nothing exported), and then
+// drives the export path FOR REAL with the attorney's own sentence, so the
+// "reached the bill line" assertion is actually exercised instead of riding on
+// a row that only existed when the leak did.
+// -----------------------------------------------------------------------------
 test('LEAK: the close-out pre-fill writes a sibling matter’s narrative onto this '
   + 'matter’s entry and exports it', () =>
   withClock('17:00', async (t) => {
@@ -107,17 +128,48 @@ test('LEAK: the close-out pre-fill writes a sibling matter’s narrative onto th
     // finalizeAndExport(false) → save(d, text) → PATCH, then finalize-day,
     // then POST /api/export.
     const sugg = (await t.fetchJson('GET', `/api/matters/${lease.id}/suggestions`)).body;
-    const prefill = (sugg.phrases[0] || {}).text || '';
+    const offered = (sugg.phrases || []).map((p) => p.text);
+
+    // 1. NOTHING BORROWED, ANYWHERE IN THE LIST. The panel only ever writes
+    //    phrases[0], but an offer further down is one arrow key from the bill,
+    //    so the whole list is held to the same standard.
+    assert.deepEqual(offered.filter((x) => x.includes('Borealis')), [],
+      `close-out was offered the merger's sentence on the lease matter: ${JSON.stringify(offered)}`);
+
+    const prefill = offered[0] || '';
     if (prefill) await t.fetchJson('PATCH', `/api/entries/${draft.id}`, { narrative: prefill });
+
+    // 2. THE SAFE FALLBACK. A cold matter's box is empty, so the entry stays a
+    //    draft: finalize-day blocks it on narrative_empty rather than passing a
+    //    blank line to the bill, and the export carries no lease row at all.
+    const fin = await t.fetchJson('POST', '/api/finalize-day', { date: DAY, ack: true });
+    if (!prefill) {
+      const blocked = (fin.body.blocked || []).find((b) => b.id === draft.id);
+      assert.ok(blocked, 'an empty box must leave the entry a blocked draft, not finalize it');
+      const exp0 = await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
+      assert.deepEqual(
+        exp0.body.csv.split('\n').filter((l) => l.includes('100001-000044')), [],
+        'a narrative-less draft must not reach the file at all');
+    }
+
+    // 3. NOW DRIVE THE EXPORT FOR REAL. The attorney writes his own sentence,
+    //    which is the only way this entry is ever supposed to get words. The
+    //    bill line must carry HIS sentence and no trace of the sibling matter.
+    const OWN = 'Reviewed the office lease abstract and marked the renewal option dates.';
+    await t.fetchJson('PATCH', `/api/entries/${draft.id}`, { narrative: OWN });
     await t.fetchJson('POST', '/api/finalize-day', { date: DAY, ack: true });
     const exp = await t.fetchJson('POST', '/api/export', { from: DAY, to: DAY });
 
-    // ⚠️ FAILS. The CSV row keyed to the office-lease matter carries the
-    // Borealis-merger sentence. This is the sentence that lands on a bill.
     const leaseRows = exp.body.csv.split('\n').filter((l) => l.includes('100001-000044'));
     assert.equal(leaseRows.length, 1, 'the lease entry should export exactly once');
+    assert.ok(leaseRows[0].includes('renewal option dates'),
+      `the lease bill line lost the attorney's own sentence:\n${leaseRows[0]}`);
     assert.ok(!leaseRows[0].includes('Borealis'),
       `another matter's narrative reached the office-lease bill line:\n${leaseRows[0]}`);
+
+    // 4. AND NOWHERE ELSE IN THE FILE EITHER.
+    assert.ok(!exp.body.csv.includes('Borealis'),
+      `the merger's sentence reached the export under some other row:\n${exp.body.csv}`);
   }));
 
 test('OK: a matter with no client siblings gets no borrowed narrative', () =>
