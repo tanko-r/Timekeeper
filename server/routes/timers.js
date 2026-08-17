@@ -5,7 +5,9 @@ import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
-import { loadEntry, syncNarrative, rebuildMatterPeople, recordAudit } from './entries.js';
+import {
+  loadEntry, syncNarrative, rebuildMatterPeople, recordAudit, retractsNarrative,
+} from './entries.js';
 import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { matterSuggestions } from './matters.js';
@@ -476,11 +478,22 @@ export function timersRouter({ db, clock }) {
         // The row as it stood BEFORE the move, so the audit can name where the
         // entry came from. Only the columns recordAudit() compares.
         const beforeEntry = db.prepare(`SELECT id, date, cm_id, narrative, billable,
-          total_override, ever_finalized FROM entries WHERE id=?`).get(linked.id);
+          total_override, ever_finalized, narrative_src_cm_id FROM entries WHERE id=?`).get(linked.id);
         // the entry's billable was a matterless placeholder, or the OLD
         // matter's flag — either way the new matter's flag takes over
         db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
           .run(fresh.cm_id, cmRow ? cmRow.billable : 1, now(), linked.id);
+        // Same retraction as PATCH /api/entries/:id and the bulk move: a
+        // sentence the app composed for the matter this entry is LEAVING does
+        // not travel with it. syncNarrative then refills the empty box from the
+        // entry's own task lines in the new client's format. Hand-typed text
+        // carries no provenance and is never touched.
+        if (retractsNarrative(beforeEntry, fresh.cm_id)) {
+          db.prepare(
+            'UPDATE entries SET narrative=?, narrative_manual=0, narrative_ai=0, narrative_src_cm_id=NULL WHERE id=?')
+            .run('', linked.id);
+          syncNarrative(db, linked.id);
+        }
         db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(now(), fresh.cm_id);
         // The timer surface moves an entry exactly as PATCH /api/entries/:id
         // does, so it owes the same record. Without it an entry that had

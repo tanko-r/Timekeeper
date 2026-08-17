@@ -561,3 +561,237 @@ test('PROMPT: a matter with its own finalized history still teaches from it (cap
     assert.ok(v.turns.some((x) => x.content.includes('rev estoppel')),
       'and its own (brief -> narrative) pair is still a demonstration');
   }));
+
+// ===========================================================================
+// THE RETRACTION — the fence above guards the WRITE; this guards the MOVE.
+//
+// checkSourceMatter refuses text composed for matter A when the entry has since
+// moved to B. It cannot help when the order is reversed: the sentence lands on
+// A legitimately, and then the ENTRY moves. The matter picker in the entry
+// editor is the sanctioned way to correct a mis-keyed matter, so the fence
+// deliberately stands aside for it — and a live, exportable entry on one client
+// was left holding a sentence written for another. Proved in a real browser by
+// test/fence.suggestionmatter.test.js, "NO ENTRY HOLDS ANOTHER MATTER'S
+// SENTENCE", the sweep that reads every row in the database.
+//
+// The rule now: a sentence the APP composed is retracted when the entry leaves
+// the matter it was composed for. A sentence the ATTORNEY typed is never
+// touched. The second half is the dangerous one — silently deleting his own
+// words on an ordinary matter correction would be a worse defect than the leak
+// — so it is tested from every surface that writes a narrative.
+// ===========================================================================
+
+const LEASE_SENTENCE =
+  'Reviewed the landlord termination notice and the underlying lease.';
+
+test('RETRACTION: a sentence the app composed does not follow the entry to another matter', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910100-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910200-000011', 'Borealis Merger', 'Acme Holdings');
+    const entry = await addEntry(t, lease.id, TODAY, '', [
+      { task_code: 'Review', duration: 0.5, fragment: 'review termination notice' },
+    ]);
+
+    // the stop offer writes its pre-fill, and says the words are the app's
+    const w = await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+    assert.equal(w.status, 200, JSON.stringify(w.body));
+    assert.equal(
+      t.db.prepare('SELECT narrative_src_cm_id FROM entries WHERE id=?').get(entry.id).narrative_src_cm_id,
+      lease.id, 'the composed sentence records the matter it was composed for');
+
+    // the editor moves the entry, PATCHing its whole form — narrative included,
+    // unchanged — exactly as public/js/components/entryeditor.js does
+    const moved = await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      cm_id: other.id, narrative: LEASE_SENTENCE,
+    });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+
+    const row = t.db.prepare(
+      'SELECT cm_id, narrative, narrative_src_cm_id FROM entries WHERE id=?').get(entry.id);
+    assert.equal(row.cm_id, other.id, 'precondition: the entry really moved');
+    assert.ok(!row.narrative.includes('landlord termination notice'),
+      `the Harbor Lease sentence reached the Borealis entry: ${JSON.stringify(row.narrative)}`);
+    assert.equal(row.narrative_src_cm_id, null, 'and the stale provenance goes with it');
+  }));
+
+test('RETRACTION: the emptied box refills from the entry’s own task lines, not with a blank', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910110-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910210-000011', 'Borealis Merger', 'Acme Holdings');
+    const entry = await addEntry(t, lease.id, TODAY, '', [
+      { task_code: 'Review', duration: 0.5, fragment: 'reviewed the diligence index' },
+      { task_code: 'Draft', duration: 0.3, fragment: 'drafted the consent list' },
+    ]);
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      cm_id: other.id, narrative: LEASE_SENTENCE,
+    });
+
+    const row = t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(entry.id);
+    assert.ok(!row.narrative.includes('landlord'), 'the old matter’s sentence is gone');
+    assert.match(row.narrative, /diligence index/,
+      `he is left with a sentence built from his own task lines, not an empty box: `
+      + JSON.stringify(row.narrative));
+  }));
+
+test('RETRACTION: a sentence the ATTORNEY typed survives the move untouched', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910120-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910220-000011', 'Borealis Merger', 'Acme Holdings');
+    const entry = await addEntry(t, lease.id, TODAY, '');
+
+    // No narrative_suggested: this is hand typing, and a hand-typed sentence is
+    // the attorney's own account of his work. Correcting a mis-keyed matter
+    // afterwards must never cost him it.
+    const TYPED = 'Conferred with the client regarding the response deadline and next steps.';
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: TYPED, narrative_manual: 1, source_cm_id: lease.id,
+    });
+    assert.equal(
+      t.db.prepare('SELECT narrative_src_cm_id FROM entries WHERE id=?').get(entry.id).narrative_src_cm_id,
+      null, 'his own words carry no provenance to retract');
+
+    const moved = await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      cm_id: other.id, narrative: TYPED,
+    });
+    assert.equal(moved.status, 200, JSON.stringify(moved.body));
+    assert.equal(
+      t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(entry.id).narrative, TYPED,
+      'correcting the matter must never delete what he wrote');
+  }));
+
+test('RETRACTION: quick capture’s sentence is his typing and survives the move', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910130-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910230-000011', 'Borealis Merger', 'Acme Holdings');
+
+    // public/js/components/quickcapture.js sends source_cm_id on every file —
+    // deliberately, so the rule has no exceptions to remember — but the sentence
+    // is parsed from the line the attorney TYPED. source_cm_id alone must
+    // therefore never be read as "the app composed this".
+    const TYPED = 'Reviewed the incoming correspondence and calendared the deadline.';
+    const created = await t.fetchJson('POST', '/api/entries', {
+      date: TODAY, cm_id: lease.id, narrative: TYPED, source_cm_id: lease.id,
+      tasks: [{ task_code: 'Review', duration: 0.3, fragment: '' }],
+    });
+    assert.equal(created.status < 300, true, JSON.stringify(created.body));
+
+    await t.fetchJson('PATCH', `/api/entries/${created.body.id}`, {
+      cm_id: other.id, narrative: TYPED,
+    });
+    assert.equal(
+      t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(created.body.id).narrative,
+      TYPED, 'quick capture files his words, and his words survive a matter correction');
+  }));
+
+test('RETRACTION: words typed in the SAME save as the move are kept — he stated both', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910140-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910240-000011', 'Borealis Merger', 'Acme Holdings');
+    const entry = await addEntry(t, lease.id, TODAY, '');
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+
+    const REWRITTEN = 'Attended the closing call and circulated the signature pages.';
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      cm_id: other.id, narrative: REWRITTEN,
+    });
+    assert.equal(
+      t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(entry.id).narrative, REWRITTEN,
+      'he corrected the matter and the sentence together; the sentence he wrote stands');
+  }));
+
+test('RETRACTION: a composed sentence is left alone while the entry stays put', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910150-000011', 'Harbor Lease', 'Northgate Partners');
+    const entry = await addEntry(t, lease.id, TODAY, '');
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+    // an ordinary unrelated edit — the hours
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, { total_override: 0.7 });
+    assert.equal(
+      t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(entry.id).narrative,
+      LEASE_SENTENCE, 'nothing is retracted while the entry is on the matter it was written for');
+  }));
+
+test('RETRACTION: it is audited, so the deleted sentence can be recovered', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910160-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910260-000011', 'Borealis Merger', 'Acme Holdings');
+    const entry = await addEntry(t, lease.id, TODAY, '');
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      cm_id: other.id, narrative: LEASE_SENTENCE,
+    });
+
+    // A plain draft is normally unaudited. A retraction deletes text the lawyer
+    // can see, so it is recorded whether or not the entry was ever finalized.
+    const rows = t.db.prepare(
+      'SELECT detail FROM audit_log WHERE entry_id=? ORDER BY id DESC').all(entry.id);
+    const found = rows.map((r) => JSON.parse(r.detail))
+      .find((d) => d.narrative && String(d.narrative[0]).includes('landlord termination notice'));
+    assert.ok(found, `no audit row carries the retracted sentence: ${JSON.stringify(rows)}`);
+    assert.deepEqual(found.cm_id, [lease.id, other.id],
+      'and the same row names the matter it came from and the one it went to');
+  }));
+
+test('RETRACTION: the bulk matter move retracts too', () =>
+  withServer(async (t) => {
+    const lease = await mkCm(t, '910170-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910270-000011', 'Borealis Merger', 'Acme Holdings');
+    const composed = await addEntry(t, lease.id, TODAY, '');
+    const typed = await addEntry(t, lease.id, TODAY, '');
+    const TYPED = 'Prepared the closing checklist and circulated it to the working group.';
+    await t.fetchJson('PATCH', `/api/entries/${composed.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+    await t.fetchJson('PATCH', `/api/entries/${typed.id}`, {
+      narrative: TYPED, narrative_manual: 1,
+    });
+
+    const r = await t.fetchJson('POST', '/api/entries/bulk', {
+      action: 'set_cm', ids: [composed.id, typed.id], cm_id: other.id,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const read = (id) => t.db.prepare('SELECT narrative FROM entries WHERE id=?').get(id).narrative;
+    assert.ok(!read(composed.id).includes('landlord termination notice'),
+      `a bulk move carried the old matter's composed sentence: ${JSON.stringify(read(composed.id))}`);
+    assert.equal(read(typed.id), TYPED,
+      'and a bulk move never deletes what he wrote himself');
+  }));
+
+test('RETRACTION: re-pointing a timer that moves its entry retracts too', () =>
+  withServer(async (t, clock) => {
+    const lease = await mkCm(t, '910180-000011', 'Harbor Lease', 'Northgate Partners');
+    const other = await mkCm(t, '910280-000011', 'Borealis Merger', 'Acme Holdings');
+    const timer = await startTimer(t, 'Harbor Lease', lease.id);
+    // past the 2-second misclick grace, which discards an untouched entry
+    clock.advance(20 * 60);
+    const stopped = await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    const entry = stopped.body.entry;
+    assert.ok(entry, `precondition: the stop opened an entry: ${JSON.stringify(stopped.body)}`);
+    await t.fetchJson('PATCH', `/api/entries/${entry.id}`, {
+      narrative: LEASE_SENTENCE, source_cm_id: lease.id, narrative_suggested: 1,
+    });
+
+    // the owner's "ask me each time" rule: the entry only moves when asked
+    const r = await t.fetchJson('PATCH', `/api/timers/${timer.id}`, {
+      cm_id: other.id, move_entry: true,
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const row = t.db.prepare('SELECT cm_id, narrative FROM entries WHERE id=?').get(entry.id);
+    if (row.cm_id === other.id) {
+      assert.ok(!row.narrative.includes('landlord termination notice'),
+        `the timer surface carried the old matter's sentence across: ${JSON.stringify(row.narrative)}`);
+    }
+  }));

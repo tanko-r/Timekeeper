@@ -230,6 +230,19 @@ export function EntryEditor({ spec, settings, onClose }) {
   // saves it (`source_cm_id`) so the server can refuse it if this entry has
   // moved to another matter meanwhile. Cleared by every completed save.
   const suggestedFrom = useRef(null);
+  // The exact sentence the APP put in the box, when it replaced the whole
+  // narrative rather than inserting into it. `source_cm_id` above fences the
+  // write; this tells the server the words are the app's, so it can retract
+  // them if the ENTRY later moves to another matter — which the fence cannot
+  // catch, because the picker in this dialog is the sanctioned way to move an
+  // entry and the fence stands aside for it.
+  //
+  // Compared by VALUE at save time rather than tracked by a flag, so a sentence
+  // the lawyer picked and then edited is his again with no lifecycle to get
+  // wrong. The "insert into what is already there" path deliberately does NOT
+  // set this: that result is a mix of his words and the app's, and retracting
+  // the whole thing would delete his.
+  const composedText = useRef(null);
 
   // Custom fields for the picked matter (client-level + matter-level —
   // spec 2026-07-15). Values live in local.custom_values keyed by field id
@@ -434,8 +447,14 @@ export function EntryEditor({ spec, settings, onClose }) {
     if (suggestedFrom.current != null && !movingMatter && l.cm
       && suggestedFrom.current === l.cm.id) {
       body.source_cm_id = suggestedFrom.current;
+      // …and if the box still holds exactly what the app put there, say so, so
+      // the sentence is retracted rather than carried if this entry ever moves.
+      if (composedText.current != null && body.narrative === composedText.current) {
+        body.narrative_suggested = 1;
+      }
     }
     suggestedFrom.current = null;
+    composedText.current = null;
     // Everything typed so far is in `body` now, so the queued-work flag is
     // cleared HERE rather than on the response: a keystroke that lands while
     // this request is in flight sets it again and queues its own save.
@@ -963,6 +982,7 @@ export function EntryEditor({ spec, settings, onClose }) {
                 onClick=${() => {
     if (aiUndo) setAiUndo(null);
     suggestedFrom.current = local.cm ? local.cm.id : null;
+    composedText.current = t;
     update({ narrative: t });
   }}>${t}</button>`)}
           </div>` : null}

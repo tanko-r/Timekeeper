@@ -332,6 +332,16 @@ export function CloseOut({ onClose, openEditor }) {
       await api.patch(`/api/entries/${d.id}`, {
         narrative: text,
         ...(d.cm && d.cm.id != null ? { source_cm_id: d.cm.id } : {}),
+        // COMPOSED BY THE APP, and only then. `source_cm_id` fences this write
+        // against a matter that has already moved; `narrative_suggested` says
+        // the sentence is the APP'S, so the server can retract it if the ENTRY
+        // moves later. This panel writes both kinds — the untouched pre-fill,
+        // which is the app's, and whatever the lawyer typed into the box, which
+        // is his. Stamping his typing would have it silently deleted the next
+        // time he corrected a mis-keyed matter, so the flag rides only on text
+        // that still matches the pre-fill exactly.
+        ...(d.cm && d.cm.id != null && text === prefillOf(d.cm.id)
+          ? { narrative_suggested: 1 } : {}),
       });
       changedRef.current = true;
       savedRef.current += 1;

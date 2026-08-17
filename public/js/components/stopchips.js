@@ -286,6 +286,18 @@ function StopOffer({ popup, openEditor, onFiled, onClose }) {
   const stamped = (body) => (
     mountCm.current == null ? body : { ...body, source_cm_id: mountCm.current });
 
+  // COMPOSED BY THE APP, and said so. `stamped` fences the write against a
+  // matter that has already moved; this records that the sentence itself is the
+  // app's, so the server can retract it later if the ENTRY moves — which the
+  // fence cannot catch, because the matter picker is the sanctioned way to move
+  // an entry and the fence deliberately stands aside for it.
+  //
+  // Only for text this surface COMPOSED. The two Undo writes below restore
+  // whatever the server had, which may be the attorney's own typing, and must
+  // never be stamped: stamping his words would have them silently deleted the
+  // next time he corrected a mis-keyed matter.
+  const composed = (body) => ({ ...stamped(body), narrative_suggested: 1 });
+
   // The narrative as the SERVER has it right now. It seeds from the stop
   // payload and re-reads on every entry write, which is what makes Undo honest
   // once the offer can stand for ten minutes: if the lawyer wrote the
@@ -469,7 +481,7 @@ function StopOffer({ popup, openEditor, onFiled, onClose }) {
     if (own.length === 0) return;
     autoRef.current = true;
     const chip = own[0];
-    api.patch(`/api/entries/${entry.id}`, stamped({ narrative: chip.text, narrative_ai: 0 }))
+    api.patch(`/api/entries/${entry.id}`, composed({ narrative: chip.text, narrative_ai: 0 }))
       .then(() => {
         if (doneRef.current) return;
         ownWriteRef.current = chip.text;
@@ -560,7 +572,7 @@ function StopOffer({ popup, openEditor, onFiled, onClose }) {
     const before = liveRef.current;
     setBusy(true);
     try {
-      await api.patch(`/api/entries/${entry.id}`, stamped({
+      await api.patch(`/api/entries/${entry.id}`, composed({
         narrative: chip.text, narrative_ai: chip.ai ? 1 : 0,
       }));
       doneRef.current = true;

@@ -16,7 +16,8 @@ import { applyRollovers } from './timers.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
   source, ack_validation, ever_finalized, exported_at, finalized_at, deleted_at,
-  narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at`;
+  narrative_manual, narrative_ai, ai_brief, ai_draft, narrative_src_cm_id,
+  created_at, updated_at`;
 
 export function loadEntry(db, id) {
   const row = db.prepare(`SELECT ${ENTRY_COLS} FROM entries WHERE id=?`).get(id);
@@ -271,6 +272,50 @@ export function checkSourceMatter(db, row, sourceCmId) {
   };
 }
 
+// ── the retraction: a composed sentence does not follow the entry ─────────
+// checkSourceMatter above fences the WRITE — text composed for matter A is
+// refused when the entry has since moved to B. It cannot fence what happens
+// AFTERWARDS. A sentence can land on matter A perfectly legitimately and then
+// the ENTRY moves: the editor's matter picker is the sanctioned way to correct
+// a mis-keyed matter, so the fence deliberately stands aside for it. The
+// sentence came along, and a live, exportable entry on one client then held a
+// sentence written for another. Proved in a real browser — see
+// test/fence.suggestionmatter.test.js, "NO ENTRY HOLDS ANOTHER MATTER'S
+// SENTENCE", the sweep that reads every row in the database.
+//
+// So provenance is recorded when the sentence is composed, in
+// entries.narrative_src_cm_id (migration v18), and the sentence is RETRACTED
+// when the entry leaves the matter it was composed for.
+//
+// WHAT COUNTS AS COMPOSED BY THE APP is the whole difficulty, and `source_cm_id`
+// cannot answer it. Quick capture sends source_cm_id for a sentence the attorney
+// TYPED; close-out sends it for a box he may have typed into. Stamping
+// provenance from source_cm_id alone would silently delete his own words on an
+// ordinary matter correction — a worse defect than the one being fixed, and the
+// exact trap docs/ui/STATUS.md warns about. So the signal is explicit and
+// separate: `narrative_suggested`, sent only by a surface writing text the APP
+// composed which the attorney has not edited. Everything else is his, is never
+// stamped, and always survives a move.
+export function narrativeProvenance(row, b, cmId) {
+  // A write that carries new narrative text re-decides provenance from scratch.
+  if (b.narrative !== undefined && String(b.narrative) !== String(row.narrative ?? '')) {
+    if (!b.narrative_suggested) return null; // he typed it — it is his
+    const src = b.source_cm_id != null ? Number(b.source_cm_id) : cmId;
+    return Number.isInteger(src) ? src : null;
+  }
+  return row.narrative_src_cm_id ?? null;
+}
+
+// Does moving this entry to `nextCmId` retract its sentence? Only a sentence
+// the app composed FOR A DIFFERENT MATTER goes. A hand-typed sentence carries
+// no provenance and never goes; neither does one composed for the matter the
+// entry is moving to.
+export function retractsNarrative(row, nextCmId) {
+  const src = row.narrative_src_cm_id;
+  return src != null && nextCmId != null && Number(src) !== Number(nextCmId)
+    && !!String(row.narrative || '').trim();
+}
+
 // matter_people is a DERIVED CACHE: rebuild the whole roster for one matter
 // from its live (non-deleted) entries. Idempotent — safe to call on every
 // write, edit, move, copy, delete, and restore; a per-matter scan is cheap in
@@ -405,6 +450,16 @@ export function entriesRouter({ db, clock }) {
               // and time moved onto a pro bono matter exports as billable.
               db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
                 .run(cm_id, target ? target.billable : row.billable, now(), id);
+              // Same retraction as PATCH: a sentence the app composed for the
+              // matter this entry is LEAVING does not go with it. Emptying it
+              // lets syncNarrative below refill from the entry's own task lines
+              // in the new client's format. A hand-typed sentence carries no
+              // provenance and is never touched.
+              if (retractsNarrative(row, cm_id)) {
+                db.prepare(
+                  'UPDATE entries SET narrative=?, narrative_manual=0, narrative_ai=0, narrative_src_cm_id=NULL WHERE id=?')
+                  .run('', id);
+              }
               touchCm(db, cm_id, now());
               // same association glue as PATCH: a matterless timer follows
               if (row.cm_id == null) {
@@ -597,14 +652,35 @@ export function entriesRouter({ db, clock }) {
     const chosen = b.narrative !== undefined && b.narrative_manual === undefined
       && nextNarrative.trim() && nextNarrative !== String(row.narrative ?? '')
       ? nextNarrative : null;
+    // ── the matter moved, so a borrowed sentence stays behind ───────────────
+    // Only when this request does not supply NEW text. The test is "the text
+    // did not change", not "no narrative field was sent": the entry editor
+    // PATCHes its whole form on every save, so the sentence rides along on the
+    // very request that moves the matter, unchanged. Reading an absent field as
+    // the signal let every move through the editor — the ONE screen built for
+    // moving an entry — carry the old matter's sentence with it.
+    //
+    // If he really did type new words in the same save, those are his: they
+    // stay, and checkSourceMatter above fences them on their own terms.
+    //
+    // Retracting to '' rather than to some substitute lets syncNarrative below
+    // refill from the entry's own task lines, in the NEW client's billing
+    // format — so he is left with the new matter's sentence, not a blank box
+    // and not the old matter's words.
+    const narrativeUnchanged = b.narrative === undefined
+      || String(b.narrative) === String(row.narrative ?? '');
+    const retracting = cmId !== row.cm_id && narrativeUnchanged
+      && retractsNarrative(row, cmId);
+    const finalNarrative = retracting ? '' : nextNarrative;
+    const srcCmId = retracting ? null : narrativeProvenance(row, b, cmId);
     let timersSynced = [];
     db.transaction(() => {
       db.prepare(`UPDATE entries SET
-          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, narrative_ai=?, ai_brief=?, ai_draft=?, updated_at=?
+          date=?, cm_id=?, narrative=?, billable=?, total_override=?, ack_validation=?, narrative_manual=?, narrative_ai=?, ai_brief=?, ai_draft=?, narrative_src_cm_id=?, updated_at=?
         WHERE id=?`).run(
         b.date ?? row.date,
         cmId,
-        nextNarrative,
+        finalNarrative,
         b.billable !== undefined ? (b.billable ? 1 : 0) : row.billable,
         // Quantised whether it arrives in this payload or is carried over:
         // any write to the entry settles its billed figure on the increment,
@@ -614,8 +690,12 @@ export function entriesRouter({ db, clock }) {
           ? (b.total_override == null ? null : billedHours(db, Number(b.total_override)))
           : (row.total_override == null ? null : billedHours(db, row.total_override)),
         b.ack_validation !== undefined ? (b.ack_validation ? 1 : 0) : row.ack_validation,
-        b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual,
-        narrativeAi, aiBrief, aiDraft,
+        // A retraction empties the box, so nothing is left to keep detached —
+        // and leaving narrative_manual=1 over an empty narrative would stop
+        // syncNarrative refilling it from the new matter's task lines.
+        retracting ? 0
+          : (b.narrative_manual !== undefined ? (b.narrative_manual ? 1 : 0) : row.narrative_manual),
+        retracting ? 0 : narrativeAi, aiBrief, aiDraft, srcCmId,
         now(), row.id);
       if (norm) writeTasks(db, row.id, quantizeTasks(db, norm.tasks));
       applyCustomValues(db, row.id, cv.ops);
@@ -675,7 +755,10 @@ export function entriesRouter({ db, clock }) {
       if (Math.abs(effectiveTotal(db, row.id) - beforeTotal) > 1e-9) {
         timersSynced = syncTimersToEntry(db, row.id, now(), todayLocal(clock()));
       }
-      recordAudit(db, row, req.body, now());
+      // A retraction deletes text the attorney can see, so it is ALWAYS
+      // recorded — draft or not. The audit row carries the old sentence, which
+      // is the only route back to it.
+      recordAudit(db, row, req.body, now(), { always: retracting });
       rebuildMatterPeople(db, cmId);
       if (cmId !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
     })();
