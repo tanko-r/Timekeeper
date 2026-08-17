@@ -297,11 +297,21 @@ export function checkSourceMatter(db, row, sourceCmId) {
 // composed which the attorney has not edited. Everything else is his, is never
 // stamped, and always survives a move.
 export function narrativeProvenance(row, b, cmId) {
-  // A write that carries new narrative text re-decides provenance from scratch.
-  if (b.narrative !== undefined && String(b.narrative) !== String(row.narrative ?? '')) {
-    if (!b.narrative_suggested) return null; // he typed it — it is his
-    const src = b.source_cm_id != null ? Number(b.source_cm_id) : cmId;
-    return Number.isInteger(src) ? src : null;
+  if (b.narrative !== undefined) {
+    // An explicit claim is believed on its own terms, whether or not the text
+    // changed. A surface that says "the app composed this, for matter X" is
+    // stating a fact about where the words came from, and that fact does not
+    // depend on what happened to be in the box already — the stop chip offering
+    // a sentence identical to one that is there is still the app's sentence.
+    if (b.narrative_suggested) {
+      const src = b.source_cm_id != null ? Number(b.source_cm_id) : cmId;
+      return Number.isInteger(src) ? src : null;
+    }
+    // Text that CHANGED with no such claim is his typing, and his typing is
+    // never retracted. Text that did not change makes no claim either way, so
+    // whatever was recorded before still stands — an autosave replaying the
+    // same sentence must not quietly launder the app's words into his.
+    if (String(b.narrative) !== String(row.narrative ?? '')) return null;
   }
   return row.narrative_src_cm_id ?? null;
 }
@@ -803,13 +813,23 @@ export function entriesRouter({ db, clock }) {
       // and routes/ai.js both gate on narrative_ai = 0) — the exact loop the
       // flag exists to break. ai_brief and ai_draft come too, so a later
       // correction still yields a labelled (brief → corrected) pair.
+      //
+      // MATTER provenance travels with the text for the same reason, and
+      // dropping it was a live leak the Stage 1 exit sweep caught: the copy IS
+      // the composed sentence, byte for byte, but arrived carrying no record of
+      // the matter it was composed for — so moving the copy to another matter
+      // found nothing to retract and put one client's sentence on another
+      // client's bill, through a door the entry PATCH had already closed. The
+      // copy is created on the SAME matter as its source, so the claim it
+      // inherits is still true.
       const i = db.prepare(`INSERT INTO entries
-        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, ai_draft, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?, ?, ?, ?, ?)`)
+        (date, cm_id, narrative, billable, status, total_override, source, narrative_manual, narrative_ai, ai_brief, ai_draft, narrative_src_cm_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'draft', ?, 'manual', ?, ?, ?, ?, ?, ?, ?)`)
         .run(date, src.cm_id, src.narrative, src.billable,
           src.total_override == null ? null : billedHours(db, src.total_override),
           src.narrative_manual ? 1 : 0,
-          src.narrative_ai ? 1 : 0, src.ai_brief, src.ai_draft, now(), now());
+          src.narrative_ai ? 1 : 0, src.ai_brief, src.ai_draft,
+          src.narrative_src_cm_id ?? null, now(), now());
       writeTasks(db, i.lastInsertRowid, quantizeTasks(db, src.tasks));
       db.prepare(`INSERT INTO entry_custom_values (entry_id, field_id, value)
         SELECT ?, field_id, value FROM entry_custom_values WHERE entry_id=?`)
