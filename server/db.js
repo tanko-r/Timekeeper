@@ -382,6 +382,24 @@ const MIGRATIONS = [
     WHERE tim_ref IS NULL;
   CREATE UNIQUE INDEX idx_entries_tim_ref ON entries(tim_ref);
   `,
+  // v19 — a board that can forget (2026-08-17).
+  //
+  // archived_at: the moment the attorney took a timer OFF the board. NULL means
+  // live, which is the correct reading of every row that exists today. He runs
+  // eighty-three timers and matters close every month, so the board only ever
+  // grows — and that wall is the thing this UI work exists to pull down. DELETE
+  // is the wrong instrument: a closed matter still produces a correction weeks
+  // later, and a deleted timer is gone for good. Archiving is reversible, and
+  // the timestamp is the whole record.
+  //
+  // Deliberately additive and nullable, because archiving is a BOARD decision
+  // and not a billing one. Nothing on entries moves — not an hour, not a
+  // narrative, not a matter — so this column opens no new way for a sentence to
+  // cross a matter boundary. Unarchiving sets it back to NULL and the tile
+  // comes back where it was: `sort_order` is never touched in either direction.
+  `
+  ALTER TABLE timers ADD COLUMN archived_at TEXT;
+  `,
 ];
 
 const SEED_SETTINGS = {

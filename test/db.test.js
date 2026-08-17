@@ -223,13 +223,14 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // schema-idempotent, its only effect is making cm_id nullable — the
   // timers.held_since column, the AOT-window timers.pinned/
   // draft_narrative columns, the timers.narrative_template column, and the
-  // v15 custom-fields tables, the AI-voice entries columns, and the v18
-  // entries identity columns) and roll user_version back by fourteen
-  // (positional — no hardcoded version numbers).
+  // v15 custom-fields tables, the AI-voice entries columns, the v18
+  // entries identity columns and the v19 timers.archived_at column) and roll
+  // user_version back by fifteen (positional — no hardcoded version numbers).
   // A UNIQUE index has to go before the column it covers: SQLite refuses the
   // DROP COLUMN with "error in index ... after drop column" otherwise.
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN archived_at;
     DROP INDEX idx_entries_tim_ref;
     ALTER TABLE entries DROP COLUMN tim_ref;
     ALTER TABLE entries DROP COLUMN narrative_src_cm_id;
@@ -249,7 +250,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 14}`);
+  db1.pragma(`user_version = ${v - 15}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -331,12 +332,14 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
     VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
   // narrative_template, the v15 custom-fields tables, the AI-voice entries
-  // columns and the v18 entries identity columns landed after the rebuild —
-  // undo them too so the replay window (rebuild + template column + custom
-  // fields + AI voice + v18 identities) applies cleanly. The UNIQUE index on
-  // tim_ref must be dropped before its column, or SQLite fails the DROP COLUMN
-  // with "error in index ... after drop column".
+  // columns, the v18 entries identity columns and the v19 timers.archived_at
+  // column landed after the rebuild — undo them too so the replay window
+  // (rebuild + template column + custom fields + AI voice + v18 identities +
+  // v19 archive) applies cleanly. The UNIQUE index on tim_ref must be dropped
+  // before its column, or SQLite fails the DROP COLUMN with "error in index
+  // ... after drop column".
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN archived_at;
     DROP INDEX idx_entries_tim_ref;
     ALTER TABLE entries DROP COLUMN tim_ref;
     ALTER TABLE entries DROP COLUMN narrative_src_cm_id;
@@ -349,7 +352,7 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
     ALTER TABLE timers DROP COLUMN narrative_template;
   `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 6}`);
+  db1.pragma(`user_version = ${v - 7}`);
   db1.close();
 
   const db2 = openDb(path);

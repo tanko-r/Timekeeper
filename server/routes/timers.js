@@ -29,7 +29,7 @@ const QUICK_TIMER_NAME = 'Quick timer';
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
   group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since,
-  pinned, draft_narrative, narrative_template`;
+  pinned, draft_narrative, narrative_template, archived_at`;
 
 const TENTH_SECONDS = 360;
 
@@ -227,7 +227,11 @@ export function timersRouter({ db, clock }) {
 
   const withElapsed = (t) => ({ ...t, elapsed_seconds: elapsedSeconds(t, clock().getTime()) });
 
-  const listStmt = () => db.prepare(`SELECT ${TIMER_COLS},
+  // An archived timer is off the board, so the board does not ask for it.
+  // `?includeArchived=1` opts it back in — deliberately the same shape as
+  // GET /api/entries `?includeDeleted=1`, so the app has ONE idiom for "also
+  // show me the ones I put away" rather than a second one to remember.
+  const listStmt = (includeArchived) => db.prepare(`SELECT ${TIMER_COLS},
       (SELECT cm_number FROM matters WHERE matters.id = timers.cm_id) AS cm_number,
       (SELECT short_name FROM matters WHERE matters.id = timers.cm_id) AS cm_short_name,
       (SELECT billable FROM matters WHERE matters.id = timers.cm_id) AS cm_billable,
@@ -240,11 +244,12 @@ export function timersRouter({ db, clock }) {
         AND (TRIM(COALESCE(entry_tasks.fragment, '')) != ''
           OR TRIM(COALESCE(entry_tasks.task_code, '')) != ''
           OR COALESCE(entry_tasks.duration, 0) > 0)) AS entry_substantive_lines
-    FROM timers ORDER BY sort_order, id`);
+    FROM timers ${includeArchived ? '' : 'WHERE archived_at IS NULL'}
+    ORDER BY sort_order, id`);
 
   r.get('/', (req, res) => {
     applyRollovers(db, clock);
-    res.json(listStmt().all().map(withElapsed));
+    res.json(listStmt(req.query.includeArchived === '1').all().map(withElapsed));
   });
 
   r.post('/', (req, res) => {
@@ -549,6 +554,67 @@ export function timersRouter({ db, clock }) {
     res.json({ ok: true, deleted });
   });
 
+  // ── archive: take a tile off the board without moving a minute of time ────
+  // Eighty-three timers, and matters close every month. Deleting a finished
+  // matter's timer is the wrong instrument — the correction arrives weeks later
+  // and the tile is gone — so a timer leaves the board and can come back.
+  //
+  // Archiving is a BOARD decision, not a billing one. It TOUCHES NO ENTRY: not
+  // the linked entry, not its hours, not its narrative, not its matter. The
+  // whole of test/timers.archive.test.js exists to hold that line, and the
+  // ledger total is asserted identical either side of an archive.
+  r.post('/:id/archive', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    // Idempotent, because he will double-tap it on a slow link from the train.
+    // The second tap must not re-stamp the time or re-run the settle below.
+    if (timer.archived_at) return res.json(withElapsed(timer));
+    // A running clock is still accruing into an entry. Archiving it would put
+    // the accrual out of sight with nothing left on the board to stop it, and
+    // the time would surface hours later attached to a tile he can't see. The
+    // stop stays a deliberate act.
+    if (timer.running) {
+      return res.status(409).json({ error: 'Stop the timer before archiving it.' });
+    }
+
+    // The link goes — a tile that is off the board must not keep claiming to
+    // serve an entry. But the day clock still HOLDS the hours already filed
+    // onto that entry, and dropping the link while keeping the hours is exactly
+    // the Acme duplicate (2026-07-10): the next stop, or the midnight bank if
+    // this timer is ever unarchived, would file the same time a second time.
+    // So deduct what the entry kept and leave the remainder on the clock — the
+    // same rebase syncToEntry() does when a link breaks. The entry is READ for
+    // its total and written not at all.
+    const linked = timer.linked_entry_id
+      ? db.prepare('SELECT id, deleted_at, total_override FROM entries WHERE id=?')
+        .get(timer.linked_entry_id)
+      : null;
+    // A SOFT-DELETED entry kept nothing — it is off every bill, every export
+    // and every total — so its hours stay on the clock rather than vanishing
+    // with it. Same reading as syncToEntry().
+    const settled = linked && !linked.deleted_at ? storedTotal(db, linked) : 0;
+    const keepSeconds = Math.max(
+      0, elapsedSeconds(timer, clock().getTime()) - Math.round(settled * 3600));
+
+    db.prepare(`UPDATE timers SET archived_at=?, linked_entry_id=NULL,
+      accumulated_seconds=?, last_started_at=NULL WHERE id=?`)
+      .run(now(), keepSeconds, timer.id);
+    res.json(withElapsed(getTimer.get(timer.id)));
+  });
+
+  // Back onto the board, in its old place. `sort_order` was never touched on
+  // the way out, so the flag is the only thing there is to put back — the tile
+  // reappears between the same two neighbours he left it between.
+  r.post('/:id/unarchive', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    if (!timer.archived_at) return res.json(withElapsed(timer));
+    db.prepare('UPDATE timers SET archived_at=NULL WHERE id=?').run(timer.id);
+    res.json(withElapsed(getTimer.get(timer.id)));
+  });
+
   r.post('/:id/duplicate', (req, res) => {
     const timer = getTimer.get(req.params.id);
     if (!timer) return res.status(404).json({ error: 'Timer not found.' });
@@ -750,9 +816,13 @@ export function timersRouter({ db, clock }) {
     let timer = db.prepare(`SELECT ${TIMER_COLS} FROM timers WHERE linked_entry_id=?`).get(entry.id);
     if (!timer) {
       // a paused timer on the same matter is "the other timer" to link back
-      // to; a running one is busy accruing into its own entry — leave it
+      // to; a running one is busy accruing into its own entry — leave it.
+      // An ARCHIVED timer is not a candidate: adopting one would start a clock
+      // on a tile that is not on the board, which is the one state a timers app
+      // must never be in. A new timer is created instead, as it is when the
+      // matter has no timer at all.
       timer = db.prepare(
-        `SELECT ${TIMER_COLS} FROM timers WHERE cm_id=? AND running=0 ORDER BY
+        `SELECT ${TIMER_COLS} FROM timers WHERE cm_id=? AND running=0 AND archived_at IS NULL ORDER BY
            COALESCE(last_stopped_at, last_started_at, created_at) DESC, id DESC`
       ).get(entry.cm_id);
       if (!timer) {
