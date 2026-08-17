@@ -177,6 +177,30 @@ All on a 390×844 phone unless noted, measured on the rendered app.
 | Five-entry day, taking every suggestion | 23 | 17 | ≤13 |
 | Desktop fixed chrome | 49px | 97px | under 60px |
 
+### The board at EIGHTY-FOUR timers — the real baseline (session 5)
+
+Measured on the rendered app at 1440×900 with the new seed, `shots/before-84/`.
+These are the numbers the timer board must beat, and they are the reason the
+merged list cannot stand. Nobody had measured the page at his real density
+before; every previous number in this file was taken at five timers.
+
+| | Now, at 84 timers | Teardown's complaint, at 5 |
+|---|---|---|
+| Today page height | **4,438px** (~5 screens) | 2,639px |
+| Rows | 85 × 46px, every one full width | — |
+| Rows fully above the fold | **12 of 85** | — |
+| **Visible controls on Today** | **445** | 64 — and it called that unusable |
+| First control that starts a timer | y=348 | y=978 |
+| A separate entries list | **none** — merged away | — |
+| Horizontal overflow | none | — |
+
+**445 controls.** The teardown's headline complaint was sixty-four. Whatever
+else is arguable about the merge, one full-width row per timer does not survive
+contact with this practice.
+
+One thing the current list gets RIGHT and the board must keep: it sorts worked
+timers to the top, so the six that matter today are the six he sees first.
+
 ---
 
 ## Owner decision 2026-08-16 — re-pointing a timer that already filed hours
