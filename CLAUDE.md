@@ -42,6 +42,28 @@ of these items: make the fix, check off / remove the TODO line, and **delete
 the referenced screenshot file** — `feedback/` should only ever hold
 not-yet-addressed items.
 
+## Context handoff — do this, it is not optional
+
+Sessions here run long and go cold, and re-deriving state costs David real
+usage every time. So:
+
+- **`docs/ui/HANDOFF.md` is the entry point.** It opens with the question
+  waiting for David, then what is true right now, then what is in flight.
+  Read it first; read nothing else until you need it.
+- **`node scripts/handoff.mjs`** prints the objective half — branch, working
+  tree, recent commits, the last measured test result *with the commit it was
+  measured at*, and the live-data tripwire. Run it instead of rediscovering
+  those with a dozen tool calls. `--test` re-measures (~50s) and records it.
+- **Before asking David a question, update `docs/ui/HANDOFF.md` first**, with
+  the question at the top and the options and a recommendation under it. A
+  question that arrives without a handoff costs him a whole context to answer.
+- **Update it again before you stop**, whatever state the work is in.
+- Big reference docs — `TIMERBOARD-SPEC.md`, `TIMERBOARD-CRITIQUES.md`,
+  `teardown.md` — are for **grepping**, never for reading start to finish.
+- Test counts are **measurements, not arithmetic**. Never quote one without
+  the commit it was measured at; this project has shipped two invented counts
+  in its own docs already.
+
 ## Design docs
 
 - Spec: `docs/superpowers/specs/2026-07-06-timekeeper-design.md` (includes the

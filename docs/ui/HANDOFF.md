@@ -1,160 +1,163 @@
-# UI overhaul — session handoff
+# HANDOFF — read this first, then stop reading
 
-> **Start here, then read these three, in this order:**
-> 1. `docs/ui/STATUS.md` — the status board. One file, updated every session.
-> 2. `docs/ui/PLAN.md` — the staged plan. Integrity first; nothing else ships before it.
-> 3. `docs/ui/INTEGRITY.md` — 33 confirmed defects that can misbill. Written for the owner.
+**Written 2026-08-17, session 5.** One file to restart a cold session cheaply.
+Refresh the mechanical half with `node scripts/handoff.mjs` — it prints git
+state, real test counts and what is uncommitted, so a new session never has to
+re-derive them with a dozen tool calls.
+
+---
+
+## 1. THE OPEN QUESTION
+
+> **The timer board's first pass is being built now. When it lands, which
+> deferred item comes next?**
 >
-> `docs/ui/BRIEF.md` is the contract (three owner rules). `docs/ui/teardown.md`
-> is the design standard. Everything below is the session-1 record.
+> - **A — the overnight repair** *(my recommendation)*. A timer left running
+>   overnight currently costs six actions across two pages to fix, and its only
+>   warning is a `title` tooltip, which does not exist on the Android PWA he
+>   actually uses. It is the most expensive routine failure in legal billing.
+>   Needs: a migration recording `rollover_entry_id` and
+>   `rollover_last_activity_at` inside the rollover statement, a `rollover_from{}`
+>   projection, and a hard refusal when the two affected entries are on
+>   different matters.
+> - **B — the close-out stepper.** Three missing narratives at 5:50pm is ~12
+>   actions and two visual hunts through a ten-row list, which is exactly when
+>   he abandons the day. Needs no schema change; it is a close-out change, kept
+>   out of this pass only to avoid putting the riskiest UI in the same commit as
+>   a refactor.
+> - **C — something he names instead.**
+>
+> Both are specified in `docs/ui/TIMERBOARD-SPEC.md`. A is worth more; B is
+> cheaper and lower risk.
 
+**Do not ask him anything else without updating this file first.** He is losing
+usage to cold caches, and a question that arrives without a handoff costs him a
+whole context to answer.
 
-Written 2026-08-15, ~17:00 PDT, when the session ran low on usage. Read this
-plus `docs/ui/BRIEF.md` (the contract) and `docs/ui/teardown.md` (the design
-standard, with two appended owner constraints) to pick the work back up.
+---
 
-Branch: `ui-overhaul-2026-08`, pushed. Last commit at handoff: the stop-chip
-contamination fix.
+## 2. WHAT IS TRUE RIGHT NOW
 
-## State right now
+- Branch `ui-overhaul-2026-08`, pushed. **Stage 1 (integrity) is CLOSED**,
+  exit gate included.
+- **THE BRANCH IS SHARED.** Commits `1afcb1f`, `1d2100c`, `87d8b11` (a
+  de-identification scoring lane) landed between this session's commits and
+  are not its work. Someone else is committing here. `git pull --rebase`
+  before assuming the tree is yours, and keep commits atomic so the two
+  lanes stay separable.
+- **944 tests, 944 pass, 0 fail.** The number only ever goes up.
+- `node scripts/e2e-smoke.mjs` is clear apart from one aborted
+  `/api/agent/todo/events` request on teardown, which **reproduces on a clean
+  tree and predates this work**. Not a regression, not yet chased.
+- The Today page, measured at his real density for the first time:
+  **4,438px tall, 85 rows, 445 visible controls, 12 rows above the fold.**
+  That measurement is why the board is being rebuilt.
 
-Both suites green: 633 unit tests pass, `node scripts/e2e-smoke.mjs` all
-clear. Working tree clean. Nothing half-built is uncommitted.
+### ⚠️ Two rules that will bite a fresh session
 
-## The owner's rules, in priority order
+1. **`data/timekeeper.db` IS LIVE CLIENT DATA.** His tripwire: if the name
+   "Microsoft" appears in a Timekeeper database, STOP. It was checked and it
+   hits. Never read, dump, screenshot or paste anything derived from `data/`.
+   Tests and e2e use temp databases and are safe. The dummy database is the
+   preview's, at `~/Projects/timekeeper-poc/data/`.
+2. **Never run an orchestrator with `claude -p`.** Print mode answers once and
+   exits; a previous session killed its own five builders at the 600-second
+   ceiling and left eight hours of work uncommitted. Use an interactive session
+   in tmux.
 
-These outrank the teardown, every critic, and any task prompt. All three are
-written into `docs/ui/BRIEF.md`.
+---
 
-1. **Data integrity.** A *narrative* — the client-facing sentence that lands
-   on a bill — may never cross a matter boundary, including between two
-   matters of the same client. The phrasebook, ghost text and text expansions
-   are reusable phrasing and ARE shared by design; do not scope them per
-   matter and do not report them as defects. AI prompt example pairs come
-   from the same matter or are fully synthetic. No time or narrative may be
-   lost, dropped, double-counted, or marked exported without reaching the
-   file. Every rule enforced by a test.
-2. **Desktop first.** He works from the desktop browser and desktop PWA.
-   Desktop wins any trade against phone quality; desktop density is a
-   feature; keyboard is a first-class input, not an enhancement. The phone
-   gets the core loop done well — start and stop a timer, add or edit an
-   entry, write a narrative, finalize, export — and everything else there
-   only has to be reachable and unbroken.
-3. **It is fundamentally a timers app.** He uses the timer list all day and
-   searches it with `/` constantly. `/` on Today filters timers, `/`
-   elsewhere searches entries, and that fork is deliberate. Compact is the
-   right default and denser is better, provided a row expands (by chevron,
-   click and keyboard) and a compact/comfortable density control persists.
+## 3. WHAT LANDED THIS SESSION
 
-## What was interrupted, and must restart
+| Commit | What |
+|---|---|
+| `c0a98f2` | `start-for-entry` leaves a replacement clock on the entry it drops, so a hijacked timer cannot strand a timed, narrative-less draft nobody can see. |
+| `8f60afe` | The close-out pre-fill proof was red **on the fix**, not on a leak. Repaired stricter. |
+| `92d50fb` | **The last leak.** A sentence the app composed is now retracted when the entry leaves the matter it was composed for — entry PATCH, bulk move and timer re-point. Nine regression tests, and the ones that matter most prove his OWN words survive a move. |
+| `eb55adc` | The nine-attack Stage 1 exit gate — **and the copy leak it caught on its first run** (copying an entry dropped its matter provenance). |
+| `307c5d9` | The demo seed rebuilt at 84 timers. Five timers hid the entire design problem. |
+| `f27458a`, `185beff`, `fd126b7` | Status board, the three critic reports verbatim, and the frozen board scope. |
 
-Two workflows were stopped mid-run to conserve usage. Neither left partial
-edits — both were stopped after their builders had finished and committed.
+**One test assertion was changed deliberately** and it is explained in
+`c0a98f2`'s message: the `start-for-entry` proof demanded that close-out
+finalize a billable entry with no sentence, which rule 1 forbids. The complaint
+it was written about is kept and now stated as the rule.
 
-### 1. Integrity audit — RESTART FROM SCRATCH
+---
 
-Script: `.../workflows/scripts/tk-integrity-audit-wf_a9b1d9d4-d6e.js`
-(already patched with the corrected narrative-versus-phrasing standard).
-Six read-only auditors, then an adversarial verifier per claimed leak, then
-one report written for the owner at `docs/ui/INTEGRITY.md`.
+## 4. WHAT IS IN FLIGHT
 
-Audit areas: suggestion sources; AI prompt construction; entry mutation paths
-including copy, duplicate and bulk operations; export completeness across
-date and daylight-saving boundaries; the close-out and timer-to-entry
-lifecycle; and stale client-side state generally.
+The timer board, scope frozen in **`docs/ui/BOARD-BUILD-SCOPE.md`** — read that
+before touching anything, it is the contract. Ten things in, six deferred with
+the foundation each needs named.
 
-It had 6 auditors running and produced nothing before it was stopped. Relaunch
-with `Workflow({scriptPath, resumeFromRunId: 'wf_a9b1d9d4-d6e'})` — nothing is
-cached, so it starts clean.
+**Wave 1** (three parallel agents, verifying now):
 
-**This is the highest-priority work.** The one contamination bug that was
-found and fixed was a *shape* — a component holding one record's data while
-displaying another's — and the audit exists to find the others.
+| File | State |
+|---|---|
+| `public/js/lib/boardselect.js` + `test/boardselect.test.js` | new — the pure band-selection rules |
+| `server/db.js` (migration v19), `server/routes/timers.js`, `test/timers.archive.test.js` | new — archive a timer |
+| `public/css/timers.css` | modified — the tile grid and bands |
+| `public/js/components/timertile.js` | new — written by hand, the tile itself |
 
-### 2. Contamination-fix verification — the critic never ran
+**Still to write** (the interlocking core, deliberately kept in one pair of
+hands because the seams are where the last two attempts broke):
 
-Script: `.../workflows/scripts/tk-ui-w2b3-fix-wf_7a17ba46-6bb.js`. Its two
-builders finished and their work is committed. The third agent — a critic
-whose one job is to try to reproduce the cross-matter write again, harder
-(three timers, stopping during a dialog, a timer whose matter changed while
-running, midnight rollover, a quick timer with no matter) and to read the
-database directly after each attempt — never ran. Resume with
-`resumeFromRunId: 'wf_7a17ba46-6bb'`; the two builders replay from cache.
+1. `public/js/components/timerboard.js` — presentational: head, controls,
+   filter, the three bands, foot. **All state stays in the coordinator.**
+2. `public/js/components/timergrid.js` — keeps every piece of state, effect and
+   mutation; renders `<TimerBoard>` and, beneath it, `Today's entries`.
+3. The matter-searching filter (`⏎` on no match creates and starts a timer).
+4. The "ask me each time" dialog — the server half already exists.
 
-## Queued work, in order
+### The row model, so nobody has to re-derive it
 
-1. **Stop-chip content, to the new spec.** The chips must offer the last
-   couple of narratives from that matter, plus one AI-generated narrative
-   extrapolating the likely next step from that matter's own prior
-   narratives; generic phrasing or nothing when the matter has no history.
-   Files: `public/js/components/stopchips.js`, the suggestion endpoint in
-   `server/routes/matters.js`, `server/lib/exemplars.js`.
-   Open assumption to confirm with the owner: the extrapolation draws only on
-   that matter's prior narratives.
-2. **Wave 2b-3**, the screens not yet rebuilt: the ledger (pagination — it is
-   5386 CSS px for 23 entries; export as a dialog; delete the
-   `All entries | Export` subnav), the calendar (42 tab stops become one
-   roving grid, day-tap scrolls the panel into view, empty trailing weeks
-   collapse, the Statistics tab folds under the month grid), and settings
-   (the section name prints three times, one settings-row component, theme
-   switching made first-class).
-3. **Re-rank the outstanding findings under desktop-first.** Several recent
-   critic verdicts were driven by mobile measurements that are now minor.
-   Do this before spending effort on phone parity.
-4. **Wave 3 polish:** editor control trim (12 controls on an existing entry
-   against a target of 10), motion, empty states, PWA details.
-5. **A final whole-app review** by the standing critic against
-   `docs/ui/teardown.md`, then refresh the progress page and write the list of
-   what to push further.
+`timergrid.js` builds `timerRows` (one per timer, carrying the entry it filed)
+and `entryRows` (entries no timer owns, keyed `m<cmId>` or `e<id>`).
+**After the split: timers become TILES on the board; ALL of today's entries
+become the separate list.** The tile drops the narrative entirely — that is what
+the entries list is for, and it is how the app looked before the merge
+(`shots/baseline/dashboard.desktop.light.png`).
 
-## The preview (POC) — infrastructure ready, app not started
+### The trap that has bitten twice
 
-The owner wants to review on his Cloudflare tunnel with Alt+drag feedback
-working. Everything is prepared except starting it:
+`stopchips.js` finds its mount with
+`document.querySelector('.today-list .work-row[data-timer-id=…]')`. The tile is
+`.timer-tile`, **not** `.work-row`, so the offer silently relocates into the
+entries panel and yanks the page — **and the e2e assertion still passes**,
+because it checks `.work-row`. Fix the selector AND
+`scripts/e2e-smoke.mjs:381`.
 
-- DNS: `poc-time.rigid-dreamy-sweep.us` routed to the `nanoclaw` tunnel.
-- Ingress: added to `/etc/cloudflared/config.yml` pointing at port 4748;
-  cloudflared reloaded. Production on 4747 untouched.
-- Service: `~/.config/systemd/user/timekeeper-poc.service`, its own database
-  under `~/Projects/timekeeper-poc/data`, and Alt+drag feedback deliberately
-  written into the MAIN repo's `feedback/` and `TODO.md`.
-- `scripts/poc-sync.sh [ref] [--seed]` creates the worktree, points it at a
-  commit and restarts the service.
+---
 
-To launch: `scripts/poc-sync.sh --seed`, seed the demo day via
-`scripts/lib/demoseed.mjs` against `http://127.0.0.1:4748`, set an app
-password (Settings → Remote access, from the LAN), then send the owner the URL
-and password. Remote requests require that password by design; do not weaken
-it.
+## 5. HOW TO PICK IT UP
 
-## Measurements to judge future work against
+```bash
+cd /home/david/Projects/Intapp-clone
+node scripts/handoff.mjs          # objective state, cheap
+npm test                          # expect 944+ pass / 0 fail
+```
 
-All on a 390x844 phone unless noted, all measured on the rendered app.
+Read, in this order, and nothing else until you need it:
 
-| | Before the overhaul | Now |
-|---|---|---|
-| Today page height | 2639px | 1292px |
-| First control that starts a timer | y=978 | y=328 |
-| Complete work rows above the fold | 0 | 2 (4 in compact density) |
-| Visible controls on Today | 64 desktop / 69 mobile | 43 / 39 |
-| A five-entry day, end to end | ~22 (estimated), 18 (measured) | 12 |
-| The same day using the stop suggestions | 23 | 17 — still worse, being fixed |
+1. **this file**
+2. `docs/ui/BOARD-BUILD-SCOPE.md` — what is being built and what is not
+3. `docs/ui/STATUS.md` — the standing owner rules and the stage tracker
 
-Desktop fixed chrome regressed to 97px from 49px before the overhaul and
-should come back down; the phone bottom bar had seven slots against a
-five-slot convention. Both were assigned to the shell agent.
+`docs/ui/TIMERBOARD-SPEC.md` (3,308 lines) and
+`docs/ui/TIMERBOARD-CRITIQUES.md` are REFERENCE. Do not read them start to
+finish; grep them for the thing you are building.
 
-## How to work here
+### Gates before anything is called done
 
-- `node scripts/uishots.mjs --out shots/<name> [--only screen,screen] [--strict]`
-  photographs every screen across desktop/mobile and light/dark, and measures
-  horizontal overflow and the 44x44 touch floor.
-- `node scripts/abpair.mjs --ours <png> --ref <png> --out <dir>` stages a
-  blind A/B pair; judge without reading `.key.json`.
-- `shots/refs-v2/INDEX.md` indexes 40 real product screenshots; prefer it over
-  `shots/refs/`, which is mostly marketing pages.
-- `node scripts/progress.mjs` rebuilds the before/after progress page.
-- Run `npm test` and the e2e suite one at a time — four cores, and the e2e
-  timeouts flake under load.
-- Agents must not edit `public/sw.js` or `public/index.html`; the orchestrator
-  owns those and bumps the cache version at wave boundaries.
+Measured at the 84-timer seed, 1440×900 and 412×915:
+`npm test` 944+/0 · e2e clear · **nine tiles on a cold open, not eighty-four** ·
+`Show all` appends and the first nine do not move · `Today's entries` is its own
+section · page height and control count well under 4,438px / 445 · the stop
+offer mounts on the tile · no horizontal overflow at 412px.
+
+### After changing any `public/js/**` or `public/css/*.css`
+
+**Bump `CACHE` in `public/sw.js`** — cache-first service worker, no build step,
+so nothing else tells an installed PWA to update. It is at `timekeeper-v102`.
+Only the person holding the whole change may edit `sw.js`; agents may not.
