@@ -157,6 +157,22 @@ function computeRecentBand(timers, opts, frontIds, recentFull) {
       band.push(t);
     }
   }
+  // THE BOARD ALWAYS OFFERS NINE. Monday after two weeks away, nothing was
+  // worked today and nothing is inside fourteen days, so both rules above come
+  // back empty and the board renders THREE tiles — with digits 4-9 dead — on
+  // the morning of the worst attention of the year. Falling back to manual
+  // order is not a recency claim and does not pretend to be one; it is the
+  // difference between a board he can press and a board he has to expand
+  // before he can do anything. `bandIsRecent` below tells the caller whether
+  // to label it, so an unlabelled row of nine never says "Recent" about
+  // timers that are not.
+  if (band.length < RECENT_CAP) {
+    const have = new Set([...band.map((t) => t.id), ...frontIds]);
+    for (const t of [...timers].filter((t) => !isArchived(t) && !have.has(t.id)).sort(manualCompare)) {
+      if (band.length >= RECENT_CAP) break;
+      band.push(t);
+    }
+  }
   // The running timer must always carry a digit — a live clock can never go
   // unreachable. Because running implies activeToday, it is already
   // somewhere in recentFull unless it's in the front row; but on a busy day
@@ -197,7 +213,12 @@ export function selectBands(timers, opts) {
     ? live.filter((t) => !frontIds.has(t.id) && !recentIds.has(t.id)).sort(manualCompare)
     : [];
 
-  return { mode: 'banded', front, recent, rest, prefix: [...front, ...recent] };
+  // Does the Recent band actually hold anything RECENT? When it is padded
+  // out of manual order (a cold Monday), calling it "Recent" would be a
+  // false claim about the only thing the band asserts.
+  const bandIsRecent = recent.some((t) => t.running || activeToday(t, opts)
+    || (recencyMs(t) != null && recencyMs(t) >= opts.now.getTime() - FOURTEEN_DAYS_MS));
+  return { mode: 'banded', front, recent, rest, bandIsRecent, prefix: [...front, ...recent] };
 }
 
 // The array to persist as settings.board.recent.ids for tomorrow's

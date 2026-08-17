@@ -142,14 +142,33 @@ test('recent band B: rule (a) timers first, then 14-day backfill until it holds 
   assert.deepEqual(ids.slice(1), [6, 5, 4, 3, 2]); // backfilled most-recent-first to fill the band
 });
 
-test('backfill never reaches past 14 days', () => {
+// REWRITTEN when the cold-Monday rule landed. This asserted that a 20-day-stale
+// timer leaves the band SHORT — but a short band is exactly what the cold-Monday
+// rule fixes: three tiles with digits 4-9 dead on the morning he can least
+// afford it. So the band now pads out of manual order when nothing is genuinely
+// recent, and a stale timer can appear as padding.
+//
+// The rule the old form was really protecting is kept and made stronger: stale
+// time never RANKS as recency. It loses to every genuinely recent timer, and the
+// band does not call itself Recent when it is only padding. Tested here with
+// enough real recency to fill the band, so padding is not in play at all.
+test('a stale timer never ranks as recent — it loses to every timer that is', () => {
   const stale = new Date(NOW.getTime() - 20 * 86400000).toISOString();
-  const timers = board(12, {}).map((t) => (t.id === 2 ? { ...t, last_stopped_at: stale } : t));
+  const timers = board(12, {}).map((t) => {
+    if (t.id === 2) return { ...t, last_stopped_at: stale };
+    // ids 3-9 are all active within the last few hours, so the band fills on
+    // genuine recency alone and never reaches for the padding rule.
+    if (t.id >= 3 && t.id <= 9) return { ...t, last_stopped_at: iso(9) };
+    return t;
+  });
   const r = selectBands(timers, baseOpts({ front: [10, 11, 12] }));
-  assert.ok(!r.recent.some((t) => t.id === 2));
-  assert.ok(r.rest.length === 0); // scope 'working' — can't see it landed in rest, but it must not be in recent
+  assert.equal(r.recent.length, 6, 'precondition: real recency filled the band');
+  assert.ok(!r.recent.some((t) => t.id === 2),
+    'a 20-day-stale timer must not displace a timer active this morning');
+  assert.equal(r.bandIsRecent, true, 'and a band full of real recency says so');
+
   const all = selectBands(timers, baseOpts({ front: [10, 11, 12], scope: 'all' }));
-  assert.ok(all.rest.some((t) => t.id === 2)); // it exists, just not recent enough
+  assert.ok(all.rest.some((t) => t.id === 2), 'it exists — it is just not recent');
 });
 
 // ---------------------------------------------------------------- append-only within a day
@@ -313,4 +332,45 @@ test('matchTimers: case- and diacritic-insensitive, in board order', () => {
 test('matchTimers: preserves the input array\'s relative order', () => {
   const timers = [mk(9, { name: 'Acme A' }), mk(1, { name: 'Acme B' }), mk(5, { name: 'Acme C' })];
   assert.deepEqual(matchTimers(timers, 'acme').map((t) => t.id), [9, 1, 5]);
+});
+
+// ---------------------------------------------------------------------------
+// THE COLD MONDAY. Nothing worked today, nothing inside fourteen days — the
+// morning after two weeks away, which is the worst attention of the year. Both
+// Recent rules come back empty, and the board used to render THREE tiles with
+// digits 4-9 dead, so the one morning he most needs to just press something was
+// the one morning he had to expand the board first.
+// ---------------------------------------------------------------------------
+test('a cold board still offers nine tiles, and does not call them Recent', () => {
+  const timers = Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1, name: `T${i + 1}`, sort_order: i, running: 0, accumulated_seconds: 0,
+    last_started_at: null, last_stopped_at: null, last_reset_date: '2026-01-01',
+  }));
+  const b = selectBands(timers, {
+    front: [], recentOrder: [], recentDate: null,
+    today: '2026-08-17', now: new Date('2026-08-17T09:00:00-07:00'),
+    entriesByTimer: {}, scope: 'working',
+  });
+  assert.equal(b.mode, 'banded');
+  assert.equal(b.prefix.length, 9, 'a cold board must still offer nine tiles to press');
+  assert.equal(b.front.length, 3);
+  assert.equal(b.recent.length, 6);
+  assert.equal(b.bandIsRecent, false,
+    'padding out of manual order is not recency and the band must not claim it is');
+  assert.equal(new Set(b.prefix.map((t) => t.id)).size, 9, 'and no tile appears twice');
+});
+
+test('a band with real recency in it still says so', () => {
+  const timers = Array.from({ length: 20 }, (_, i) => ({
+    id: i + 1, name: `T${i + 1}`, sort_order: i, running: 0, accumulated_seconds: 0,
+    last_started_at: null, last_stopped_at: i === 9 ? '2026-08-16T17:00:00Z' : null,
+    last_reset_date: '2026-01-01',
+  }));
+  const b = selectBands(timers, {
+    front: [1, 2, 3], recentOrder: [], recentDate: null,
+    today: '2026-08-17', now: new Date('2026-08-17T09:00:00-07:00'),
+    entriesByTimer: {}, scope: 'working',
+  });
+  assert.equal(b.bandIsRecent, true);
+  assert.equal(b.recent[0].id, 10, 'the genuinely recent one leads the band');
 });

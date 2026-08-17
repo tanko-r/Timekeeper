@@ -43,13 +43,13 @@ import { menuTriggerProps } from '/js/components/menu.js';
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 export function TimerBoard({
-  bands, total, running, unfiledHint, scope, query, matches, matterMatches = [],
+  bands, total, running, unfiledHint, scope, query, matches, matterMatches = [], restSections = null,
   density = 'compact', grouping = 'flat', searchInputRef,
   renderTile, onQuery, onSearchKeyDown, onClearQuery, onToggleScope,
   onNewTimer, onMenu, menuOpen = false, onGrouping, onCreateAndStart, onBoardKey,
 }) {
   const filtering = query != null && String(query).trim() !== '';
-  const { mode, front, recent, rest, prefix } = bands;
+  const { mode, front, recent, rest, prefix, bandIsRecent } = bands;
 
   // The digit cap a tile carries. It names the key that starts THIS timer from
   // anywhere on the page, so it must be derived from the SAME array in every
@@ -180,8 +180,21 @@ export function TimerBoard({
     ? band('rest', null, rest)
     : html`
           ${band('front', null, front, true)}
-          ${band('recent', 'Recent', recent)}
-          ${scope === 'all' ? band('rest', 'All timers', rest) : null}
+          ${/* The label is a CLAIM. On a cold Monday the band is padded out of
+                manual order so he still has nine tiles to press, and calling
+                those "Recent" would be a small lie about the only thing the
+                band asserts. Unlabelled, it is just the rest of the working
+                set — which is what it is. */''}
+          ${band('recent', bandIsRecent ? 'Recent' : null, recent)}
+          ${scope !== 'all' ? null : (restSections && restSections.length > 1
+    ? restSections.map((sec) => html`
+      ${/* GROUPED, and only down here. Grouping the working set above would
+            undo the stable positions the front row exists to give him. */''}
+      <div key=${sec.key} class="band band-rest">
+        <div class="band-label">${sec.label} <span class="muted">${sec.list.length}</span></div>
+        <div class=${`timer-grid density-${density}`} role="list">${tiles(sec.list, false)}</div>
+      </div>`)
+    : band('rest', 'All timers', (restSections && restSections[0]) ? restSections[0].list : rest))}
         `}`}
 
       <div class="board-foot">

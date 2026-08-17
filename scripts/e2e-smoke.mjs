@@ -1899,6 +1899,73 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
   await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
 });
 
+await step('board: Show all APPENDS — the first nine tiles never move; grouping sections the tail', async () => {
+  // THE PROPERTY THE WHOLE BOARD RESTS ON. The owner has 84 timers and sees
+  // nine: his three, then Recent. Digit caps 1-9 are printed ON the tiles, so
+  // if `Show all` re-sorted or re-flowed anything, pressing `7` would mean one
+  // thing before it and another after, and the caps would be a lie. Show all
+  // may only APPEND.
+  //
+  // This step BUILDS ITS OWN CROWD and takes it down again. The rest of this
+  // harness works with a handful of timers, and a board of nine or fewer
+  // deliberately does not band at all — so the one property worth proving here
+  // is invisible at the fixture's normal size.
+  const mkJson = (url, body) => fetch(`${base}${url}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((r) => r.json());
+  const made = [];
+  for (let i = 0; i < 14; i += 1) {
+    const cm = await mkJson('/api/cms', {
+      cm_number: `9911${String(i).padStart(2, '0')}-000001`,
+      short_name: `__crowd ${i}__`, client_name: i % 2 ? '__Crowd A__' : '__Crowd B__', billable: 1,
+    });
+    made.push(await mkJson('/api/timers', { name: `__crowd ${i}__`, cm_id: cm.id }));
+  }
+  try {
+    const prefix = () => page.evaluate(() => [...document.querySelectorAll('.timer-tile')]
+      .slice(0, 9).map((t) => t.dataset.timerId));
+    await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+    await page.waitForSelector('.board-more', { timeout: 10_000 });
+
+    const before = await prefix();
+    if (before.length !== 9) throw new Error(`expected nine tiles on a crowded board, got ${before.length}`);
+    const label = await page.$eval('.board-more', (el) => el.textContent);
+    if (!/Show all \d+ timers/.test(label)) throw new Error(`the disclosure must say how many are behind it: ${label}`);
+
+    await page.click('.board-more');
+    await sleep(500);
+    const after = await prefix();
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      throw new Error(`Show all moved the first nine tiles:\n  before ${before}\n  after  ${after}`);
+    }
+    const shown = await page.$$eval('.timer-tile', (els) => els.length);
+    if (shown <= 9) throw new Error(`Show all revealed nothing: ${shown} tiles`);
+
+    // …and the grouping controls apply to the TAIL, never to the working set.
+    // They shipped inert once — storing their state and changing nothing on
+    // screen — which is worse than not having them at all.
+    await page.evaluate(() => [...document.querySelectorAll('.board-controls .seg button')]
+      .find((b) => b.textContent.includes('By client')).click());
+    await sleep(600);
+    const bands = await page.$$eval('.band-rest', (els) => els.length);
+    if (bands < 2) throw new Error(`"By client" produced ${bands} section(s) — the control does nothing`);
+    const stillNine = await prefix();
+    if (JSON.stringify(before) !== JSON.stringify(stillNine)) {
+      throw new Error(`grouping re-sorted the working set: ${stillNine}`);
+    }
+    await page.evaluate(() => [...document.querySelectorAll('.board-controls .seg button')]
+      .find((b) => b.textContent.trim() === 'Flat').click());
+    await sleep(300);
+  } finally {
+    for (const t of made) {
+      await fetch(`${base}/api/timers/${t.id}`, { method: 'DELETE' }).catch(() => {});
+    }
+    await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
+    await sleep(300);
+  }
+});
+
 await step('/ opens the timer search bar; narrows in place; Esc restores', async () => {
   // dashboard route, body focus (not a card, not a form field) — `/` must
   // open the search bar rather than jumping to the Search view.

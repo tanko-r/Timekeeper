@@ -1023,6 +1023,56 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
   const boardMatches = matchTimers(timers, gridFilter);
 
+  // ── BAND C is where every list control applies ───────────────────────────
+  // Grouping, "Only", the activity window and Order all survived the rebuild as
+  // controls and NONE of them did anything: they stored their state, reported
+  // it honestly, and changed nothing on screen, because the sections they used
+  // to drive were deleted with the merged list. A control that lies is worse
+  // than a control that is missing — he presses "By client", sees no change,
+  // and learns not to trust the board.
+  //
+  // So they all apply HERE, to the tail, and only here. Bands A and B are the
+  // working set: his three, then today's work. Re-sorting or filtering those
+  // would undo the stable positions the front row exists to give him and make
+  // the digit caps meaningless. Grouping eighty-four timers is a filing system
+  // for the seventy-five he is not working on today.
+  const restSections = (() => {
+    if (bands.mode !== 'banded' || scope !== 'all') return null;
+    let list = bands.rest;
+    if (activityKey) {
+      const w = activityWindows(new Date())[activityKey];
+      if (w) list = list.filter((t) => inWindow(lastActivityMs(t), w));
+    }
+    if (order === 'activity') {
+      list = [...list].sort((a, b) => lastActivityMs(b) - lastActivityMs(a)
+        || compareTimersAZ(a, b));
+    }
+    let secs;
+    if (grouping === 'group') {
+      secs = [
+        ...groups.map((g) => ({
+          key: `g${g.id}`, label: g.name, list: list.filter((t) => t.group_id === g.id),
+        })),
+        { key: 'gnone', label: 'Ungrouped', list: list.filter((t) => t.group_id == null) },
+      ];
+    } else if (grouping === 'client') {
+      const seen = new Map();
+      for (const t of list) {
+        const key = t.client_name || t.client_number || 'No client';
+        if (!seen.has(key)) seen.set(key, []);
+        seen.get(key).push(t);
+      }
+      secs = [...seen.entries()].map(([label, l]) => ({ key: `c${label}`, label, list: l }));
+    } else {
+      return [{ key: 'flat', label: null, list }];
+    }
+    // "Only this one" — the section he asked for is the answer, even when empty.
+    const kept = onlyKey && secs.some((s) => s.key === onlyKey)
+      ? secs.filter((s) => s.key === onlyKey)
+      : secs.filter((s) => s.list.length > 0);
+    return kept;
+  })();
+
 
   const focusRow = (key) => {
     setFocusKey(key);
@@ -1254,6 +1304,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         bands=${bands} total=${timers.length}
         running=${timers.some((t) => t.running)}
         scope=${scope} query=${gridFilter} matches=${boardMatches}
+        restSections=${restSections}
         matterMatches=${matterHits} density=${density} grouping=${grouping}
         searchInputRef=${searchInputRef}
         renderTile=${renderTile}
