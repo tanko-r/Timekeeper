@@ -4,7 +4,7 @@
 last, commit it with the work. If it disagrees with reality, reality is right
 and this file is stale — fix it.
 
-Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 4
+Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 5
 
 ---
 
@@ -12,11 +12,39 @@ Branch: `ui-overhaul-2026-08` · Last updated: 2026-08-16, session 4
 
 | | |
 |---|---|
-| Suites | **925 tests, 922 pass, 3 fail** — the 3 are deliberate leak proofs still open, not regressions. The 633 pre-audit tests all pass. |
-| e2e | `node scripts/e2e-smoke.mjs` ALL CLEAR — re-verified 2026-08-16 after 1f/1g landed |
+| Suites | **944 tests, 944 pass, 0 fail** (session 5). Nothing is red. The 633 pre-audit tests all pass. |
+| e2e | `node scripts/e2e-smoke.mjs` clear. It reports one problem — an aborted `/api/agent/todo/events` SSE request on teardown — which **reproduces on a clean tree and predates this work**. Not a regression; not yet chased. |
+| **STAGE 1** | **CLOSED**, exit gate included. Every integrity proof in the corpus is green and stays in the suite. |
 | Working tree | Clean and pushed. |
-| Preview | **LIVE** at `poc-time.rigid-dreamy-sweep.us`, password in the owner decision below. Fictional demo day, own database, port 4748. Re-point it with `scripts/poc-sync.sh`. |
-| Next action | The 3 remaining reds (all rule-1 narrative crossings), then the Stage 1 exit test, then the timer board |
+| Preview | **LIVE** at `poc-time.rigid-dreamy-sweep.us`, password in the owner decision below. Fictional demo day, own database, port 4748. Re-point it with `scripts/poc-sync.sh`. **Re-seed it** (`--seed`) to pick up the 84-timer dataset. |
+| Next action | The timer board (Stage 4, owner instruction). Spec at `docs/ui/TIMERBOARD-SPEC.md`, under revision against two critiques. |
+
+### ⚠️ THE LIVE DATABASE IS LIVE (owner rule, 2026-08-16)
+
+`data/timekeeper.db` holds **real client data** — 89 matters, 83 timers, 421
+entries. The owner's tripwire: **if the name "Microsoft" appears in a
+Timekeeper database, STOP — that is the live one.** It was checked on
+2026-08-16 and it hits.
+
+Never read, dump, screenshot or paste anything derived from `data/`. Tests and
+e2e run against temp databases and are safe. `data/`, `shots/` and `feedback/`
+are all gitignored with zero tracked files, so nothing has reached the repo.
+
+The house fictional names — Acme, Northgate, Verity, Harbor, Borealis — are
+demo data and are safe to work with freely. The parallel dummy database is the
+preview's, at `~/Projects/timekeeper-poc/data/`.
+
+### The demo dataset is now eighty-four timers (session 5)
+
+`scripts/lib/demoseed.mjs` seeded five timers. The owner has eighty-three, and
+said so: *"we can definitely find ways to make the timers more compact. I use
+dozens. so hiding or sorting would be good. don't need to see all at once."*
+
+Five timers hide the entire design problem. The seed now builds 84 across 16
+fictional clients in 5 groups, with names up to 44 characters that collide on a
+shared client prefix, six worked today (three still unwritten) and one running.
+**Every measurement of the timer board must be taken against that seed.**
+Seeds in 0.3s.
 
 ### Correction to the test counts (session 4)
 
@@ -91,12 +119,12 @@ Mark each item `todo` / `doing` / `done` with the commit that closed it.
 |---|---|---|
 | 1a Land the written fence | done | `e36d705` (bundled into the docs commit) — `integrity.fence` 17/17 green |
 | 1b Scope `matterSuggestions` | done | `e36d705` — the sibling-narrative UNION arm is gone; `source` labels are honest |
-| 1c Scope both AI pools | mostly done | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. Residue: `verify.matterctx.thinsibling:404` |
+| 1c Scope both AI pools | **done** | `e36d705` — `pickPairs` filters on `cmId`; `matterPeopleList` no longer blends siblings. The `verify.matterctx.thinsibling` residue is green. |
 | 1d Pin timer write-backs to their matter | **done** | `209b39c` `32e1995` `528affa` `a01252c` `69227c7` `ecb49a3` `7c30644` `4393482`. Closed: stop-chip provenance, thin-sibling AI, stale state, suggestions, auto-narrative discard, the stash/template fence and the ghost-text pool fence. The last four proofs were red on scaffolding, not on a leak — see above. `verify.timer-repoint-audit` and `verify.entry-repoint-doublefile` were never 1d's; they belong to 1e/1g. |
-| 1e Time-loss family | **mostly done** | `5efcd0d` `535b660` `2524ed2` `a5559c6` `3259565`. Closed 15 of 17: `verify.entry-repoint-doublefile` (4), `verify.splitentry.secondstop` (2), `verify.taskduration-zeroing`, `verify.timer-txn-crash`, `integrity.entries` L3/L4, and 5 of `integrity.closeout`. **Two left, both in `integrity.closeout`:** the mid-day re-point test needs the owner's "ask me each time" decision built (above); the start-for-entry proof is red on a REAL defect — the hijack strands a timed, narrative-less draft that now blocks close-out. Two defects found that nobody was looking for and had no test: close-out never ran the midnight rollover (an overnight timer lost ten hours), and the first version of the re-file deduct dropped an hour whenever a draft was deleted. Both now have proofs. |
+| 1e Time-loss family | **done** (proofs); one dialog outstanding | `5efcd0d` `535b660` `2524ed2` `a5559c6` `3259565`. Closed 15 of 17: `verify.entry-repoint-doublefile` (4), `verify.splitentry.secondstop` (2), `verify.taskduration-zeroing`, `verify.timer-txn-crash`, `integrity.entries` L3/L4, and 5 of `integrity.closeout`. **Both closed in session 5** (`c0a98f2`, `8f60afe`): `start-for-entry` now leaves a replacement clock on the entry it drops, so a hijacked timer cannot strand a timed, narrative-less draft that nobody can see; and the close-out pre-fill proof was red on its own scaffolding, not on a leak, and is repaired stricter. **Still outstanding, and it is UI not integrity:** the owner's "ask me each time" dialog. The server half is built and safe — silence means the entry does NOT follow a re-pointed timer — but until the dialog exists he has no way to say "move it too". Build it with the timer board. Two defects found that nobody was looking for and had no test: close-out never ran the midnight rollover (an overnight timer lost ten hours), and the first version of the re-file deduct dropped an hour whenever a draft was deleted. Both now have proofs. |
 | 1f Export correctness | **done** | `0607bd4` `f0aca28` `5551e88`. Export is now a two-step handshake — the POST builds the file and stamps nothing; only a client confirm, sent after the download really succeeded, writes `exported_at`. Deferring to the response's `finish` event was tried and PROVED useless (a proxy cutting the connection at the first byte still emits `finish` exactly like a healthy delivery). Also: the exported set is now the set on screen; every entry has a stable `tim_ref` so the same hour cannot import twice unrecognised; blank narratives stay out of the file but still SHOW in the preview; the 1000-row ledger cap is opt-in. |
-| 1g Records and recovery | **mostly done** | `5551e88` `4ad84db`. Copying a soft-deleted entry no longer resurrects it; copy and quick capture carry AI provenance so model text stops being laundered into the attorney's own voice and fed back as an example of it; a bulk matter move is audited, adopts the new matter's billable flag and rebuilds the narrative in the new client's format; a timer re-point is audited and no longer moves an entry holding work without being asked. **One left:** `fence.suggestionmatter` (below). |
-| Stage 1 exit: 9-attack verification | todo | must find nothing |
+| 1g Records and recovery | **done** | `5551e88` `4ad84db`. Copying a soft-deleted entry no longer resurrects it; copy and quick capture carry AI provenance so model text stops being laundered into the attorney's own voice and fed back as an example of it; a bulk matter move is audited, adopts the new matter's billable flag and rebuilds the narrative in the new client's format; a timer re-point is audited and no longer moves an entry holding work without being asked. **Closed in session 5** (`92d50fb`): see the retraction below. |
+| Stage 1 exit: 9-attack verification | **done** | `eb55adc` — `test/integrity.stage1exit.test.js`. Nine attacks plus a tenth that runs all nine against one database in sequence. It caught a real leak on its first run: **copying an entry dropped its matter provenance**, so moving the copy carried the sentence to another client. Kept in the suite, so the gate keeps holding. |
 
 ### Stage 2 — Preview
 | Launch on `poc-time.rigid-dreamy-sweep.us` | **done** | Live 2026-08-16 at the owner's request, ahead of the Stage 1 exit gate. Password `harbor-lease-2026`. Own worktree at `~/Projects/timekeeper-poc`, own database, port 4748, `timekeeper-poc` user service (enabled). Re-point with `scripts/poc-sync.sh [ref]`; `--seed` rebuilds the demo data. Alt+drag feedback from it writes into the MAIN repo. |
@@ -180,36 +208,71 @@ Not yet built — it is the last open piece of 1e and it touches
 `server/routes/timers.js`, the timer edit dialog, and the shared overlay
 primitive.
 
-## The three tests still red — all one family, all rule 1
+## The last three reds, and how they closed (session 5)
 
-Every remaining failure is a NARRATIVE CROSSING A MATTER BOUNDARY. Nothing
-about time is left open: no test in the suite now says an hour can be lost,
-double-counted, or marked exported without reaching a file.
+All three are green. Each fix was verified the session-4 way — remove the fence,
+watch the proof go red on the exact assertion, restore it — and every proof
+stays in the suite.
 
-**1. `fence.suggestionmatter` — "NO ENTRY HOLDS ANOTHER MATTER'S SENTENCE".**
-The sweep that walks the whole app. A diagnostician reproduced it in a real
-browser: a live, exportable entry on one matter holding a sentence written for
-another. It is the highest-severity item left in the project.
-It CANNOT be fixed on the server alone, and this is the trap: four client
-surfaces already send `source_cm_id` — `stopchips.js`, `entryeditor.js`,
-`closeout.js`, `quickcapture.js` — and two of them send it for text the
-attorney may have TYPED. So stamping provenance from `source_cm_id` alone would
-silently wipe hand-typed sentences on a matter move. The fix needs a separate
-"this text was SUGGESTED, not typed" signal, which means a client change — and
-a stale cached PWA would run without it until it updates. The `v18` migration
-already added `entries.narrative_src_cm_id` to carry the provenance.
-Do NOT "fix" this by removing the unasked stop-chip pre-fill:
-`fence.suggestionmatter.test.js:277` asserts that pre-fill as a PRECONDITION.
+**1. `fence.suggestionmatter` — "NO ENTRY HOLDS ANOTHER MATTER'S SENTENCE"**
+(`92d50fb`). The highest-severity item in the project, and a real leak: a live,
+exportable entry on Northgate holding a sentence written for Acme.
 
-**2. `integrity.closeout` — the close-out pre-fill writes a sibling matter's
-narrative onto this matter's entry and exports it.** Same family, reached
-through close-out rather than the editor.
+The existing fence guards the WRITE — text composed for matter A is refused when
+the entry has since moved to B. It cannot help when the order is reversed. The
+sentence lands on A legitimately and then the ENTRY moves; the matter picker is
+the sanctioned way to correct a mis-keyed matter, so the fence deliberately
+stands aside for it, and the sentence went along to the other client's bill.
 
-**3. `integrity.closeout` — start-for-entry strands a narrative-less draft.**
-Not a crossing: the hijack leaves the previous entry as a timed, narrative-less
-draft with no timer pointing at it, which now hard-blocks close-out (since a
-zero-hour entry stopped being finalizable). An ordinary click produces it. The
-proof was re-aimed at this in `3259565` and is deliberately kept red.
+So provenance is recorded when the sentence is composed, in the v18 column
+`entries.narrative_src_cm_id`, and RETRACTED when the entry leaves the matter it
+was composed for. All matter-moving paths do it: the entry PATCH, the bulk move,
+a timer re-point that takes its entry with it, and — caught later by the exit
+gate — the COPY, which had been dropping the provenance entirely. The emptied
+box refills from the entry's own task lines in the new client's format, so he
+gets the new matter's sentence rather than a blank. Every retraction is audited
+even on a plain draft, because it deletes text he can see.
+
+**The trap the board warned about was real, and is handled.** `source_cm_id`
+cannot answer "did the app compose this": quick capture sends it for a sentence
+he TYPED, close-out sends it for a box he may have typed into. Stamping from it
+alone would silently delete his own words on an ordinary matter correction — a
+worse defect than the leak. The signal is therefore explicit and separate,
+`narrative_suggested`, sent only by a surface writing text the app composed and
+he has not edited: the stop chip on its pre-fill and its picks but NOT on either
+Undo; close-out only while the box still matches the pre-fill exactly; the
+editor only when the box still holds the exact sentence a chip put there,
+compared by value at save time, and never on the insert-into-existing-text path.
+Nine regression tests, and the ones that matter most prove his own words SURVIVE
+a move. The unasked stop-chip pre-fill was NOT removed — that pre-fill is a
+precondition of `fence.suggestionmatter.test.js:277`.
+
+**2. `integrity.closeout` — the close-out pre-fill** (`8f60afe`). Red on its own
+scaffolding, not on a leak, exactly as the four 1d proofs were. It asserted the
+lease matter exported one row before checking that row — an assertion that could
+only hold BECAUSE of the leak. Repaired and made stricter: the whole phrase list
+is held to the standard, the safe fallback is asserted, and the export path is
+driven for real with the attorney's own sentence.
+
+**3. `integrity.closeout` — start-for-entry stranding a draft** (`c0a98f2`). A
+real defect. `start-for-entry` now leaves a replacement clock on the entry it
+drops, so the tile stays on the board carrying that entry's own time and the
+6pm surprise becomes a visible row at the moment it is made. Its last assertion
+was corrected and this was deliberate: it demanded finalize-day pass an entry
+holding 0.1 BILLABLE hours with no sentence, which rule 1 forbids and which
+`narrative_empty` is a block to prevent everywhere else in the suite.
+
+## The exit gate found one nobody was looking for
+
+`test/integrity.stage1exit.test.js` (`eb55adc`) runs the nine attacks PLAN.md
+specified, plus a tenth that runs all nine against one database in sequence. On
+its first run it caught **the copy leak**: copying an entry carried the composed
+sentence byte for byte, and `narrative_ai` and `ai_brief` with it, but not
+`narrative_src_cm_id` — so moving the copy found nothing to retract. Fixed and
+fenced.
+
+**Lesson, alongside session 4's: a sweep that reads every row catches what nine
+targeted attacks miss. Keep the gate in the suite.**
 
 ## Still to build — the owner's "ask me each time" dialog
 
