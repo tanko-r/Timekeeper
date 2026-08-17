@@ -89,7 +89,12 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
   const exitSelectMode = () => { setSelectMode(false); clearSelection(); };
 
   function selectCard(e, timer, list) {
-    const ids = list.filter((r) => r.timer).map((r) => r.timer.id);
+    // WHAT THE RANGE IS MEASURED OVER. The merged list handed this ROWS, and
+    // the board hands it TIMERS. Reading `.timer` off a plain timer gives an
+    // empty id list, which sent a shift-click down the "no modifier" path and
+    // CLEARED the selection instead of extending it — silently, since the two
+    // gestures look identical. Both shapes are accepted.
+    const ids = list.map((r) => (r && r.timer ? r.timer.id : r && r.id)).filter((id) => id != null);
     if (e.shiftKey && anchorId.current != null && ids.includes(anchorId.current)) {
       const a = ids.indexOf(anchorId.current);
       const b = ids.indexOf(timer.id);
@@ -1313,8 +1318,17 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
           that starts, stops or files an entry while its menu is open rewrites
           the menu instead of acting on the row as it was when it opened. If the
           row is gone (filtered out, deleted) the menu goes with it. */''}
+    ${/* TWO SETS OF ROWS, ONE MENU. `allRows` is the merged model — a matter's
+          entries fold into the timer that filed them, keyed `t<timer>` or
+          `m<cm>`. The entries panel below renders one row PER ENTRY, keyed
+          `e<entry>`, so every ⋯ on that panel handed this lookup a key that
+          `allRows` does not hold and the menu silently rendered nothing: the
+          "Row menu" button on every entry row did precisely nothing. The
+          entry rows are searched too. */''}
     ${menu ? (() => {
-      const mrow = menu.ids ? null : allRows.find((x) => x.key === menu.rowKey);
+      const mrow = menu.ids ? null
+        : (allRows.find((x) => x.key === menu.rowKey)
+          || entryListRows.find((x) => x.key === menu.rowKey));
       if (!menu.ids && !mrow) return null;
       return html`
         <${Menu} anchor=${menu.anchor} x=${menu.x} y=${menu.y}
