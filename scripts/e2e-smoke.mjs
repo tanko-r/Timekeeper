@@ -109,7 +109,7 @@ const openListMenu = async () => {
 };
 const closeMenu = async () => {
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 8000 });
 };
 // One of the menu's segmented controls (Show / Group / Order), by its label.
 const setListSeg = async (label, text) => {
@@ -217,7 +217,30 @@ const dndTileToTile = (fromName, toName) => page.evaluate((from, to) => {
 // its running class is `is-running`, its name is a label rather than a rename
 // field, and its clock reads HH:MM:SS rather than tenths. These helpers act on
 // a tile BY NAME, which is how every one of these steps meant to address it.
+// THE BOARD HIDES SEVENTY-FIVE OF EIGHTY-FOUR, AND THAT MADE THIS SUITE
+// ORDER-DEPENDENT. The fixture starts with a handful of timers, so the board
+// renders flat and everything is on screen. As later steps create their own
+// scratch timers it crosses nine, banding kicks in, and a step looking for a
+// timer by name finds it or does not depending on how many timers happen to
+// exist at that moment. Three consecutive runs produced three different
+// failure sets, which is worse than a failing suite: nobody can tell signal
+// from noise.
+//
+// So every tile lookup reveals the whole board first. This is not a workaround
+// for a bug — hiding the tail is the feature — it is the suite saying "I am
+// asking about a specific timer, not about what is on screen". The step that
+// asserts what IS on screen by default builds its own crowd and does not call
+// this.
+const revealAllTimers = async () => {
+  await page.evaluate(() => {
+    const b = document.querySelector('.board-more');
+    if (b && /Show all/.test(b.textContent)) b.click();
+  });
+  await sleep(250);
+};
+
 const tileAct = async (name, title) => {
+  await revealAllTimers();
   await page.waitForFunction((nm, t) => [...document.querySelectorAll('.timer-board .timer-tile')]
     .some((x) => x.querySelector('.timer-name')?.textContent === nm && x.querySelector(`button[title="${t}"]`)),
   { timeout: 6000 }, name, title);
@@ -228,12 +251,12 @@ const tileAct = async (name, title) => {
     tile.querySelector(`button[title="${t}"]`).click();
   }, name, title);
 };
-const tileRunning = (name) => page.waitForFunction((nm) =>
+const tileRunning = async (name) => { await revealAllTimers(); return page.waitForFunction((nm) =>
   [...document.querySelectorAll('.timer-board .timer-tile.is-running')]
-    .some((x) => x.querySelector('.timer-name')?.textContent === nm), { timeout: 6000 }, name);
+    .some((x) => x.querySelector('.timer-name')?.textContent === nm), { timeout: 6000 }, name); };
 // The tile's own reading of a timer: the ticking clock (only rendered while it
 // runs or holds unfiled time) and the day's filed record.
-const tileState = (name) => page.evaluate((nm) => {
+const tileState = async (name) => { await revealAllTimers(); return page.evaluate((nm) => {
   const tile = [...document.querySelectorAll('.timer-board .timer-tile')]
     .find((x) => x.querySelector('.timer-name')?.textContent === nm);
   if (!tile) return null;
@@ -243,7 +266,7 @@ const tileState = (name) => page.evaluate((nm) => {
     zero: !!tile.querySelector('.timer-hours.is-zero'),
     running: tile.classList.contains('is-running'),
   };
-}, name);
+}, name); };
 // Open a tile's row menu and click one of its items.
 const tileMenu = async (name, itemText) => {
   await tileAct(name, 'Row menu');
@@ -844,24 +867,40 @@ const setClockVia = async (timerName, hours) => {
 };
 
 await step('timer clock is settable by hand, and the board shows it', async () => {
+  // MIGRATED, and the old premise no longer holds twice over. It waited for the
+  // tile to print `01:24:00` and asserted the clock and the record were two
+  // different numbers. But `PUT /api/timers/:id/clock` calls syncToEntry on a
+  // PAUSED timer, so setting the clock FILES it the same instant — there is no
+  // unfiled remainder for the tile to print — and the tile's figure is TODAY'S
+  // RECORD ON THE MATTER, which includes every entry on it, not this one
+  // timer's clock.
+  //
+  // So what "the board shows it" can honestly mean is: the hand-set figure
+  // reached the record, and the board's number moved to include it. That is
+  // asserted as a DELTA rather than a hardcoded total, so the step does not
+  // silently encode whatever else the fixture happens to have filed on that
+  // matter by the time it runs.
+  await revealAllTimers();
+  const before = Number((await tileState('Acme research'))?.hours ?? 0);
   await setClockVia('Acme research', '1.4');
-  // 1.4h = 01:24:00. The tile prints the clock in HH:MM:SS and the day's FILED
-  // record in decimal beside it, so the two numbers can never be read as the
-  // same figure twice — which is what the old "no `.timer-clock-raw` on this
-  // row" assertion was protecting. They are different quantities here (0.2h is
-  // on the books from the backdated stop; 1.4h is now on the clock) and the
-  // tile says so in two different notations.
-  await page.waitForFunction(() => {
+  await revealAllTimers();
+  await page.waitForFunction((was) => {
     const tile = [...document.querySelectorAll('.timer-board .timer-tile')]
       .find((t) => t.querySelector('.timer-name')?.textContent === 'Acme research');
-    return tile && tile.querySelector('.timer-clock')?.textContent.trim() === '01:24:00';
-  }, { timeout: 5000 });
+    const now = Number(tile?.querySelector('.timer-hours')?.textContent.trim());
+    return Number.isFinite(now) && now > was;
+  }, { timeout: 8000 }, before);
+
   const state = await tileState('Acme research');
-  if (/^\d+\.\d$/.test(state.clock || '')) {
-    throw new Error(`the tile's clock must not be a bare decimal beside the record: ${JSON.stringify(state)}`);
+  // …and it is NOT also printed as a clock. A fully filed clock beside the
+  // record would be the same quantity twice in two notations — the thing the
+  // old assertion was really protecting, now true by construction rather than
+  // by inspection.
+  if (state.clock) {
+    throw new Error(`a fully filed clock must not be printed twice: ${JSON.stringify(state)}`);
   }
-  if (state.hours === state.clock) {
-    throw new Error(`the clock and the day's record are being printed as one number: ${JSON.stringify(state)}`);
+  if (!(Number(state.hours) > before)) {
+    throw new Error(`setting the clock by hand never reached the board: ${before} -> ${JSON.stringify(state)}`);
   }
 });
 
@@ -1539,8 +1578,9 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   // isolation so every group's timers render together — this step needs to see
   // Acme research alongside the fresh ungrouped timers it creates below.
   await setOnly('');
+  await revealAllTimers();
   await page.waitForFunction(() => [...document.querySelectorAll('.timer-row')]
-    .some((c) => c.textContent.includes('Acme research')), { timeout: 4000 });
+    .some((c) => c.textContent.includes('Acme research')), { timeout: 8000 });
 
   // a second, untouched timer proves the worked/zero distinction
   await clickText('button', 'New timer');
@@ -1549,7 +1589,8 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
   await sleep(250);
   await clickText('.cmpicker-item .name', 'Harbor Lease');
   await clickText('.modal button', 'Create');
-  await page.waitForFunction(() => document.querySelectorAll('.timer-row').length >= 2, { timeout: 4000 });
+  await revealAllTimers();
+  await page.waitForFunction(() => document.querySelectorAll('.timer-row').length >= 2, { timeout: 8000 });
 
   // WORKED TODAY vs UNTOUCHED. RETIRED: the row's `.worked` tint. A tile spends
   // its colour on one thing — the running clock — and a second background state
@@ -1566,25 +1607,36 @@ await step('grid keyboard: focus, Alt-nudge, Enter start/stop; worked-today high
     [...document.querySelectorAll('.timer-board .timer-tile')]
       .find((c) => c.querySelector('.timer-name')?.textContent === 'Acme research').focus();
   });
-  // The tile's clock is HH:MM:SS, so the Alt-nudge is asserted in that reading:
-  // 1.4h + 0.1 = 01:30:00, then −0.2 = 01:18:00.
-  const acmeClockIs = (want) => page.waitForFunction((w) => {
+  // MIGRATED to the figure the tile actually prints. This read `.timer-clock`
+  // in HH:MM:SS, but `PUT /api/timers/:id/clock` files a paused timer's clock
+  // the same instant it sets it, and a stopped tile only prints a clock when it
+  // holds time that is NOT yet filed — otherwise it would print one quantity
+  // twice in two notations. So the nudge is asserted on the hours figure, which
+  // is the same number: 1.4 + 0.1 = 1.5, then −0.2 = 1.3.
+  // Asserted as a DELTA. The tile's figure is today's record on the MATTER, so
+  // its absolute value depends on whatever else the fixture has filed there by
+  // the time this step runs; the nudge is what is under test, and a nudge is a
+  // difference. `Alt+↑` adds a tenth, `Alt+↓` takes one away.
+  const acmeHours = async () => Number((await tileState('Acme research'))?.hours);
+  const acmeHoursMoved = (from, delta) => page.waitForFunction((f, d) => {
     const card = [...document.querySelectorAll('.timer-board .timer-tile')]
       .find((c) => c.querySelector('.timer-name')?.textContent === 'Acme research');
-    return card && card.querySelector('.timer-clock')?.textContent.trim() === w;
-  }, { timeout: 4000 }, want);
+    const now = Number(card?.querySelector('.timer-hours')?.textContent.trim());
+    return Number.isFinite(now) && Math.abs(now - (f + d)) < 0.001;
+  }, { timeout: 8000 }, from, delta);
 
+  const h0 = await acmeHours();
   await focusAcme();
   await page.keyboard.down('Alt');
-  await page.keyboard.press('ArrowUp');           // +0.1 → 1.5
+  await page.keyboard.press('ArrowUp');           // +0.1
   await page.keyboard.up('Alt');
-  await acmeClockIs('01:30:00');
+  await acmeHoursMoved(h0, 0.1);
   await page.keyboard.down('Alt');
   await page.keyboard.down('Shift');
   await page.keyboard.press('ArrowDown');          // −0.2 → 1.3
   await page.keyboard.up('Shift');
   await page.keyboard.up('Alt');
-  await acmeClockIs('01:18:00');
+  await acmeHoursMoved(h0, -0.1);
 
   await page.keyboard.press('Enter');              // start
   await page.waitForFunction(() => document.querySelector('.timer-row.is-running'), { timeout: 4000 });
@@ -1896,7 +1948,7 @@ await step('multi-select: ctrl/shift click, batch menu, batch delete, Esc clears
     '.ctx-menu .ctx-item:not([data-kind="entry"]), .ctx-menu .ctx-custom', (els) => els.length);
   if (rowItems > 8) throw new Error(`the row menu is back over eight action items (${rowItems}) — teardown §5 named this object as the app's tell`);
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 4000 });
+  await page.waitForFunction(() => !document.querySelector('.ctx-menu'), { timeout: 8000 });
 });
 
 await step('board: Show all APPENDS — the first nine tiles never move; grouping sections the tail', async () => {

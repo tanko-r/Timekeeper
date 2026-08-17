@@ -48,7 +48,17 @@ export function TimerTile({
 }) {
   const ref = useRef(null);
   const running = !!timer.running;
-  const clock = (running || secs > 0) ? fmtClock(secs) : null;
+  // WHEN A STOPPED TILE SHOWS ITS CLOCK. Only when the clock holds time that is
+  // NOT YET FILED — a timer he stopped mid-task, or one whose stop never
+  // landed. That is the one case where the clock says something the hours
+  // figure beside it does not, and it is the case standing rule 1 cares about:
+  // time that exists but is not on the books.
+  //
+  // Showing it on every paused tile cost the NAMES their width — eighty-four
+  // matters, forty-four characters, eight of them starting "Acme —" — and a
+  // clock that merely repeats the filed figure is not worth a truncated name.
+  const unfiled = secs / 3600 - filed;
+  const clock = (running || unfiled > 0.05) ? fmtClock(secs) : null;
   // What the tile prints as hours is TODAY'S RECORD and only the record — never
   // the record plus the unfiled clock. Adding them is how the board came to
   // report 2.7 while the ledger held 2.6, with the figure 2.7 appearing nowhere

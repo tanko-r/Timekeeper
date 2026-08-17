@@ -1036,3 +1036,54 @@ tr.import-skip td { opacity: 0.55; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ═══ TILE STATE ═══════════════════════════════════════════════════════════
+   These rules were written against `.timer-tile.running` before the component
+   existed; the component emits `is-` prefixed state classes, so the running
+   rule matched NOTHING and a running timer looked exactly like eighty-three
+   idle ones — the clock was `display: none`, the rail had no rules at all, and
+   the only surviving signal was the word "Stop". Keyed to what is actually
+   emitted now, and the missing states written.
+
+   WHY THE RUNNING TILE SPENDS THREE CHANNELS. He may be colour-blind, the room
+   may be bright, and the accent is rationed elsewhere in this app. Two of the
+   three survive greyscale: a heavier border, a filled rail, and — the one that
+   cannot be faked — a CLOCK THAT MOVES. Only the running tile shows one. */
+
+.timer-rail {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: var(--valid-mark-w);
+  background: transparent;
+  pointer-events: none;
+}
+
+.timer-tile.is-running {
+  border-color: var(--live);
+  border-width: var(--border-w-thick);
+}
+.timer-tile.is-running .timer-rail { background: var(--live); }
+.timer-tile.is-running .timer-clock { display: inline-flex; align-items: center; }
+.timer-tile.is-running .timer-clock:hover { color: var(--live-strong); }
+
+/* A PAUSED CLOCK WITH TIME ON IT still shows that time — quietly. This is the
+   most useful state on the board after "running": a timer he stopped mid-task
+   holding twenty unfiled minutes. It is not `--live`, because nothing is
+   happening right now. */
+.timer-tile:not(.is-running) .timer-clock {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  text-decoration-color: var(--border);
+}
+
+/* Time on the matter today with no sentence yet — the same attention rail the
+   entry rows use, so one colour means one thing across both sections. */
+.timer-tile.needs-narrative .timer-rail { background: var(--attention); }
+
+.timer-tile.is-selected {
+  background: var(--accent-muted-subtle);
+  border-color: var(--accent-muted);
+}
+.timer-tile.is-dragging { opacity: 0.5; }
+.timer-tile.is-archived { opacity: 0.6; }

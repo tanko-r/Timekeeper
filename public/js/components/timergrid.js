@@ -923,18 +923,31 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
 
   const shown = allRows.filter((r) => matchesFilter(r) && matchesActivity(r));
 
-  let sections; // [{ key, group, label, list }]
+  // ── ONE GROUP MODEL, OVER TIMERS ─────────────────────────────────────────
+  // This was built over ROWS — the merged model, which folds a matter's entries
+  // into the timer that filed them and keeps entry-only rows besides. Two things
+  // went wrong once the board arrived. The menu's membership counts included
+  // entry rows, so "Ungrouped" counted records rather than buttons and a group
+  // he had just put two timers into reported one. And the board's own sections
+  // were keyed differently (`g<id>` vs `group-<id>`), so "Only this group" could
+  // never match and silently narrowed nothing.
+  //
+  // A GROUP IS A PROPERTY OF A TIMER, so the model is over timers, and the board
+  // and this menu now read the same one. Membership is deliberately UNFILTERED:
+  // the count answers "how many timers are in this group", which does not change
+  // because he typed in the filter box.
+  let sections; // [{ key, group, label, list }] — list is TIMERS
   if (grouping === 'client') {
     const byClient = new Map();
-    for (const r of shown) {
-      const key = clientKeyOf(r);
+    for (const t of timers) {
+      const key = t.client_name || t.client_number || '—';
       if (!byClient.has(key)) {
         byClient.set(key, {
-          key: `client-${key}`, group: null, label: clientLabelOf(r),
-          unnamedClient: !!(r.timer && !r.timer.client_name && r.timer.client_number), list: [],
+          key: `client-${key}`, group: null, label: key,
+          unnamedClient: !t.client_name && !!t.client_number, list: [],
         });
       }
-      byClient.get(key).list.push(r);
+      byClient.get(key).list.push(t);
     }
     sections = [...byClient.values()].sort((a, b) =>
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
@@ -942,15 +955,15 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     sections = [
       ...groups.map((g) => ({
         key: `group-${g.id}`, group: g, label: g.name,
-        list: shown.filter((r) => r.timer && r.timer.group_id === g.id),
+        list: timers.filter((t) => t.group_id === g.id),
       })),
       {
         key: 'ungrouped', group: null, label: 'Ungrouped',
-        list: shown.filter((r) => !r.timer || r.timer.group_id == null),
+        list: timers.filter((t) => t.group_id == null),
       },
     ];
   } else {
-    sections = [{ key: 'flat', group: null, label: null, list: shown }];
+    sections = [{ key: 'flat', group: null, label: null, list: timers }];
   }
 
   // "Only this section" — the tab strip's job, as a filter.
@@ -969,10 +982,13 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
       || rowActivityMs(b) - rowActivityMs(a)
       || rowName(a).localeCompare(rowName(b), undefined, { sensitivity: 'base' }));
   };
-  for (const sec of renderedSections) sec.list = sortRows(sec.list);
+  // `sections` holds TIMERS now and exists only to answer "how many are in this
+  // group" for the menu, so it is neither sorted nor flattened into a row list.
 
-  // ordered list of rows actually on screen — the roving tabindex walks it
-  const visible = renderedSections.flatMap((sec) => sec.list);
+  // The roving tabindex walks the ROWS the app knows about — a tile's key is
+  // `t<id>`, an entry row's is `e<id>`, and both are drawn from this list, so a
+  // focused key stays valid across the two sections.
+  const visible = allRows;
   const tabbableKey = visible.some((r) => r.key === focusKey) ? focusKey : (visible[0] && visible[0].key);
 
   // ── the board ────────────────────────────────────────────────────────────
@@ -1051,9 +1067,9 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
     if (grouping === 'group') {
       secs = [
         ...groups.map((g) => ({
-          key: `g${g.id}`, label: g.name, list: list.filter((t) => t.group_id === g.id),
+          key: `group-${g.id}`, label: g.name, list: list.filter((t) => t.group_id === g.id),
         })),
-        { key: 'gnone', label: 'Ungrouped', list: list.filter((t) => t.group_id == null) },
+        { key: 'ungrouped', label: 'Ungrouped', list: list.filter((t) => t.group_id == null) },
       ];
     } else if (grouping === 'client') {
       const seen = new Map();
@@ -1062,7 +1078,7 @@ export function TodayList({ settings, entries = [], openEditor, onEntryChanged }
         if (!seen.has(key)) seen.set(key, []);
         seen.get(key).push(t);
       }
-      secs = [...seen.entries()].map(([label, l]) => ({ key: `c${label}`, label, list: l }));
+      secs = [...seen.entries()].map(([label, l]) => ({ key: `client-${label}`, label, list: l }));
     } else {
       return [{ key: 'flat', label: null, list }];
     }
