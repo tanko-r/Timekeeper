@@ -1,224 +1,205 @@
 # HANDOFF — de-identification + the local LoRA experiment
 
 **Written 2026-08-17.** Sister file to `docs/ui/HANDOFF.md`, which stays the
-entry point for the UI overhaul. This one covers a separate track: getting
-David's time narratives safe to train on, and fine-tuning a model on them.
+entry point for the UI overhaul. This track covers making David's narratives
+safe to train on, and fine-tuning a model on them.
 
-Refresh the mechanical half with `node scripts/handoff.mjs` (git state, test
-counts). The numbers in section 2 are **measurements at commit `87d8b11`** —
-do not quote them against a different commit without re-measuring.
+Numbers below are **measurements**, each cited to the commit it was taken at.
+Do not quote one against a different commit without re-measuring.
 
 ---
 
 ## 1. THE OPEN QUESTION
 
-> **David wants to run a LoRA locally "just for fun." Which path first?**
+> **Nothing is blocked. David chose to stop after the 0.5B proof.**
 >
-> - **A — small model, CPU, tonight** *(my recommendation)*. LoRA
->   `llama3.2:3b` (or `qwen3.5:0.8b` for a first loop) with `peft` on the i3.
->   `torch 2.12.1` is already installed and works today with zero setup risk.
->   Proves the whole chain end to end — data → adapter → GGUF → ollama →
->   `ai-eval.mjs` — in one evening. Slow but certain, and the chain is the
->   part worth de-risking, not the model size.
-> - **B — ROCm on gfx1010.** `rocminfo` DOES see the card (see §3), so this is
->   less hopeless than the usual advice suggests. But no official PyTorch wheel
->   targets gfx1010; it needs `HSA_OVERRIDE_GFX_VERSION=10.3.0`, which lies to
->   ROCm about the ISA generation and frequently hangs or corrupts on RDNA1.
->   Genuinely fun, genuinely a science project. Do it AFTER A works, so there
->   is a known-good baseline to compare against.
-> - **C — rent a GPU.** ~$0.40/hr, done in an hour. Correct for the real
->   fine-tune, wrong for "for fun," and it means uploading client narratives to
->   a third party unless they are de-identified first (§5).
+> The chain works end to end and is committed. Resume when EITHER of these is
+> true, not before:
 >
-> My read: A tonight, B as the actual fun, C when it matters. A also produces
-> the tooling B and C both need.
+> - **He has exported several thousand entries.** 428 is thin, and only 15 of
+>   them carry a real `ai_brief` (see §4). More data changes the answer more
+>   than a bigger model does.
+> - **He wants the real Llama 3.1 8B fine-tune.** That means renting a GPU for
+>   an hour (~$0.40), which means de-identifying first (§5) because the data
+>   leaves the box. On this machine an 8B is 5-8 hours on CPU and memory is
+>   tight at 24 GB.
+>
+> If he asks for "a bigger one" without either condition, `Qwen2.5-3B-Instruct`
+> is the honest next rung: ~2-3 hours on CPU, ungated, and it still fits the
+> 8 GB card for inference afterwards.
 
 ---
 
-## 2. WHAT IS TRUE RIGHT NOW
+## 2. WHAT ACTUALLY HAPPENED — the LoRA, at `a04318b`
 
-Measured at `87d8b11`, 416 narratives, 323 dictionary terms.
+A LoRA **was trained and it worked.** It is `Qwen2.5-0.5B-Instruct`, NOT
+Llama 3.1 8B. Do not let the phrase "the fine-tune worked" stand near the
+original question without that correction; it caused confusion once already.
 
-| model | recall | missed | leaky entries | extras | median |
-|---|---|---|---|---|---|
-| `llama3.1:8b` (prompt v2) | **95.3%** | 17 | 17 | 268 | 622 ms |
-| `qwen3.5:4b` (prompt v2) | 93.3% | 24 | 22 | 280 | 6534 ms |
+386 train / 42 held out, 291 steps, 3.5 s/step, **17 minutes on the i3**.
+Loss 1.82 → 0.093. Measured on the 42 held-out entries (house voice baseline,
+measured 2026-08-01: p50 11 words, p90 29):
 
-Prompt v1 → v2 on `llama3.1:8b`: clients 66.7% → 100%, people 93.8% → 97.8%,
-`initial + surname` misses 15 → 6, all-caps initials 4 → 0. Overall 90.8% →
-95.3%.
+| | p50 | p90 | filler | mem |
+|---|---|---|---|---|
+| REAL (David's) | 11 | 23 | 18 | 0.61 |
+| base 0.5B | 27 | 32 | 0 | 0.29 |
+| **tuned** | **11** | **21** | **20** | **0.61** |
 
-**Matter names did NOT move: 60.0% both runs, the same 15/25.** Adding matter
-names to the prompt definition and demonstrating two of them changed nothing.
-Three distinct `short_name` values account for all ten misses. The hypothesis
-that the prompt was at fault there is unsupported and still open.
+`mem` = mean similarity to the nearest *training* narrative. Loss at 0.093 on
+386 examples is as consistent with memorisation as with learning, so this is
+the probe that matters. David's own held-out entries score 0.61 — time entries
+are repetitive and that is the honest ceiling. The tuned model sits **on** it,
+not above it. It learned the register, not the rows.
 
-**The ranking flipped between prompts.** Under v1, `qwen3.5:4b` beat llama
-93.9% to 90.8%. Under v2, llama wins 95.3% to 93.3% and qwen got slightly
-worse. The first bake-off was measuring the prompt, not the models. Re-run any
-model comparison after a prompt change.
+Artifacts (gitignored, real client text): `data/finetune/adapter/`,
+`compare.html`, `train.jsonl`, `valid.jsonl`, `train.log`.
 
-### Two questions waiting on David's eyes, not on more code
-
-1. **Are those 3 matter names genuinely identifying?** If they are generic
-   project labels, the model is right and the ground truth is wrong.
-2. **What fraction of the 268 extras are real?** This decides whether the model
-   belongs in the pipeline at all. Both answers are in
-   `data/deid-eval/report.html`.
-
----
-
-## 3. THE HARDWARE, MEASURED NOT ASSUMED
-
-Checked 2026-08-17 on this box:
-
-```
-GPU          RX 5700 XT, gfx1010 (RDNA1), 8 GB
-rocminfo     SEES gfx1010                    <- better than the usual advice
-Vulkan       RADV NAVI10, works
-/opt/rocm    present
-torch        2.12.1+cu130  -> cuda False, i.e. CPU-only here (CUDA build)
-transformers NOT installed
-peft         NOT installed
-disk         159 G free on /, 621 G on /mnt/hdd
-ollama       SYSTEM service (not --user), active
-```
-
-**The 8 GB ceiling is the binding constraint, and file size does not predict
-it.** Measured with `ollama ps`:
-
-- `llama3.1:8b` — 4.9 GB file, stays on the GPU, 622 ms median
-- `qwen3.5:4b` — 3.4 GB file, loads at **8.6 GB**, runs 66% on CPU, 6534 ms
-- `qwen3.5:9b` — 6.6 GB file, loads at **11 GB**, runs 74% on CPU, ~15 s
-
-A "4B" with a larger footprint than an "8B" is the qwen3.5 KV cache. Always
-check `ollama ps` for the CPU/GPU split before blaming a model for being slow.
+**Not done:** the adapter was never converted to GGUF or loaded into Ollama, so
+it has never been scored by `scripts/ai-eval.mjs` — the yardstick this project
+already built for exactly this. That is the cheapest high-value next step if
+the work resumes.
 
 ---
 
-## 4. WHAT LANDED
+## 3. THE HARDWARE — tested, not assumed
 
-Commits `1afcb1f`, `1d2100c`, `87d8b11` on `ui-overhaul-2026-08`, pushed.
+**The GPU cannot train. This is now proven, not inferred.**
 
-**`scripts/deid-eval.mjs`** — scores a local model's de-identification against
-the database as ground truth. The idea worth keeping: `clients`, `matters` and
-`matter_people` already ARE a dictionary of real identifiers, so the model does
-not have to be trusted or eyeballed to be measured. Saves the raw response, the
-parsed finds, and the redacted narrative each model would actually produce.
-Caches per `(model, prompt, entry, narrative)` so runs over thousands of entries
-resume, and a prompt edit correctly invalidates.
+```
+rocminfo         SEES gfx1010:xnack-, 8176 MB          <- detection works
+torch+rocm7.0    torch.cuda.is_available() -> True     <- and lies
+a single matmul  hipErrorInvalidDeviceFunction         <- no RDNA1 kernels
+HSA_OVERRIDE_GFX_VERSION=10.3.0
+                 hung 6 min on that same matmul, killed
+```
 
-**`scripts/deid-vocab.mjs`** — the pass that makes review tractable at scale.
-416 narratives collapse to **279 distinct candidate identifiers** once the
-dictionary takes its share. Reviewing that list is equivalent to reviewing every
-entry. Cleared words go to a persistent allowlist, so importing 5,000 more
-entries surfaces only genuinely new vocabulary.
+So: CPU for training. The card is fine for *inference* via Ollama (Vulkan,
+`RADV NAVI10`).
 
-Outputs (all gitignored, all real client text): `data/deid-eval/report.html`,
-`vocab.html`, `review.csv`, `results.jsonl`, `cache.jsonl`, `allowlist.txt`.
+Inference footprints, from `ollama ps` — **file size does not predict VRAM**:
+
+- `llama3.1:8b` — 4.9 GB file, stays on GPU, 622 ms median
+- `qwen3.5:4b` — 3.4 GB file, loads at **8.6 GB**, 66% CPU, 6534 ms
+- `qwen3.5:9b` — 6.6 GB file, loads at **11 GB**, 74% CPU, ~15 s
+
+Environment: `.venv-lora/` at the repo root (system-site-packages + `transformers`
++ `peft`). **Do not use `~/Projects/gliner/venv`** — an earlier session borrowed
+it for its libraries, which was confusing and is now unnecessary.
 
 ---
 
-## 5. HOW TO PICK IT UP — the LoRA runbook
+## 4. THE DATA LIMITATION — read before scaling anything
 
-### Step 0. De-identify first, and mean it
+**Only 15 of 428 entries have a real `ai_brief`.** So there are not hundreds of
+`brief -> narrative` pairs. There are hundreds of examples of the voice.
 
-421 entries is thin. Run `scripts/import-intapp-history.mjs` on an Intapp
-"My Released Time" export before training — it is idempotent on
-`(date, matter, narrative)` and calls `rebuildMatterPeople`, so **importing
-history grows the dictionary**, which raises pass-1 coverage, which shrinks
-what the model has to catch. The pipeline gets stronger with more data.
+`scripts/finetune-export.mjs` reconstructs the other 413 inputs by stripping
+each narrative to its content words. That is backtranslation, and it carries a
+specific failure mode: the model can learn *"un-abbreviate the input"* rather
+than *"write like David."* The 42 held-out entries exist to catch that, and on
+this run they did not show it — but the risk grows with more synthetic data,
+not less.
 
-Then, in order:
+**The highest-value thing David can do costs him nothing:** use Timekeeper's AI
+draft feature in normal daily work. Every use records a genuine
+`ai_brief` -> `narrative` pair. A few hundred real pairs beats any amount of
+reconstruction, and beats a bigger model.
+
+---
+
+## 5. DE-IDENTIFICATION — and when it actually matters
+
+**It is NOT a prerequisite for local training.** An earlier session treated it
+as a blocker and was wrong. The adapter trains, lives and runs on the box, and
+the narratives are already in `data/timekeeper.db` on that same box.
+
+It becomes a hard requirement the moment data leaves: renting a cloud GPU,
+sharing an adapter, or publishing anything. A LoRA on a few hundred examples
+can and does emit distinctive training phrases verbatim.
+
+Measured at `87d8b11`, 416 narratives, 323 dictionary terms:
+
+| model | recall | leaky entries | median |
+|---|---|---|---|
+| `llama3.1:8b` (prompt v2) | **95.3%** | 17 | 622 ms |
+| `qwen3.5:4b` (prompt v2) | 93.3% | 22 | 6534 ms |
+
+The pipeline, in the order that matters:
 
 ```
-1. DICTIONARY   100% on known terms, by construction     <- the workhorse
-2. VOCABULARY   scripts/deid-vocab.mjs, reviewed once    <- the safety net
-3. MODEL        llama3.1:8b @ 95.3%                      <- a supplement
+1. DICTIONARY   100% on known terms, by construction   <- the workhorse
+2. VOCABULARY   279 strings, reviewed once, cleared    <- the safety net
+3. MODEL        95.3%                                  <- a supplement
 ```
 
-95% is a good assistant and NOT a privilege standard. The model is step 3 for a
-reason. Replace identifiers with typed placeholders (`[CLIENT]`, `[PERSON]`,
-`[MATTER]`) rather than fake names — Timekeeper knows the real matter at
-generation time and can substitute, so the model never needs it.
+95% is a good assistant and not a privilege standard. Use typed placeholders
+(`[CLIENT]`, `[PERSON]`, `[MATTER]`) rather than fake names — Timekeeper knows
+the real matter at generation time and can substitute.
 
-### Step 1. Build the training set
+**Two open items needing David's eyes, not more code:**
 
-Emit JSONL from the redacted narratives — `ai_brief` → `narrative` is the
-natural instruction/response pair, and `entries.ai_brief` already exists.
-Hold out ~10% for eval. Do NOT train on `narrative_ai` rows without checking
-whether the model wrote them; training a model on its own output is how a house
-voice collapses into mush.
+1. Three `matter` short_names cause 10 of the 17 remaining misses. Recall on
+   that category was 60.0% under BOTH prompts — adding matter names to the
+   prompt and demonstrating two of them moved it by exactly zero. The
+   hypothesis that the prompt was at fault is unsupported and still open. If
+   those three names are generic project labels, the ground truth is wrong,
+   not the model.
+2. 268 `extras` — model finds the dictionary does not know. What fraction are
+   real decides whether step 3 belongs in the pipeline at all.
 
-### Step 2. Train
+Both are in `data/deid-eval/report.html`.
+
+---
+
+## 6. THE COMMANDS
 
 ```bash
-pip3 install --user transformers peft datasets accelerate
-# path A: CPU, works today
-# path B: ROCm — pip3 install torch --index-url https://.../rocm6.x
-#         then HSA_OVERRIDE_GFX_VERSION=10.3.0 (expect crashes on RDNA1)
+# de-identification
+node scripts/deid-eval.mjs --model llama3.1:8b     # score a model
+node scripts/deid-vocab.mjs                        # vocabulary checklist
+
+# fine-tune
+node scripts/finetune-export.mjs                   # 428 entries -> jsonl
+./.venv-lora/bin/python scripts/finetune-lora.py   # ~17 min at 0.5B
+./.venv-lora/bin/python scripts/finetune-compare.py
+
+# both training scripts take --model; scaling up is one flag
 ```
 
-Keep it small: LoRA `r=16`, `alpha=32`, target the attention projections, 3
-epochs, seq len 128. The narratives are ~80 tokens; a long context window buys
-nothing and costs a lot on CPU.
-
-### Step 3. Get it into ollama
-
-Convert the adapter with llama.cpp's `convert_lora_to_gguf.py`, then:
-
-```
-FROM llama3.1:8b
-ADAPTER ./timekeeper-lora.gguf
-```
-
-`ollama create timekeeper-lora -f Modelfile`
-
-### Step 4. Score it against the yardstick that already exists
-
-`scripts/ai-eval.mjs` says so in its own header: *"the yardstick any fine-tuned
-model has to beat."* It scores narrative output against the house voice measured
-from real history (median ≤16 words, longest ≤34).
-
-```bash
-AI_EVAL_MODEL=timekeeper-lora node scripts/ai-eval.mjs
-```
-
-**Record the base model's score BEFORE training.** A fine-tune with no baseline
-is a vibe, not a result.
+Data lives in `~/Projects/timekeeper-prod/data/`, NOT in this repo. Prod moved;
+`Intapp-clone/data/` no longer exists. The eval scripts default to the prod path.
 
 ---
 
 ## ⚠️ Rules that will bite a fresh session
 
-1. **Never send `report.html`, `vocab.html`, `review.csv` or `results.jsonl`
-   through the conversation.** They contain real client narratives. The entire
-   point of the local model is that privileged text stays on the box; attaching
-   the output ships it to Anthropic and undoes the design. Tell David the path;
-   let him open it.
+1. **Never send `report.html`, `vocab.html`, `compare.html`, `review.csv`,
+   `results.jsonl` or either `.jsonl` training file through the conversation.**
+   They contain real client narratives. Give David the path; let him open it.
 
-2. **grep goes silently blind on files containing NUL bytes.** It classifies
-   them as binary and returns *no matches and no error*. This cost a full
-   debugging cycle: a cache key used `\0` as a field separator, every grep came
-   back empty, the emptiness read as "not present," and a failed patch passed as
-   a successful one. If a grep result is surprisingly empty, run
-   `file <path>` and check for `(binary data)` before believing it.
+2. **grep goes silently blind on files containing NUL bytes.** No matches, no
+   error, no warning. This cost a full debugging cycle: a cache key used `\0`
+   as a separator, every grep came back empty, the emptiness read as "not
+   present," and a failed patch passed as a landed one. If a grep result is
+   surprisingly empty, run `file <path>` and look for `(binary data)`.
 
 3. **A prompt change invalidates the eval cache — but only since `87d8b11`.**
-   Any `cache.jsonl` row without a `p` field predates the fix and was scored
-   under prompt v1. `--fresh` ignores the whole cache and re-runs everything,
-   which is hours at several thousand entries.
+   Rows in `cache.jsonl` without a `p` field predate the fix and were scored
+   under prompt v1.
 
-4. **Open the database read-only.** `new Database(path, {readonly: true})`.
-   The live service holds a WAL; both eval scripts already do this and neither
-   should ever gain a write path.
+4. **Re-run every model comparison after a prompt change.** The first bake-off
+   ranked `qwen3.5:4b` above `llama3.1:8b`; fixing the prompt flipped it. That
+   comparison was measuring the prompt, not the models.
 
-5. **Numbers in this file are measurements at a commit.** This project has
-   shipped two invented counts in its own docs. Re-measure or cite `87d8b11`.
+5. **Open the database read-only.** `new Database(path, {readonly: true})`.
+   The live service holds a WAL.
 
-6. **`ollama` is a SYSTEM service here, not `--user`.** `systemctl --user
-   status ollama` reports inactive and is misleading.
+6. **`think: false` on every Ollama call.** qwen3.5 is a reasoning model; left
+   alone it turned an 11-second call into a 90-second timeout here.
 
-7. **`think: false` on every ollama call.** qwen3.5 is a reasoning model; left
-   alone it turned an 11-second call into a 90-second timeout on this box.
-   Ollama accepts the flag on non-thinking models too.
+7. **`ollama` is a SYSTEM service, not `--user`.** `systemctl --user status
+   ollama` reports inactive and is misleading.
+
+8. **Say which model.** "The fine-tune worked" means a 0.5B Qwen. It is not
+   the Llama 3.1 8B the project started out asking about.
