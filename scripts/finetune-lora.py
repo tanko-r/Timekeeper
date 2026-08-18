@@ -12,7 +12,7 @@ teach the model to reproduce the notes, which is the opposite of the goal.
   ./.venv-lora/bin/python scripts/finetune-lora.py --steps 5      # timing probe
   ./.venv-lora/bin/python scripts/finetune-lora.py                # real run
 """
-import argparse, json, os, time
+import argparse, glob, json, os, time
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # never touch the broken GPU
 
 import torch
@@ -29,6 +29,8 @@ p.add_argument("--steps", type=int, default=-1, help="cap steps (timing probe)")
 p.add_argument("--batch", type=int, default=4)
 p.add_argument("--maxlen", type=int, default=256)
 p.add_argument("--lr", type=float, default=2e-4)
+p.add_argument("--save-steps", dest="save_steps", type=int, default=20)
+p.add_argument("--resume", action="store_true", help="continue from the newest checkpoint")
 a = p.parse_args()
 
 tok = AutoTokenizer.from_pretrained(a.model)
@@ -97,14 +99,28 @@ args = TrainingArguments(
     gradient_accumulation_steps=1,
     learning_rate=a.lr,
     logging_steps=5,
-    save_strategy="no",
+    # Checkpoint often. A 50-minute CPU run on a box that also serves Ollama to
+    # cline WILL occasionally lose a race for memory, and a run that saves
+    # nothing turns a survivable interruption into a total loss. Learned the
+    # hard way at step 60 of 123.
+    save_strategy="steps",
+    save_steps=a.save_steps,
+    save_total_limit=2,
     report_to=[],
     use_cpu=True,
 )
 trainer = Trainer(model=model, args=args, train_dataset=train_ds, data_collator=collate)
 
+resume = None
+if a.resume:
+    ckpts = sorted(glob.glob(os.path.join(a.out, "checkpoint-*")),
+                   key=lambda p: int(p.rsplit("-", 1)[1]))
+    if ckpts:
+        resume = ckpts[-1]
+        print(f"resuming from {resume}")
+
 t0 = time.time()
-trainer.train()
+trainer.train(resume_from_checkpoint=resume)
 dt = time.time() - t0
 done = trainer.state.global_step
 print(f"\n{done} steps in {dt:.0f}s  ->  {dt/max(done,1):.1f}s/step")
