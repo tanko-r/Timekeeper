@@ -160,7 +160,7 @@ export const SEED_PAIRS = [
 //     would be taught as readily as the wording he settled on.
 const FINAL = "deleted_at IS NULL AND status = 'finalized' AND narrative_ai = 0";
 
-export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
+export function buildVoiceContext(db, { cmId = null, brief = '', seedPairs = null } = {}) {
   if (!db) return { prompt: '', turns: [] };
 
   const own = cmId == null ? [] : db.prepare(`
@@ -188,7 +188,8 @@ export function buildVoiceContext(db, { cmId = null, brief = '' } = {}) {
       AND narrative IS NOT NULL AND length(trim(narrative)) > 0
     ORDER BY date DESC LIMIT 300
   `).all();
-  const pairs = pickPairs(pool, SEED_PAIRS, { count: 6, cmId, brief });
+  const seeds = seedPairs && seedPairs.length ? seedPairs : SEED_PAIRS;
+  const pairs = pickPairs(pool, seeds, { count: 6, cmId, brief });
 
   // Two blocks, because they are not wanted on the same occasions. The
   // exemplars teach voice and belong in every call. The glossary is an
@@ -265,8 +266,10 @@ export const REWRITE_SHOTS = {
   }],
 };
 
-export function rewriteShots(mode) {
-  return (REWRITE_SHOTS[mode] || []).flatMap((s) => [
+export function rewriteShots(mode, overrides) {
+  const shots = overrides && overrides[mode] && overrides[mode].length
+    ? overrides[mode] : (REWRITE_SHOTS[mode] || []);
+  return shots.flatMap((s) => [
     { role: 'user', content: REWRITE_ASK[mode](s.before) },
     { role: 'assistant', content: s.after },
   ]);
@@ -275,7 +278,7 @@ export function rewriteShots(mode) {
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
-export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice }) {
+export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice, rewriteShotsOverride }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   // A rewrite is handed finished prose, so it takes the voice block WITHOUT
   // the abbreviation glossary (2026-08-06 feedback: names David had already
@@ -291,7 +294,7 @@ export function buildNarrateMessages({ instructions, brief, narrative, mode = 'd
   // model reads them as prior exchanges it should imitate. Rewrites get their
   // OWN demonstrations: the voice pairs are shorthand→narrative, which is the
   // wrong transformation for an input that is already finished prose.
-  const shots = rewriting ? rewriteShots(mode) : ((voice && voice.turns) || []);
+  const shots = rewriting ? rewriteShots(mode, rewriteShotsOverride) : ((voice && voice.turns) || []);
   return [{ role: 'system', content: system }, ...shots, { role: 'user', content: user }];
 }
 
@@ -314,7 +317,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     instructions: cfg.systemPrompt,
     brief,
     context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
-    voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name }),
+    voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name, seedPairs: cfg.seedPairs }),
   });
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
@@ -341,6 +344,8 @@ export function aiRouter({ db }) {
       enabled: !!cfg.enabled, model: cfg.model, url: cfg.url, reachable, models,
       systemPrompt: cfg.systemPrompt || '',
       defaultPrompt: DEFAULT_AI_INSTRUCTIONS,
+      defaultSeedPairs: SEED_PAIRS,
+      defaultRewriteShots: REWRITE_SHOTS,
     });
   });
 
@@ -369,7 +374,7 @@ export function aiRouter({ db }) {
     const codes = db.prepare(
       'SELECT name FROM task_codes WHERE active=1 ORDER BY sort_order, id').all().map((x) => x.name);
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
-    const voice = buildVoiceContext(db, { cmId: b.cm_id, brief });
+    const voice = buildVoiceContext(db, { cmId: b.cm_id, brief, seedPairs: cfg.seedPairs });
 
     let content;
     try {
@@ -476,7 +481,8 @@ export function aiRouter({ db }) {
       totalHours: b.totalHours,
       context: [b.context ? String(b.context).slice(0, 2000) : null, matterCtx]
         .filter(Boolean).join('\n\n') || null,
-      voice: buildVoiceContext(db, { cmId: b.cm_id, brief: brief || narrative }),
+      voice: buildVoiceContext(db, { cmId: b.cm_id, brief: brief || narrative, seedPairs: cfg.seedPairs }),
+      rewriteShotsOverride: cfg.rewriteShots,
     });
 
     // If the client goes away mid-stream (navigated off, or a regenerate

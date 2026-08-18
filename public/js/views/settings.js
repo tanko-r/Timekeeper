@@ -18,7 +18,11 @@ export function SettingsView({ page, settings, reloadSettings, authState, reload
   const key = SETTINGS_CATEGORIES.some(([k]) => k === page) ? page : 'general';
   const pages = {
     general: [html`<${GeneralCard} key="general" settings=${settings} reloadSettings=${reloadSettings} />`],
-    ai: [html`<${AiCard} key="ai" settings=${settings} reloadSettings=${reloadSettings} />`],
+    ai: [
+      html`<${AiCard} key="ai" settings=${settings} reloadSettings=${reloadSettings} />`,
+      html`<${SeedPairsCard} key="seedpairs" settings=${settings} reloadSettings=${reloadSettings} />`,
+      html`<${RewriteShotsCard} key="rewriteshots" settings=${settings} reloadSettings=${reloadSettings} />`,
+    ],
     export: [html`<${TimCard} key="tim" settings=${settings} reloadSettings=${reloadSettings} />`],
     codes: [html`<${TaskCodesCard} key="codes" />`, html`<${ShortcutsCard} key="shortcuts" />`],
     validation: [html`<${ValidationCard} key="validation" settings=${settings} reloadSettings=${reloadSettings} />`],
@@ -97,6 +101,112 @@ function AiCard({ settings, reloadSettings }) {
             setPrompt(status.defaultPrompt);
             await savePrompt(status.defaultPrompt);
           }}>Reset to default</button>` : null}
+      </div>
+    </div>`;
+}
+
+// The few-shot examples the model imitates before it has learned David's own
+// entries (server/lib/exemplars.js "pairs"; server/routes/ai.js SEED_PAIRS).
+// Shown pre-filled with the built-in set via /api/ai/status so David can see
+// what is actually being fed to the model, not just an empty box.
+function SeedPairsCard({ settings, reloadSettings }) {
+  const [status, setStatus] = useState(null);
+  useEffect(() => { api.get('/api/ai/status').then(setStatus).catch(() => {}); }, []);
+  const cfg = settings.ai || {};
+  const savedCustom = Array.isArray(cfg.seedPairs) && cfg.seedPairs.length > 0;
+  const [rows, setRows] = useState(null); // null = not touched yet this session
+  const effectiveRows = rows ?? (savedCustom ? cfg.seedPairs : (status?.defaultSeedPairs || []));
+
+  async function persist(next) {
+    setRows(next);
+    const clean = next.filter((r) => r.brief.trim() && r.narrative.trim());
+    await save({ ai: { seedPairs: clean } }, reloadSettings);
+  }
+
+  return html`
+    <div class="card">
+      <h2>Base examples</h2>
+      <p class="muted small">
+        Shorthand → narrative pairs the model imitates before it has learned enough
+        of your own finalized entries. ${savedCustom ? 'Showing your own — edit any row.' :
+          'Showing the built-in starter set — edit a row to make it yours.'}
+      </p>
+      <div class="table-wrap"><table class="tk">
+        <thead><tr><th>Shorthand</th><th>Narrative</th><th></th></tr></thead>
+        <tbody>${effectiveRows.map((r, i) => html`
+          <tr key=${i}>
+            <td><textarea rows="2" spellcheck="false" defaultValue=${r.brief}
+              onBlur=${(e) => persist(effectiveRows.map((x, idx) => (idx === i ? { ...x, brief: e.target.value } : x)))}></textarea></td>
+            <td><textarea rows="2" spellcheck="false" defaultValue=${r.narrative}
+              onBlur=${(e) => persist(effectiveRows.map((x, idx) => (idx === i ? { ...x, narrative: e.target.value } : x)))}></textarea></td>
+            <td><button class="btn btn-ghost btn-sm" title="Delete example"
+              onClick=${() => persist(effectiveRows.filter((_, idx) => idx !== i))}>✕</button></td>
+          </tr>`)}</tbody>
+      </table></div>
+      <div class="row">
+        <button class="btn btn-sm"
+          onClick=${() => setRows([...effectiveRows, { brief: '', narrative: '' }])}>+ Add example</button>
+        ${savedCustom ? html`
+          <button class="btn btn-sm" onClick=${() => { setRows(null); save({ ai: { seedPairs: [] } }, reloadSettings); }}>
+            Reset to built-in</button>` : null}
+      </div>
+    </div>`;
+}
+
+// Before → after demonstrations for the "shorter" / "longer" rewrite buttons
+// (server/routes/ai.js REWRITE_SHOTS). Same edit-in-place pattern as the base
+// examples above, kept as its own card since it teaches a different task.
+function RewriteShotsCard({ settings, reloadSettings }) {
+  const [status, setStatus] = useState(null);
+  useEffect(() => { api.get('/api/ai/status').then(setStatus).catch(() => {}); }, []);
+  const cfg = settings.ai || {};
+  const saved = cfg.rewriteShots || {};
+
+  return html`
+    <div class="card">
+      <h2>Shorten / lengthen demos</h2>
+      <p class="muted small">
+        Before → after pairs shown to the model when you click “shorter” or “longer” on
+        a narrative. Edit a row to make it yours.
+      </p>
+      ${['shorter', 'longer'].map((mode) => html`
+        <${RewriteModeSection} key=${mode} mode=${mode}
+          saved=${saved[mode]} defaults=${(status && status.defaultRewriteShots && status.defaultRewriteShots[mode]) || []}
+          rewriteShots=${saved} reloadSettings=${reloadSettings} />`)}
+    </div>`;
+}
+
+function RewriteModeSection({ mode, saved, defaults, rewriteShots, reloadSettings }) {
+  const savedCustom = Array.isArray(saved) && saved.length > 0;
+  const [rows, setRows] = useState(null); // null = not touched yet this session
+  const effectiveRows = rows ?? (savedCustom ? saved : defaults);
+
+  async function persist(next) {
+    setRows(next);
+    const clean = next.filter((r) => r.before.trim() && r.after.trim());
+    await save({ ai: { rewriteShots: { ...rewriteShots, [mode]: clean } } }, reloadSettings);
+  }
+
+  return html`
+    <div style=${{ marginTop: '14px' }}>
+      <h3 style=${{ fontSize: '14px', margin: '0 0 6px' }}>${mode === 'shorter' ? 'Shorter' : 'Longer'}</h3>
+      <div class="table-wrap"><table class="tk">
+        <thead><tr><th>Before</th><th>After</th><th></th></tr></thead>
+        <tbody>${effectiveRows.map((r, i) => html`
+          <tr key=${i}>
+            <td><textarea rows="2" spellcheck="false" defaultValue=${r.before}
+              onBlur=${(e) => persist(effectiveRows.map((x, idx) => (idx === i ? { ...x, before: e.target.value } : x)))}></textarea></td>
+            <td><textarea rows="2" spellcheck="false" defaultValue=${r.after}
+              onBlur=${(e) => persist(effectiveRows.map((x, idx) => (idx === i ? { ...x, after: e.target.value } : x)))}></textarea></td>
+            <td><button class="btn btn-ghost btn-sm" title="Delete demo"
+              onClick=${() => persist(effectiveRows.filter((_, idx) => idx !== i))}>✕</button></td>
+          </tr>`)}</tbody>
+      </table></div>
+      <div class="row">
+        <button class="btn btn-sm"
+          onClick=${() => setRows([...effectiveRows, { before: '', after: '' }])}>+ Add demo</button>
+        ${savedCustom ? html`
+          <button class="btn btn-sm" onClick=${() => { setRows(null); persist([]); }}>Reset to built-in</button>` : null}
       </div>
     </div>`;
 }

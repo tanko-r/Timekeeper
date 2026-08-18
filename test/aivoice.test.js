@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestServer } from './helpers.js';
-import { buildVoiceContext, buildNarrateMessages, SEED_PAIRS } from '../server/routes/ai.js';
+import { buildVoiceContext, buildNarrateMessages, rewriteShots, SEED_PAIRS, REWRITE_SHOTS } from '../server/routes/ai.js';
 
 async function withServer(fn) {
   const t = await startTestServer();
@@ -133,6 +133,23 @@ test('buildVoiceContext falls back to seed pairs when no real pairs exist', asyn
     assert.equal(v.turns.length, SEED_PAIRS.length * 2);
     assert.equal(v.turns[0].role, 'user');
     assert.equal(v.turns[1].role, 'assistant');
+  });
+});
+
+test('buildVoiceContext prefers David\'s own saved seed pairs over the built-in set', async () => {
+  await withServer(async (t) => {
+    const custom = [{ brief: 'x custom brief', narrative: 'Custom narrative output text here.' }];
+    const v = buildVoiceContext(t.db, { seedPairs: custom });
+    assert.equal(v.turns.length, 2);
+    assert.equal(v.turns[0].content, 'Work done: x custom brief');
+    assert.equal(v.turns[1].content, 'Custom narrative output text here.');
+  });
+});
+
+test('buildVoiceContext falls back to the built-in seed pairs when the saved set is empty', async () => {
+  await withServer(async (t) => {
+    const v = buildVoiceContext(t.db, { seedPairs: [] });
+    assert.equal(v.turns.length, SEED_PAIRS.length * 2);
   });
 });
 
@@ -364,4 +381,29 @@ test('buildNarrateMessages: a voice object without a rewrite prompt still works'
     voice: { prompt: '\n\nLEGACY_BLOCK', turns: [] },
   })[0].content;
   assert.match(sys, /LEGACY_BLOCK/);
+});
+
+// ── rewrite demos: David's own overrides beat the built-in pair ───────────
+
+test('rewriteShots uses a saved override for a mode when provided', () => {
+  const custom = { shorter: [{ before: 'Long before text here today.', after: 'Short after.' }] };
+  const shots = rewriteShots('shorter', custom);
+  assert.equal(shots.length, 2);
+  assert.equal(shots[1].content, 'Short after.');
+});
+
+test('rewriteShots falls back to the built-in demo when the override has nothing for that mode', () => {
+  const shots = rewriteShots('longer', { shorter: [{ before: 'x', after: 'y' }] });
+  assert.equal(shots.length, REWRITE_SHOTS.longer.length * 2);
+  assert.equal(shots[1].content, REWRITE_SHOTS.longer[0].after);
+});
+
+test('buildNarrateMessages threads a rewriteShots override through to the demonstration turns', () => {
+  const custom = { shorter: [{ before: 'Custom before phrase today.', after: 'Custom after phrase.' }] };
+  const messages = buildNarrateMessages({
+    instructions: 'Base.', narrative: 'Review Cedar Lease.', mode: 'shorter',
+    voice: { prompt: '', turns: [] }, rewriteShotsOverride: custom,
+  });
+  const shots = messages.slice(1, -1);
+  assert.ok(shots.some((m) => m.content === 'Custom after phrase.'));
 });
