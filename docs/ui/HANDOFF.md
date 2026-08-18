@@ -7,6 +7,12 @@ re-derive them with a dozen tool calls.
 
 ---
 
+**Second track:** de-identification + the local LoRA experiment lives in
+`docs/ai/HANDOFF-deid-finetune.md`. It has its own open question and its own
+measured numbers. Nothing below touches it.
+
+---
+
 ## 1. THE OPEN QUESTION
 
 > **The timer board is BUILT, green and pushed. Which deferred item comes next?**
