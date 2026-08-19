@@ -11,54 +11,71 @@ Do not quote one against a different commit without re-measuring.
 
 ## 1. THE OPEN QUESTION
 
-> **Nothing is blocked. David chose to stop after the 0.5B proof.**
+> **The 1.5B works and is in Ollama as `timekeeper-lora`. Wire it into the app,
+> or scale up?**
 >
-> The chain works end to end and is committed. Resume when EITHER of these is
-> true, not before:
->
-> - **He has exported several thousand entries.** 428 is thin, and only 15 of
->   them carry a real `ai_brief` (see §4). More data changes the answer more
->   than a bigger model does.
-> - **He wants the real Llama 3.1 8B fine-tune.** That means renting a GPU for
->   an hour (~$0.40), which means de-identifying first (§5) because the data
->   leaves the box. On this machine an 8B is 5-8 hours on CPU and memory is
->   tight at 24 GB.
->
-> If he asks for "a bigger one" without either condition, `Qwen2.5-3B-Instruct`
-> is the honest next rung: ~2-3 hours on CPU, ungated, and it still fits the
-> 8 GB card for inference afterwards.
+> - **Wire it in** *(my recommendation)*. Usable NOW, but its output is not safe
+>   to ship unedited: it invents initials (§2b). The roster corrector is proven
+>   in `scripts/finetune-try.py`; moving it into `server/routes/ai.js` beside
+>   the existing narrate path makes the adapter genuinely useful.
+>   `server/lib/people.js` already has the parsing.
+> - **Scale up.** Needs a rented GPU — 8B/9B do NOT fit (§3). David signed the
+>   Llama 3.1 licence, but Qwen3.5-9B is the better target: newer, base weights
+>   ungated. ~$0.40/hour. Requires de-identifying first (§5).
+> - **More data.** 164 training samples is the real constraint. Using the AI
+>   draft button in daily work records genuine ai_brief -> narrative pairs for
+>   free, and beats both of the above.
 
 ---
 
-## 2. WHAT ACTUALLY HAPPENED — the LoRA, at `a04318b`
+## 2. WHAT WORKS TODAY — at `f7233ee`
 
-A LoRA **was trained and it worked.** It is `Qwen2.5-0.5B-Instruct`, NOT
-Llama 3.1 8B. Do not let the phrase "the fine-tune worked" stand near the
-original question without that correction; it caused confusion once already.
+**`ollama run timekeeper-lora`** — Qwen2.5-1.5B + LoRA, 994 MB.
+Trained in 51 minutes on the i3 (123 steps, 25 s/step).
 
-386 train / 42 held out, 291 steps, 3.5 s/step, **17 minutes on the i3**.
-Loss 1.82 → 0.093. Measured on the 42 held-out entries (house voice baseline,
-measured 2026-08-01: p50 11 words, p90 29):
+### 2a. It learned expansion
 
-| | p50 | p90 | filler | mem |
-|---|---|---|---|---|
-| REAL (David's) | 11 | 23 | 18 | 0.61 |
-| base 0.5B | 27 | 32 | 0 | 0.29 |
-| **tuned** | **11** | **21** | **20** | **0.61** |
+15 held-out entries, scored against David's own narratives as the ceiling:
 
-`mem` = mean similarity to the nearest *training* narrative. Loss at 0.093 on
-386 examples is as consistent with memorisation as with learning, so this is
-the probe that matters. David's own held-out entries score 0.61 — time entries
-are repetitive and that is the honest ceiling. The tuned model sits **on** it,
-not above it. It learned the register, not the rows.
+| | p50 words | invented | hours emitted | semicolons | mem |
+|---|---|---|---|---|---|
+| REAL (David's) | 19 | 8 (7/15) | 0 | 8/15 | 0.55 |
+| base 1.5B | 58 | **65** (12/15) | 0 | 12/15 | 0.39 |
+| **tuned** | **17** | **10** (6/15) | **0** | **8/15** | 0.51 |
 
-Artifacts (gitignored, real client text): `data/finetune/adapter/`,
-`compare.html`, `train.jsonl`, `valid.jsonl`, `train.log`.
+REAL scores 8 rather than 0 because the detector compares against notes derived
+by compression, and compression drops things. So 8 is the floor an honest
+narrative gets, and the tuned model sits on it. The base invents 65, and through
+Ollama simply refuses ("I don't have any specific information about this matter").
 
-**Not done:** the adapter was never converted to GGUF or loaded into Ollama, so
-it has never been scored by `scripts/ai-eval.mjs` — the yardstick this project
-already built for exactly this. That is the cheapest high-value next step if
-the work resumes.
+### 2b. ⚠️ It invents INITIALS — the load-bearing caveat
+
+Given `pierce` with C. Pierce absent from the context window, it wrote
+`R. Pierce` in the Python runtime and `J. Pierce` through Ollama. A real
+colleague, the wrong initial, stated with total confidence. On a fee bill that
+is worse than vagueness.
+
+Measured across four matters: **2 of 4 generations needed correction**
+(`R. Pierce -> C. Pierce`, `J. Venn -> L. Venn`); the two the model got right
+were left untouched. It gets initials right when the person appears in recent
+history and invents them otherwise.
+
+`matter_people` holds the truth, so this is a lookup, not a guess. The corrector
+is `fix_initials` in `scripts/finetune-try.py`. **It is not in the app yet.**
+
+It only corrects surnames the roster knows — a first-time name gets an invented
+initial and nothing catches it.
+
+Same family: it wrote "6th Amendment to easement" where the real entry says
+"6th Amendment to Development Agreement". Close, plausible, wrong. A drafting
+assistant whose output a human reads, not a system that files on anyone's behalf.
+
+### 2c. The dataset
+
+179 samples, median grounding 1.00, median expansion 2.2x, from 428 entries.
+`(YEL)` prefixes and `(0.4)` times are STRIPPED from every target — they belong
+to the matter, not the voice, and the app inserts them from
+`entry_tasks.duration`. Measured `hours emitted 0`, so it learned that.
 
 ---
 
@@ -155,20 +172,34 @@ Both are in `data/deid-eval/report.html`.
 ## 6. THE COMMANDS
 
 ```bash
-# de-identification
-node scripts/deid-eval.mjs --model llama3.1:8b     # score a model
-node scripts/deid-vocab.mjs                        # vocabulary checklist
+# use it
+ollama run timekeeper-lora
+./.venv-lora/bin/python scripts/finetune-try.py     # interactive, with roster fix
+  :matters        list matters
+  :m EAT02        set matter (pulls 6 prior entries as context)
 
-# fine-tune
-node scripts/finetune-export.mjs                   # 428 entries -> jsonl
-./.venv-lora/bin/python scripts/finetune-lora.py   # ~17 min at 0.5B
-./.venv-lora/bin/python scripts/finetune-compare.py
+# rebuild it
+node scripts/finetune-export.mjs --context 6        # 179 grounded samples
+./.venv-lora/bin/python scripts/finetune-lora.py \
+    --model Qwen/Qwen2.5-1.5B-Instruct --maxlen 512 \
+    --out data/finetune/adapter-1.5b [--resume]     # ~51 min, checkpoints /20
+./.venv-lora/bin/python scripts/finetune-compare.py \
+    --model Qwen/Qwen2.5-1.5B-Instruct --adapter data/finetune/adapter-1.5b
 
-# both training scripts take --model; scaling up is one flag
+# ship it to ollama  (Modelfile archived at docs/ai/Modelfile.timekeeper-lora)
+BASE=$(find ~/.cache/huggingface/hub -maxdepth 4 -type d \
+       -path "*Qwen2.5-1.5B-Instruct*/snapshots/*" | head -1)
+./.venv-lora/bin/python ~/Projects/llama-server/llama.cpp/convert_lora_to_gguf.py \
+    data/finetune/adapter-1.5b --base "$BASE" \
+    --outfile data/finetune/timekeeper-lora.gguf --outtype f16
+cd data/finetune && ollama create timekeeper-lora -f Modelfile
+
+# de-identification (only needed if data LEAVES the box)
+node scripts/deid-eval.mjs --model llama3.1:8b
+node scripts/deid-vocab.mjs
 ```
 
-Data lives in `~/Projects/timekeeper-prod/data/`, NOT in this repo. Prod moved;
-`Intapp-clone/data/` no longer exists. The eval scripts default to the prod path.
+Data lives in `~/Projects/timekeeper-prod/data/`, NOT in this repo.
 
 ---
 
@@ -203,3 +234,22 @@ Data lives in `~/Projects/timekeeper-prod/data/`, NOT in this repo. Prod moved;
 
 8. **Say which model.** "The fine-tune worked" means a 0.5B Qwen. It is not
    the Llama 3.1 8B the project started out asking about.
+
+9. **Launch long jobs with `setsid nohup … & disown`, never `run_in_background`.**
+   Harness-backgrounded processes are reaped when the turn ends. This killed two
+   training runs — one at step 60 of 123, one at step 0 — and both times the
+   first instinct was to blame memory. There was never an OOM entry in the
+   kernel log. Check `sudo dmesg -T | grep -i oom` before believing that story.
+
+10. **A short probe overestimates step time.** A 4-step probe reported 77 s/step
+    because model loading was averaged in; the real run was 25 s/step.
+
+11. **`--base` on `convert_lora_to_gguf.py` wants a LOCAL directory**, not a HF
+    repo id. Find it under `~/.cache/huggingface/hub/*/snapshots/*`.
+
+12. **Ollama serves a Q4 base; training used fp32.** The adapter crosses that
+    gap but behaves differently — the same prompt gave `R. Pierce` in Python and
+    `J. Pierce` through Ollama. Evaluate in the runtime you will ship.
+
+13. **`cd` inside a Bash call persists to the next call.** A `cd data/finetune`
+    left later commands resolving paths against the wrong directory.

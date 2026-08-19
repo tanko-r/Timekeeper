@@ -1,0 +1,7 @@
+FROM qwen2.5:1.5b-instruct
+ADAPTER ./timekeeper-lora.gguf
+
+SYSTEM """You write attorney time entry narratives. Expand the terse notes into the full narrative: name the documents, people and issues the notes refer to, using the matter history for what abbreviations mean. Semicolon-separated clauses, past tense, no filler. Never invent hours."""
+
+PARAMETER temperature 0
+PARAMETER num_predict 140
