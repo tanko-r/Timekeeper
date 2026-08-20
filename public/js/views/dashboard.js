@@ -1,7 +1,7 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useEffect, useMemo, useCallback, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong,
-  fmtDateFull, addDays, emitToast, Confirm, Icon,
+  fmtDateFull, fmtDateShort, addDays, emitToast, Confirm, Icon,
 } from '/js/ui.js';
 import { TimerGrid } from '/js/components/timergrid.js';
 import { TargetMeter } from '/js/components/targetmeter.js';
@@ -143,8 +143,9 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         <div class="row">
           <strong><${Icon} name="alert" size=${16} /> Needs attention:</strong>
           ${alerts.invalidDrafts.map((a) => html`
-            <button key=${a.id} class="alert-pill" title=${a.codes.join(', ')}
+            <button key=${a.id} class="alert-pill" title=${`${fmtDateFull(a.date)} — ${a.codes.join(', ')}`}
               onClick=${() => openEditor({ id: a.id })}>
+              <span class="alert-pill-date">${fmtDateShort(a.date)}</span>
               ${a.short_name ?? 'No matter yet'} — ${a.codes.includes('no_matter') ? 'assign a matter'
                 : a.codes.includes('narrative_empty') ? 'no narrative' : 'check validation'}
             </button>`)}

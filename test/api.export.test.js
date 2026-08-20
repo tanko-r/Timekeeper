@@ -87,15 +87,15 @@ test('stats aggregates by cm, task, day with billable ratio', () =>
 
 test('dashboard: today totals, alerts for invalid drafts and unexported finalized', () =>
   withData(async (t, { acme, draft }) => {
-    // an invalid draft today (empty narrative) and a backlog draft yesterday
+    // an invalid draft today (empty narrative) and a backlog invalid draft yesterday
     const bad = (await t.fetchJson('POST', '/api/entries', {
       date: '2026-07-06', cm_id: acme.id, narrative: '',
       tasks: [{ task_code: 'Research', duration: 0.5, fragment: '' }],
     })).body;
-    await t.fetchJson('POST', '/api/entries', {
+    const yesterdayBad = (await t.fetchJson('POST', '/api/entries', {
       date: '2026-07-05', cm_id: acme.id, narrative: '',
       tasks: [{ task_code: 'Research', duration: 0.2, fragment: '' }],
-    });
+    })).body;
 
     const d = (await t.fetchJson('GET', '/api/dashboard')).body;
     assert.equal(d.date, '2026-07-06');
@@ -103,7 +103,10 @@ test('dashboard: today totals, alerts for invalid drafts and unexported finalize
     assert.equal(d.today.billable, 2.0);
     assert.equal(d.today.nonbillable, 0.8);
     assert.equal(d.today.target, 8);
-    assert.ok(d.alerts.invalidDrafts.some((e) => e.id === bad.id));
+    // Per-entry validation pills are for prior days only — today is work in
+    // progress, so today's own invalid draft is left alone.
+    assert.ok(!d.alerts.invalidDrafts.some((e) => e.id === bad.id)); // today's draft not flagged
+    assert.ok(d.alerts.invalidDrafts.some((e) => e.id === yesterdayBad.id)); // yesterday's surfaces
     assert.ok(!d.alerts.invalidDrafts.some((e) => e.id === draft.id)); // clean draft not flagged
     assert.equal(d.alerts.unfinalized.count, 1); // yesterday's draft
     assert.equal(d.alerts.unexported.count, 1);

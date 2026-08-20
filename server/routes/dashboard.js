@@ -72,7 +72,14 @@ export function dashboardRouter({ db, clock }) {
       timers,
       idleNudgeHours: getSetting(db, 'idleNudgeHours') ?? 3,
       alerts: {
-        invalidDrafts: invalid.filter((e) => e.date === today).map(alertShape),
+        // Per-entry validation pills for PRIOR days only (windowed). Today's
+        // drafts are just work in progress — an empty narrative or unassigned
+        // matter is normal mid-day and does not earn a "needs attention" pill
+        // until the day is over. Prior-day broken drafts stay actionable here,
+        // one click to the entry that needs fixing.
+        invalidDrafts: invalid
+          .filter((e) => e.date < today && e.date >= addDays(today, -ATTENTION_WINDOW_DAYS))
+          .map(alertShape),
         // Three ways time stalls on the way to the billing system. The buckets
         // are disjoint so the banner never counts one entry twice, and each
         // one links into the matching Export filter (see lib/attention.js).

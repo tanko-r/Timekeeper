@@ -8,6 +8,13 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-19
+
+- **Fix: "Needs attention" no longer nags about today.** The per-entry
+  validation pills (empty narrative, no matter) now appear only for prior
+  days, which are done and billable. Today's drafts are work in progress, so
+  the banner leaves them alone. Each prior-day pill now shows its date.
+
 ## 2026-08-14
 
 - **New: Reuse a narrative.** The entry editor's Narrative row has a "Reuse"

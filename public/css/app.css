@@ -577,6 +577,7 @@ div:first-child > .entry-day-head { margin-top: 4px; }
   cursor: pointer; background: var(--surface-2);
 }
 .alert-pill:hover { border-color: var(--accent); }
+.alert-pill-date { font-weight: 600; margin-right: 5px; opacity: 0.75; }
 
 /* ---------- calendar ---------- */
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr) minmax(58px, 0.72fr); gap: 6px; }

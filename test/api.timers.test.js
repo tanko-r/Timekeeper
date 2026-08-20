@@ -783,7 +783,7 @@ test('midnight reset preserves linked entries of paused timers — even when not
     for (const x of list) assert.equal(x.linked_entry_id, null, 'paused timers unlink for the new day');
   }));
 
-test('dashboard alerts skip entries whose timer is running; they surface on stop', () =>
+test("dashboard alerts leave today's drafts alone, running or stopped (today is work in progress)", () =>
   withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
     const timer = (await t.fetchJson('POST', '/api/timers', {
       name: 'Acme research', cm_id: cm.id,
@@ -794,7 +794,8 @@ test('dashboard alerts skip entries whose timer is running; they surface on stop
     assert.equal(dash.alerts.invalidDrafts.length, 0, 'work in progress is not "needs attention"');
     await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
     dash = (await t.fetchJson('GET', '/api/dashboard')).body;
-    assert.equal(dash.alerts.invalidDrafts.length, 1, 'stopped: the empty narrative surfaces normally');
+    assert.equal(dash.alerts.invalidDrafts.length, 0,
+      "still today's work in progress after stop — the empty narrative is not flagged until the day is over");
   }));
 
 test('dashboard timers include unassigned quick timers (for the ghost row + footer)', () =>

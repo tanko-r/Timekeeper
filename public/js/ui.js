@@ -49,6 +49,14 @@ export function fmtDateLong(dateStr) {
   });
 }
 
+// Compact, year-less form for inline chips ("Mon, Aug 18").
+export function fmtDateShort(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+  });
+}
+
 // Full spelling for day-group headers ("Thursday, June 18, 2026").
 export function fmtDateFull(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
