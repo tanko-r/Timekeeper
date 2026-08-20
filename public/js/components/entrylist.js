@@ -79,6 +79,73 @@ function InlineNarrative({ entry, onChanged }) {
       }} />`;
 }
 
+const tenth = (x) => Math.round((Number(x) || 0) * 10) / 10;
+
+// Inline hours editing on the entry card (2026-08-19 feedback): up/down carets
+// step the total by one increment, and clicking the number turns it into a box
+// you type into — no editor round-trip. Mirrors the editor's Total-hours field:
+// the value is written as total_override, and on a single-task entry the lone
+// task line follows it so the allocations stay matched (a multi-task entry
+// keeps its lines and shows the usual unallocated/mismatch warning, exactly as
+// the editor does). Read-only for finalized entries and while a timer runs
+// (the number is ticking live then).
+function InlineHours({ entry, increment, onChanged, editable, label, running }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState('');
+  const cls = 'hours' + (running ? ' active' : '');
+
+  if (!editable) {
+    return html`<div class=${cls}
+      title=${running ? `Running — ${fmtHours(entry.total, increment)}h filed so far` : null}>${label}</div>`;
+  }
+
+  const snap = (x) => Math.max(0, Math.round(x / increment) * increment);
+  async function commit(raw) {
+    setEditing(false);
+    const t = tenth(snap(Number(raw) || 0));
+    if (Math.abs(t - (Number(entry.total) || 0)) < 1e-9) return; // no change
+    const body = { total_override: t > 0 ? t : null };
+    // Keep a lone task line in step with the total (same as the editor). A
+    // multi-line entry is left for the editor to reallocate.
+    if (entry.tasks.length === 1) {
+      const only = entry.tasks[0];
+      body.tasks = [{ task_code: only.task_code, duration: t > 0 ? t : 0, fragment: only.fragment }];
+    }
+    try {
+      await api.patch(`/api/entries/${entry.id}`, body);
+      onChanged();
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+  const stepBy = (dir) => commit((Number(entry.total) || 0) + dir * increment);
+
+  if (editing) {
+    return html`
+      <input type="number" min="0" step=${increment} class="hours-input mono" autoFocus
+        value=${text}
+        onInput=${(e) => setText(e.target.value)}
+        onBlur=${(e) => commit(e.target.value)}
+        onKeyDown=${(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') { e.preventDefault(); commit(e.target.value); }
+          if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+        }} />`;
+  }
+  return html`
+    <div class="hours-stepper">
+      <span class=${cls} role="button" tabindex="0" title="Click to edit the hours"
+        onClick=${() => { setText(fmtHours(entry.total, increment)); setEditing(true); }}
+        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setText(fmtHours(entry.total, increment)); setEditing(true); } }}>${label}</span>
+      <span class="hours-carets">
+        <button class="hours-caret" title=${`+${increment}h`} tabindex="-1"
+          onClick=${() => stepBy(1)}><${Icon} name="chevronUp" size=${11} /></button>
+        <button class="hours-caret" title=${`-${increment}h`} tabindex="-1"
+          onClick=${() => stepBy(-1)}><${Icon} name="chevronDown" size=${11} /></button>
+      </span>
+    </div>`;
+}
+
 // Card list of entries with inline actions. onChanged() after any mutation.
 // `timers` (dashboard only) enables the per-entry start/stop-timer button —
 // it resumes the timer linked to the entry (or links/creates one server-side).
@@ -212,9 +279,9 @@ export function EntryList({
             ${e.status === 'draft' ? html`<${ValidationList} findings=${e.validation} compact=${true} />` : null}
           </div>
           <div style=${{ textAlign: 'right' }}>
-            <div class=${'hours' + (runningIds && runningIds.has(e.id) ? ' active' : '')}
-              title=${runningIds && runningIds.has(e.id)
-                ? `Running — ${fmtHours(e.total, increment)}h filed so far` : null}>${hoursLabel(e)}</div>
+            <${InlineHours} entry=${e} increment=${increment} onChanged=${onChanged}
+              editable=${e.status === 'draft' && !(runningIds && runningIds.has(e.id))}
+              running=${!!(runningIds && runningIds.has(e.id))} label=${hoursLabel(e)} />
             <div class="entry-actions">
               ${timers && e.status === 'draft' ? (() => {
                 const t = timerFor(e);

@@ -552,6 +552,20 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 .entry-card .hours.active { color: var(--status-good); }
 .entry-card.nonbillable .hours { color: var(--nonbillable); }
 .entry-card.billable .hours { color: var(--billable); }
+/* Inline hours stepper: clickable number + a stacked pair of carets. */
+.hours-stepper { display: inline-flex; align-items: center; gap: 3px; justify-content: flex-end; }
+.hours-stepper .hours { cursor: pointer; border-radius: 4px; padding: 0 2px; }
+.hours-stepper .hours:hover { background: var(--surface-2); }
+.hours-carets { display: inline-flex; flex-direction: column; line-height: 0; }
+.hours-caret {
+  border: none; background: none; cursor: pointer; padding: 0; margin: 0;
+  color: var(--text-muted); display: flex; height: 12px; align-items: center;
+}
+.hours-caret:hover { color: var(--accent); }
+.entry-card .hours-input {
+  font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums;
+  width: 3.4em; text-align: right; padding: 1px 4px;
+}
 .entry-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12.5px; }
 .entry-actions { display: flex; gap: 2px; flex-wrap: wrap; }
 

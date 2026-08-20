@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-08-19
 
+- **New: edit an entry's hours right on the card.** Each draft entry's hours
+  number now has up/down carets that step it by one increment, and clicking
+  the number turns it into a box you type into — no editor round-trip. Saves
+  through the same total_override path as the editor; a single-task entry's
+  line follows the total automatically. Read-only while a timer runs (the
+  number is ticking live then) and for finalized entries.
 - **Change: "New entry" button moved to the entries list.** The primary
   "New entry" button now sits at the right of the "Today's entries" header,
   next to the list it adds to, instead of the top toolbar. Finalize today and
