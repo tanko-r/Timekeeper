@@ -349,6 +349,24 @@ export function aiRouter({ db }) {
     });
   });
 
+  // Preload the model into Ollama's memory when an entry opens, so the first
+  // real generation during that entry doesn't also pay the load cost. An
+  // empty `messages` array is Ollama's documented no-op preload — it loads
+  // without generating. Fire-and-forget: the caller (entry editor mounting)
+  // must never wait on this, and an unreachable Ollama here is no different
+  // from any other AI call failing later.
+  r.post('/ai/warm', (req, res) => {
+    const cfg = getSetting(db, 'ai') || {};
+    if (!cfg.enabled) return res.status(204).end();
+    fetch(`${cfg.url}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: cfg.model, messages: [] }),
+      signal: AbortSignal.timeout(60_000),
+    }).catch(() => {});
+    res.status(202).end();
+  });
+
   r.post('/ai/expand', async (req, res) => {
     const cfg = getSetting(db, 'ai') || {};
     if (!cfg.enabled) return res.status(400).json({ error: 'ai_disabled' });

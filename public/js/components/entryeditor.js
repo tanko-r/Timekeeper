@@ -112,7 +112,13 @@ export function EntryEditor({ spec, settings, onClose }) {
 
   useEffect(() => {
     api.get('/api/task-codes').then(setTaskCodes).catch(() => {});
-    api.get('/api/ai/status').then(setAi).catch(() => {});
+    // Preload the model as soon as the entry opens, so the first Expand/
+    // Narrate click during this entry doesn't also pay Ollama's model-load
+    // cost. Fire-and-forget — never blocks or delays opening the editor.
+    api.get('/api/ai/status').then((s) => {
+      setAi(s);
+      if (s.enabled) api.post('/api/ai/warm').catch(() => {});
+    }).catch(() => {});
     return () => aiAbortRef.current?.abort(); // closing the editor cancels a live stream
   }, []);
 

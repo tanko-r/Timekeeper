@@ -69,6 +69,62 @@ test('ai status reports reachability and local models', async () => {
   } finally { await t.close(); await stub.close(); }
 });
 
+// Preloading the model when an entry opens (2026-08-18 feedback): the first
+// real generation on a cold Ollama pays the model-load cost on top of
+// inference. An empty `messages` array is Ollama's documented no-op preload
+// request — it loads the model into memory without generating anything.
+
+test('ai warm no-ops when AI is disabled', async () => {
+  const t = await startTestServer();
+  try {
+    const r = await t.fetchJson('POST', '/api/ai/warm');
+    assert.equal(r.status, 204);
+  } finally { await t.close(); }
+});
+
+test('ai warm fires an empty-message preload request without waiting on it', async () => {
+  let releaseChat;
+  const gate = new Promise((resolve) => { releaseChat = resolve; });
+  const state = { lastChat: null };
+  const srv = createServer((req, res) => {
+    if (req.url === '/api/chat') {
+      let body = '';
+      req.on('data', (c) => { body += c; });
+      req.on('end', async () => {
+        state.lastChat = JSON.parse(body);
+        await gate; // held open until the test releases it — proves warm doesn't wait
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ message: { role: 'assistant', content: '' } }));
+      });
+    } else {
+      res.statusCode = 404; res.end('{}');
+    }
+  });
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: `http://127.0.0.1:${srv.address().port}` });
+    const start = Date.now();
+    const r = await t.fetchJson('POST', '/api/ai/warm');
+    const elapsed = Date.now() - start;
+    assert.equal(r.status, 202);
+    assert.ok(elapsed < 1000, `expected an immediate response, took ${elapsed}ms`);
+
+    releaseChat();
+    for (let i = 0; i < 40 && !state.lastChat; i++) await new Promise((res2) => setTimeout(res2, 25));
+    assert.deepEqual(state.lastChat, { model: 'llama3.1:8b', messages: [] });
+  } finally { await t.close(); await new Promise((resolve) => srv.close(resolve)); }
+});
+
+test('ai warm swallows an unreachable Ollama without erroring the response', async () => {
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: 'http://127.0.0.1:1' });
+    const r = await t.fetchJson('POST', '/api/ai/warm');
+    assert.equal(r.status, 202);
+  } finally { await t.close(); }
+});
+
 test('ai expand: narrative + task split allocated to tenths of the total', async () => {
   const stub = await startStubOllama(GOOD_CHAT);
   const t = await startTestServer();
