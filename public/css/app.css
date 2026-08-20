@@ -3,7 +3,7 @@
    reserved for target attainment. */
 
 :root {
-  --surface-0: #f4f4f2;      /* page */
+  --surface-0: #f0eee6;      /* page — Anthropic "book cloth" cream */
   --surface-1: #fcfcfb;      /* cards */
   --surface-2: #efefec;      /* wells, hovers */
   --border: #dddcd6;
