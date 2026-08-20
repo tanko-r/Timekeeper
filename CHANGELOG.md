@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-08-19
 
+- **Fix: the float timer's day total now counts the whole day.** The
+  always-on-top float showed only the hours of the timers in its own window,
+  missing manual entries, quick captures, and stopped timers. It now shows the
+  day's full recorded total (all entries, live), matching the dashboard, via a
+  new lightweight GET /api/day-total.
 - **New: edit an entry's hours right on the card.** Each draft entry's hours
   number now has up/down carets that step it by one increment, and clicking
   the number turns it into a box you type into — no editor round-trip. Saves

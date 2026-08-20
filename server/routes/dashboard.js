@@ -3,6 +3,7 @@ import { getSetting } from '../db.js';
 import { todayLocal, addDays } from '../lib/dates.js';
 import { ENTRY_HOURS_SQL, ATTENTION_WINDOW_DAYS } from '../lib/attention.js';
 import { elapsedSeconds } from '../lib/timerlogic.js';
+import { liveDayTotalSeconds } from '../lib/daytotal.js';
 import { enrich } from './entries.js';
 import { applyRollovers } from './timers.js';
 
@@ -105,6 +106,15 @@ export function dashboardRouter({ db, clock }) {
         // bucket — and via their no_matter validation block.)
       },
     });
+  });
+
+  // The float footer's day total (2026-08-19 feedback): the whole day's
+  // recorded time in one live seconds figure, so the float matches the
+  // dashboard instead of counting only the timers it happens to show. Cheap
+  // enough for the float's 5s poll.
+  r.get('/day-total', (req, res) => {
+    applyRollovers(db, clock);
+    res.json({ date: todayLocal(clock()), seconds: liveDayTotalSeconds(db, clock) });
   });
 
   return r;

@@ -809,6 +809,34 @@ test('dashboard timers include unassigned quick timers (for the ghost row + foot
     assert.equal(row.running, 1);
   }));
 
+// The float footer's day total must count ALL of today's recorded time — not
+// just the timers it happens to show (2026-08-19 feedback). GET /api/day-total
+// returns that live figure: filed entry hours, plus the live clock of any
+// running timer standing in for its (frozen) entry, plus running timers that
+// have not filed yet.
+test('day-total: filed entries + a running timer, in one live seconds figure', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    // a plain manual entry with no timer at all — the case the float used to miss
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: cm.id, narrative: 'Draft memo.',
+      tasks: [{ task_code: 'Draft', duration: 0.5, fragment: 'Draft memo.' }],
+    });
+    // a second timer running right now, 600s in and still going
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Research', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(600);
+
+    let r = (await t.fetchJson('GET', '/api/day-total')).body;
+    assert.equal(r.date, '2026-07-06');
+    assert.equal(r.seconds, 2400); // 0.5h filed (1800s) + 600s live on the running timer
+
+    // stopping banks the run to its entry (600s rounds up to 0.2h = 720s); the
+    // total holds steady with no double count, now purely from filed entries.
+    await t.fetchJson('POST', `/api/timers/${timer.id}/stop`);
+    r = (await t.fetchJson('GET', '/api/day-total')).body;
+    assert.equal(r.seconds, 2520); // 1800s + 720s
+  }));
+
 // 2026-07-10 feedback (Acme duplicate): finalizing a timer's linked
 // entry must ZERO the timer and unlink it — otherwise the next stop refiles
 // the whole day clock into a brand-new entry, double-counting the time.

@@ -358,6 +358,11 @@ export async function toggleTimerPip() {
 
   let timers = [];
   let fetchedAt = 0;
+  // The day's whole recorded total (all entries), fetched with each poll, so
+  // the footer matches the dashboard instead of summing only the shown rows
+  // (2026-08-19 feedback). liveDayTotal() ticks it up between polls for any
+  // running timer.
+  let dayTotalSeconds = 0;
   let expandedId = null; // one expanded row at a time
   let closeoutId = null; // just-stopped timer whose close-out pane owns the window
   let findOpen = false; // the find pane owns the window while open
@@ -384,6 +389,14 @@ export async function toggleTimerPip() {
   let pointerHeld = false; // mouse/touch is down — a rebuild now would swallow the click
 
   const secsOf = (t) => t.elapsed_seconds + (t.running ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0);
+  // The whole day's recorded seconds, ticking live: the server figure plus
+  // wall-clock since the fetch for each still-running timer (the server counted
+  // each running timer's clock as of the fetch instant).
+  const liveDayTotal = () => {
+    const runningCount = timers.filter((t) => t.running).length;
+    const sinceFetch = fetchedAt ? Math.max(0, (Date.now() - fetchedAt) / 1000) : 0;
+    return dayTotalSeconds + runningCount * sinceFetch;
+  };
   // every float clock renders through this: dim leading-zero run + the rest
   const setClock = (el, secs) => {
     const { dim, rest } = fmtClockParts(secs);
@@ -417,9 +430,10 @@ export async function toggleTimerPip() {
   // opener tab's get throttled once it's hidden, which is exactly when the
   // float is in use.
   let stopTick = () => {};
-  const poll = () => api.get('/api/timers')
-    .then((t) => {
-      timers = t; fetchedAt = Date.now(); errEl.hidden = true; render();
+  const poll = () => Promise.all([api.get('/api/timers'), api.get('/api/day-total')])
+    .then(([t, dt]) => {
+      timers = t; dayTotalSeconds = (dt && Number(dt.seconds)) || 0;
+      fetchedAt = Date.now(); errEl.hidden = true; render();
       stopTick();
       stopTick = startAlignedTick(fetchedAt, tick, pipWin);
     })
@@ -707,7 +721,7 @@ export async function toggleTimerPip() {
       rowsEl.replaceChildren(...rows.map(buildRow));
       emptyEl.hidden = rows.length > 0;
     }
-    totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
+    totalEl.textContent = fmtDayTotal(liveDayTotal());
     doc.body.classList.toggle('running', rows.some((t) => t.running));
   }
 
@@ -852,7 +866,7 @@ export async function toggleTimerPip() {
       const el = rowsEl.querySelector(`.row[data-id="${t.id}"] [data-clock]`);
       if (el) setClock(el, secsOf(t));
     }
-    totalEl.textContent = fmtDayTotal(rows.reduce((s, t) => s + secsOf(t), 0));
+    totalEl.textContent = fmtDayTotal(liveDayTotal());
   };
 
   doc.querySelector('[data-quick]').addEventListener('click', async (e) => {
