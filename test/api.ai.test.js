@@ -457,3 +457,58 @@ test('ai narrate/expand ground the prompt in the recorded time', async () => {
     assert.match(stub.state.lastChat.messages[0].content, /1\.5 hours \(90 minutes\)/);
   } finally { await t.close(); await stub.close(); }
 });
+
+// The narrative model invents initials. Measured 2026-08-18: given the note
+// "pierce", with C. Pierce outside its context window, the fine-tuned model
+// wrote "R. Pierce" through PyTorch and "J. Pierce" through Ollama — a real
+// colleague, the wrong initial, no hedging. Two of four sampled generations
+// were wrong this way. matter_people knows the answer, so the roster decides.
+//
+// Same output-side principle as the foreign-term refusal: the answer is
+// checked, not trusted, because it is one tap from a bill. A wrong initial is
+// repairable where a borrowed sentence is not, so this corrects and reports.
+
+const WRONG_INITIAL_CHAT = JSON.stringify({
+  narrative: 'Call with R. Pierce regarding site access.',
+  tasks: [{ task_code: 'Call', fragment: 'call with R. Pierce re access', share: 1 }],
+});
+
+test('ai expand: an invented initial is corrected from the matter roster', async () => {
+  const stub = await startStubOllama(WRONG_INITIAL_CHAT);
+  const t = await startTestServer();
+  try {
+    const cm = t.db.prepare(
+      "INSERT INTO matters (cm_number, short_name, billable, status) VALUES ('999901-000001','Roster Test',1,'active')"
+    ).run().lastInsertRowid;
+    t.db.prepare(
+      'INSERT INTO matter_people (matter_id, name, count) VALUES (?, ?, ?)'
+    ).run(cm, 'C. Pierce', 3);
+
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'call w pierce re access', totalHours: 0.4, cm_id: cm,
+    });
+    assert.equal(r.status, 200);
+    assert.match(r.body.narrative, /C\. Pierce/, 'roster spelling wins');
+    assert.doesNotMatch(r.body.narrative, /R\. Pierce/, 'the invented initial is gone');
+    assert.deepEqual(r.body.initial_fixes, [{ from: 'R. Pierce', to: 'C. Pierce' }],
+      'the correction is reported, not applied silently');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('ai expand: a name the roster does not know is left alone', async () => {
+  const stub = await startStubOllama(WRONG_INITIAL_CHAT);
+  const t = await startTestServer();
+  try {
+    const cm = t.db.prepare(
+      "INSERT INTO matters (cm_number, short_name, billable, status) VALUES ('999902-000002','No Roster',1,'active')"
+    ).run().lastInsertRowid;
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+    const r = await t.fetchJson('POST', '/api/ai/expand', {
+      brief: 'call w pierce re access', totalHours: 0.4, cm_id: cm,
+    });
+    assert.equal(r.status, 200);
+    assert.match(r.body.narrative, /R\. Pierce/, 'nothing to correct against — left as written');
+    assert.deepEqual(r.body.initial_fixes, []);
+  } finally { await t.close(); await stub.close(); }
+});

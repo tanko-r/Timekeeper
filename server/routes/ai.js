@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
+import { correctInitials } from '../lib/people.js';
 import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
@@ -415,6 +416,27 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     .run(text, timerId, sourceCmId);
 }
 
+// The model invents initials. Measured 2026-08-18 on the fine-tuned narrative
+// model: given the note "pierce", with C. Pierce outside its context window, it
+// wrote "R. Pierce" through PyTorch and "J. Pierce" through Ollama. Two of four
+// sampled generations were wrong this way.
+//
+// This is the same output-side principle as foreignTerms above: the answer is
+// checked, not trusted, because it lands one tap from a bill. Unlike a borrowed
+// sentence, a wrong initial is repairable — matter_people knows the right one —
+// so this corrects rather than refuses, and reports what it changed.
+function rosterFor(db, cmId) {
+  if (cmId == null) return [];
+  return db.prepare(
+    'SELECT name FROM matter_people WHERE matter_id = ? ORDER BY count DESC'
+  ).all(cmId).map((r) => r.name);
+}
+
+function withRosterInitials(db, cmId, text) {
+  const { text: fixed, fixes } = correctInitials(text, rosterFor(db, cmId));
+  return { narrative: fixed, initial_fixes: fixes };
+}
+
 export function aiRouter({ db }) {
   const r = Router();
 
@@ -530,8 +552,11 @@ export function aiRouter({ db }) {
       ? allocateTenths(totalHours, tasks.map((t) => t.share), increment)
       : null;
 
+    const split = withRosterInitials(db, b.cm_id,
+      typeof parsed.narrative === 'string' ? parsed.narrative.trim() : '');
     res.json({
-      narrative: typeof parsed.narrative === 'string' ? parsed.narrative.trim() : '',
+      narrative: split.narrative,
+      initial_fixes: split.initial_fixes,
       tasks: tasks.map((t, i) => ({
         task_code: t.task_code,
         fragment: t.fragment,
@@ -620,7 +645,8 @@ export function aiRouter({ db }) {
         }
       }
       decoder.decode(); // flush (NDJSON ends with \n, so nothing pending)
-      send({ done: true, narrative: full.trim() });
+      const done = withRosterInitials(db, b.cm_id, full.trim());
+      send({ done: true, narrative: done.narrative, initial_fixes: done.initial_fixes });
     } catch (e) {
       // Client-gone aborts land here too — never write to a dead socket.
       if (!res.writableEnded && !res.destroyed) {
