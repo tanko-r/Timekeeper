@@ -11,20 +11,20 @@ Do not quote one against a different commit without re-measuring.
 
 ## 1. THE OPEN QUESTION
 
-> **The 1.5B works and is in Ollama as `timekeeper-lora`. Wire it into the app,
-> or scale up?**
+> **The roster corrector is IN THE APP (`7a8e426`). What next?**
 >
-> - **Wire it in** *(my recommendation)*. Usable NOW, but its output is not safe
->   to ship unedited: it invents initials (§2b). The roster corrector is proven
->   in `scripts/finetune-try.py`; moving it into `server/routes/ai.js` beside
->   the existing narrate path makes the adapter genuinely useful.
->   `server/lib/people.js` already has the parsing.
-> - **Scale up.** Needs a rented GPU — 8B/9B do NOT fit (§3). David signed the
->   Llama 3.1 licence, but Qwen3.5-9B is the better target: newer, base weights
->   ungated. ~$0.40/hour. Requires de-identifying first (§5).
-> - **More data.** 164 training samples is the real constraint. Using the AI
->   draft button in daily work records genuine ai_brief -> narrative pairs for
->   free, and beats both of the above.
+> - **More data** *(my recommendation)*. 164 training samples is now the binding
+>   constraint, not the model and not the tooling. Using Timekeeper's AI draft
+>   button in daily work records genuine `ai_brief` -> `narrative` pairs for
+>   free; only 15 of 428 entries have one today. A few hundred real pairs beats
+>   both of the options below.
+> - **Show the corrections in the UI.** `/ai/expand` and the streamed narrate
+>   event now return `initial_fixes: [{from, to}]` and nothing renders it. The
+>   server deliberately reports rather than silently rewrites — a name changed
+>   under an attorney's signature should be visible. Frontend work, small.
+> - **Scale up.** Rented GPU only; 8B/9B do NOT fit (§3). Qwen3.5-9B over
+>   Llama 3.1 8B: newer, base weights ungated. ~$0.40/hour. De-identify first
+>   (§5), because the data leaves the box.
 
 ---
 
@@ -60,8 +60,11 @@ Measured across four matters: **2 of 4 generations needed correction**
 were left untouched. It gets initials right when the person appears in recent
 history and invents them otherwise.
 
-`matter_people` holds the truth, so this is a lookup, not a guess. The corrector
-is `fix_initials` in `scripts/finetune-try.py`. **It is not in the app yet.**
+`matter_people` holds the truth, so this is a lookup, not a guess.
+**FIXED at `7a8e426`:** `correctInitials` in `server/lib/people.js`, applied on
+the way out of `/ai/expand` and the streamed narrate event, returning
+`initial_fixes` so the correction is reported rather than applied silently.
+Also in `scripts/finetune-try.py` for the standalone tester.
 
 It only corrects surnames the roster knows — a first-time name gets an invented
 initial and nothing catches it.
