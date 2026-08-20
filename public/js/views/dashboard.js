@@ -134,8 +134,6 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <div class="spacer"></div>
       <button class="btn" onClick=${() => finalizeToday()}><${Icon} name="lock" size=${16} /> Finalize today</button>
       <button class="btn" onClick=${exportToday}><${Icon} name="export" size=${16} /> Export today</button>
-      <button class="btn btn-primary" onClick=${() => openEditor({ template: {} })}>
-        <${Icon} name="plus" size=${16} /> New entry (n)</button>
     </div>
 
     ${hasAlerts ? html`
@@ -182,6 +180,8 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
       <div class="section-title">
         <h2>Today’s entries</h2>
         <span class="muted small">${d.entries.length} ${d.entries.length === 1 ? 'entry' : 'entries'} · ${fmtHours(d.today.total)}h</span>
+        <button class="btn btn-primary section-title-action" onClick=${() => openEditor({ template: {} })}>
+          <${Icon} name="plus" size=${16} /> New entry (n)</button>
       </div>
       <${EntryList} entries=${d.entries} openEditor=${openEditor} onChanged=${bumpRefresh}
         settings=${settings} runningIds=${runningEntryIds} timers=${d.timers} fetchedAt=${fetchedAt} />

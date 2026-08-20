@@ -10,6 +10,10 @@ Newest entries first.
 
 ## 2026-08-19
 
+- **Change: "New entry" button moved to the entries list.** The primary
+  "New entry" button now sits at the right of the "Today's entries" header,
+  next to the list it adds to, instead of the top toolbar. Finalize today and
+  Export today stay at the top. The `n` shortcut is unchanged.
 - **Fix: "Needs attention" no longer nags about today.** The per-entry
   validation pills (empty narrative, no matter) now appear only for prior
   days, which are done and billable. Today's drafts are work in progress, so

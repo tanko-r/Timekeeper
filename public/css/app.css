@@ -775,6 +775,8 @@ kbd {
   box-shadow: var(--shadow); margin-top: 16px;
 }
 .panel > .section-title:first-child { margin-top: 0; }
+/* Right-align an action button in a section header (e.g. New entry). */
+.section-title-action { margin-left: auto; }
 .panel .timer-card, .panel .entry-card { background: var(--surface-0); }
 .checkbox-row { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .checkbox-row input { width: auto; }
