@@ -82,3 +82,47 @@ function cleanName(raw) {
   if (GENERIC_ROLES.has(name.toLowerCase())) return null;
   return name;
 }
+
+// The narrative model invents initials. Measured 2026-08-18: given the note
+// "pierce", with C. Pierce outside its context window, the fine-tuned model
+// wrote "R. Pierce" through PyTorch and "J. Pierce" through Ollama — a real
+// colleague, the wrong initial, stated with no hedging. Two of four sampled
+// generations were wrong this way. On a fee bill that is worse than vagueness.
+//
+// The matter_people roster already holds the answer, so the roster decides and
+// the model only proposes. Same shape as the de-identification pipeline: the
+// database is authoritative, the model supplements it.
+//
+// roster is a list of canonical names ("C. Pierce"). Returns the corrected text
+// plus what changed, so a caller can surface the corrections rather than apply
+// them silently — a name quietly rewritten under an attorney is its own hazard.
+export function correctInitials(text, roster) {
+  const s = String(text ?? '');
+  const bySurname = new Map();
+  for (const raw of roster || []) {
+    const m = INITIAL_SURNAME.exec(String(raw ?? '').trim());
+    // First writer wins: a roster ordered by frequency puts the common
+    // spelling first, and two people sharing a surname cannot be told apart
+    // from a surname alone — so leave those to the human.
+    if (m && !bySurname.has(m[2].toLowerCase())) bySurname.set(m[2].toLowerCase(), m[0]);
+  }
+  if (!s || bySurname.size === 0) return { text: s, fixes: [] };
+
+  const fixes = [];
+  // ONE pass with an optional initial group. Running an initial-fixer and then
+  // a bare-surname-fixer turns "R. Pierce" into "C. C. Pierce", because the
+  // second pass matches the surname the first just wrote.
+  const out = s.replace(SURNAME_MAYBE_INITIAL, (whole, _initial, surname) => {
+    const canonical = bySurname.get(surname.toLowerCase());
+    if (!canonical || whole === canonical) return whole;
+    fixes.push({ from: whole, to: canonical });
+    return canonical;
+  });
+  return { text: out, fixes };
+}
+
+const INITIAL_SURNAME = /^([A-Z])\.\s*([A-Z][\w'’-]+)$/;
+// Optional "X. " prefix, then a word. Case-insensitive on the surname so a
+// model that writes "dimaggio" still resolves, but the roster spelling is what
+// gets written back.
+const SURNAME_MAYBE_INITIAL = /\b(?:([A-Za-z])\.\s*)?([A-Za-z][\w'’-]{2,})\b/g;
