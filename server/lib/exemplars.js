@@ -10,12 +10,13 @@ const MIN_WORDS = 6;
 const MAX_WORDS = 40;
 const GLOSSARY_LIMIT = 40;
 // Teaching material must be EXEMPLARY, not merely typical. The house median is
-// 11 words and p90 is 29; a gate at p90 let 23-word entries through and the
-// model copied their padding ("...conveying revised document for review"),
-// which alone put filler back in the eval. Sitting well above the median but
-// well below p90 keeps multi-clause entries while biasing every borrowed
-// habit toward brevity. Erring short is the right error here.
-const TEACH_MAX_WORDS = 20;
+// 11 words and p90 is 29. A gate at 20 was previously chosen to sit well below
+// p90 after a 23-word entry taught the model to copy its padding
+// ("...conveying revised document for review"). Raised to 37 on 2026-08-18
+// (David's call, made with that history in view) so multi-clause pairs up to
+// that length — e.g. the 37-word Corvex entry — can teach. Watch for filler
+// creeping back into the eval if this proves too high.
+const TEACH_MAX_WORDS = 37;
 // Ratio below which an "edit" is really just a nudge, leaving the text the
 // model's. Measured separation: a typo fix scores ~0.08, a genuine reword ~0.33.
 // model's rather than the attorney's.

@@ -256,8 +256,8 @@ test('looksLikeHouseVoice rejects a purpose clause', () => {
     'Transmit revised document to client for review and approval.'), false);
 });
 
-test('looksLikeHouseVoice rejects text well past the house p90', () => {
-  assert.equal(looksLikeHouseVoice(`Review ${'lease '.repeat(32)}.`), false);
+test('looksLikeHouseVoice rejects text well past the teaching cap', () => {
+  assert.equal(looksLikeHouseVoice(`Review ${'lease '.repeat(45)}.`), false);
 });
 
 test('looksLikeHouseVoice accepts a real house-voice narrative', () => {
