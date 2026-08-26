@@ -319,10 +319,13 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
     voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name, seedPairs: cfg.seedPairs }),
   });
+  // think:false — a reasoning model (qwen3.6-35b) would otherwise spend
+  // minutes on a hidden pass before answering, and nothing here reads it.
+  // Ollama accepts the flag on models with no thinking mode at all.
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: cfg.model, stream: false, options: { temperature: 0.3 }, messages }),
+    body: JSON.stringify({ model: cfg.model, stream: false, think: false, options: { temperature: 0.3 }, messages }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!resp.ok) return;
@@ -402,6 +405,7 @@ export function aiRouter({ db }) {
         body: JSON.stringify({
           model: cfg.model,
           stream: false,
+          think: false,
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
@@ -517,7 +521,7 @@ export function aiRouter({ db }) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: cfg.model, stream: true,
+          model: cfg.model, stream: true, think: false,
           // regenerate wants a *different* sample; rewrites stay conservative
           options: { temperature: mode === 'regenerate' ? 0.8 : 0.3 },
           messages,

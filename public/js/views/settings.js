@@ -53,8 +53,10 @@ function AiCard({ settings, reloadSettings }) {
     await save({ ai: { systemPrompt: store } }, reloadSettings);
   }
 
-  // David's picks float to the top of the model list.
-  const preferred = ['gemma4:12b', 'llama3.1:8b'];
+  // David's picks float to the top of the model list. qwen3.6-35b is a
+  // reasoning model; every generating call sends Ollama `think: false`, so it
+  // answers straight away instead of thinking first (server/routes/ai.js).
+  const preferred = ['qwen3.6-35b:latest', 'gemma4:12b', 'llama3.1:8b'];
   const models = status
     ? [...new Set([...preferred.filter((m) => status.models.includes(m)), ...status.models])]
     : preferred;

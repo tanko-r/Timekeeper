@@ -513,3 +513,32 @@ test('ai narrate/expand ground the prompt in the recorded time', async () => {
     assert.match(stub.state.lastChat.messages[0].content, /1\.5 hours \(90 minutes\)/);
   } finally { await t.close(); await stub.close(); }
 });
+
+// Thinking models (qwen3.6-35b and friends) burn minutes on a reasoning pass
+// before they answer, and this app only ever wants the answer. Ollama's
+// `think: false` turns that pass off; it is harmless on models that cannot
+// think at all, so every generating call sends it. /ai/warm is excluded —
+// it generates nothing.
+test('generating calls tell Ollama not to think', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'qwen3.6-35b:latest', url: stub.url });
+    await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work' });
+    assert.equal(stub.state.lastChat.think, false, 'expand disables thinking');
+  } finally { await t.close(); await stub.close(); }
+});
+
+test('narrate streaming tells Ollama not to think', async () => {
+  const stub = await startStubOllama('Reviewed lease exhibit.');
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'qwen3.6-35b:latest', url: stub.url });
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brief: 'lease exhibit work', mode: 'draft' }),
+    });
+    await res.text();
+    assert.equal(stub.state.lastChat.think, false, 'narrate disables thinking');
+  } finally { await t.close(); await stub.close(); }
+});
