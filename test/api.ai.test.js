@@ -112,7 +112,7 @@ test('ai warm fires an empty-message preload request without waiting on it', asy
 
     releaseChat();
     for (let i = 0; i < 40 && !state.lastChat; i++) await new Promise((res2) => setTimeout(res2, 25));
-    assert.deepEqual(state.lastChat, { model: 'llama3.1:8b', messages: [] });
+    assert.deepEqual(state.lastChat, { model: 'llama3.1:8b', messages: [], keep_alive: '15m' });
   } finally { await t.close(); await new Promise((resolve) => srv.close(resolve)); }
 });
 
@@ -540,5 +540,25 @@ test('narrate streaming tells Ollama not to think', async () => {
     });
     await res.text();
     assert.equal(stub.state.lastChat.think, false, 'narrate disables thinking');
+  } finally { await t.close(); await stub.close(); }
+});
+
+// Keeping the model resident (2026-08-26): Ollama drops a model from memory
+// ~5 minutes after its last request, and reloading qwen3.6-35b off disk costs
+// about 2.5 minutes. Every call therefore carries an explicit keep_alive, and
+// the app re-warms on a heartbeat while its window is visible, so the unload
+// deadline keeps moving out for as long as the app is in use.
+test('warm and generating calls both extend the model keep-alive', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'qwen3.6-35b:latest', url: stub.url });
+
+    await t.fetchJson('POST', '/api/ai/warm');
+    for (let i = 0; i < 40 && !stub.state.lastChat; i++) await new Promise((r) => setTimeout(r, 25));
+    assert.equal(stub.state.lastChat.keep_alive, '15m', 'warm holds the model in memory');
+
+    await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work' });
+    assert.equal(stub.state.lastChat.keep_alive, '15m', 'a generation also pushes the deadline out');
   } finally { await t.close(); await stub.close(); }
 });

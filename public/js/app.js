@@ -40,6 +40,10 @@ const NAV = [
   ['settings', 'Settings', 'settings'],
 ];
 
+// Model-warming heartbeat: comfortably inside the server's 15m keep-alive,
+// so two missed beats still leave the model loaded.
+const WARM_EVERY_MS = 5 * 60 * 1000;
+
 // ---------- theme ----------
 
 function applyTheme(settings) {
@@ -233,6 +237,29 @@ function App() {
       document.title = 'Timekeeper';
     };
   }, [settings, refreshKey]);
+
+  // Keep the local model hot for as long as the app is in use (2026-08-26).
+  // A reasoning model such as qwen3.6-35b takes about 2.5 minutes to load off
+  // disk, so waiting for the entry editor to ask for it is too late: warm the
+  // moment the app opens, then re-warm every WARM_EVERY_MS while the window
+  // is visible. Each warm pushes Ollama's unload deadline out, so the model
+  // stays resident while David works and is dropped once the app has been out
+  // of sight for a while. The server no-ops the whole thing when AI is off.
+  const aiEnabled = !!settings?.ai?.enabled;
+  useEffect(() => {
+    if (!aiEnabled) return undefined;
+    const warm = () => {
+      if (document.visibilityState !== 'visible') return;
+      api.post('/api/ai/warm').catch(() => {});
+    };
+    warm();
+    const iv = setInterval(warm, WARM_EVERY_MS);
+    document.addEventListener('visibilitychange', warm);
+    return () => {
+      clearInterval(iv);
+      document.removeEventListener('visibilitychange', warm);
+    };
+  }, [aiEnabled]);
 
   const openEditor = useCallback((spec) => setEditor(spec), []);
   const closeEditor = useCallback((changed) => {

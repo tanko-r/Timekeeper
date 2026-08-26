@@ -220,6 +220,14 @@ export function buildVoiceContext(db, { cmId = null, brief = '', seedPairs = nul
 
 export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
 
+// How long Ollama holds the model in memory after a request. Its own default
+// is 5 minutes, which is shorter than the gaps between entries on a normal
+// day — and reloading a 13 GB model (qwen3.6-35b) off disk costs about 2.5
+// minutes. The browser re-warms on a heartbeat while its window is visible,
+// so this deadline keeps moving out while the app is in use and expires once
+// it is not, which hands the memory back.
+const KEEP_ALIVE = '15m';
+
 export async function checkOllamaReachable(url) {
   try {
     const resp = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(2500) });
@@ -325,7 +333,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: cfg.model, stream: false, think: false, options: { temperature: 0.3 }, messages }),
+    body: JSON.stringify({ model: cfg.model, stream: false, think: false, keep_alive: KEEP_ALIVE, options: { temperature: 0.3 }, messages }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!resp.ok) return;
@@ -364,7 +372,7 @@ export function aiRouter({ db }) {
     fetch(`${cfg.url}/api/chat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: cfg.model, messages: [] }),
+      body: JSON.stringify({ model: cfg.model, messages: [], keep_alive: KEEP_ALIVE }),
       signal: AbortSignal.timeout(60_000),
     }).catch(() => {});
     res.status(202).end();
@@ -406,6 +414,7 @@ export function aiRouter({ db }) {
           model: cfg.model,
           stream: false,
           think: false,
+          keep_alive: KEEP_ALIVE,
           format: 'json',
           options: { temperature: 0.3 },
           messages: [
@@ -521,7 +530,7 @@ export function aiRouter({ db }) {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: cfg.model, stream: true, think: false,
+          model: cfg.model, stream: true, think: false, keep_alive: KEEP_ALIVE,
           // regenerate wants a *different* sample; rewrites stay conservative
           options: { temperature: mode === 'regenerate' ? 0.8 : 0.3 },
           messages,
