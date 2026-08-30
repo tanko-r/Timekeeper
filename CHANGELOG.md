@@ -8,6 +8,14 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-08-30
+
+- **Fix: matter tags no longer reach the narrative suggestions.** A phrase
+  imported as "(YEL) All-hands call with…" was offered verbatim as a
+  suggestion chip and as ghost text, so the tag of one matter could be typed
+  into an entry for another. The phrasebook now strips a leading matter tag,
+  and a tagged and an untagged copy of the same phrase count as one.
+
 ## 2026-08-19
 
 - **Fix: the float timer's day total now counts the whole day.** The

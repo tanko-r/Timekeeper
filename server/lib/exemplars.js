@@ -44,11 +44,19 @@ export const FILLER_MARKERS = [
 const MATTER_TAG = /^\s*[[(][^\])]*[\])]\s*/;
 const TIME_ALLOCATION = /\s*\(\s*\d+(?:\.\d+)?\s*\)/g;
 
+// Repeated because the import doubles the tag on some rows — "(CYS01)  (CYS01)
+// Review Right of Entry Agreement…" is a real entry. Shared with the
+// phrasebook (2026-08-21 feedback), where the same tag was reaching the
+// narrative suggestion chips.
+export function stripMatterTag(text) {
+  let out = String(text ?? '');
+  let prev;
+  do { prev = out; out = out.replace(MATTER_TAG, ''); } while (out !== prev);
+  return out;
+}
+
 export function cleanCandidate(text) {
-  return String(text ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(MATTER_TAG, '')
+  return stripMatterTag(String(text ?? '').replace(/\s+/g, ' ').trim())
     .replace(TIME_ALLOCATION, '')
     .trim();
 }

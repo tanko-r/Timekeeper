@@ -72,3 +72,34 @@ test('short scraps filtered, default limit 15, empty input ok', () => {
   assert.ok(!out.some((p) => p.text === 'ok')); // length 2 < minLength 3
   assert.deepEqual(rankPhrases([], { today: '2026-07-08' }), []);
 });
+
+// 2026-08-21 feedback: a suggestion chip for matter LVL08 read "(YEL) All-hands
+// call with Microsoft and BGE teams…". The "(YEL)" is a matter tag written by
+// the Intapp import, not prose. It must never reach a suggestion — it is wrong
+// on its own matter and actively misleading on a sibling one.
+test('normalizePhrase strips a leading matter tag', () => {
+  assert.equal(normalizePhrase('(YEL) All-hands call with the client team.'),
+    'All-hands call with the client team');
+  assert.equal(normalizePhrase('[LVL08] Review signature page'), 'Review signature page');
+  assert.equal(normalizePhrase('(CYS01)  (CYS01) Review Right of Entry Agreement'),
+    'Review Right of Entry Agreement');
+  assert.equal(normalizePhrase('(EAT02 – Cedar Lease) Draft easement'), 'Draft easement');
+});
+
+test('normalizePhrase keeps parentheses that are part of the prose', () => {
+  // A time allocation is not a matter tag, and neither is a mid-sentence aside.
+  assert.equal(normalizePhrase('Review lease (0.5); draft email (0.2)'),
+    'Review lease (0.5); draft email (0.2)');
+  assert.equal(normalizePhrase('Call with W. Hammond (BGE) regarding access'),
+    'Call with W. Hammond (BGE) regarding access');
+});
+
+test('a tagged and an untagged copy of the same phrase rank as one', () => {
+  const out = rankPhrases([
+    { text: '(YEL) Revise lease', date: '2026-07-07' },
+    { text: 'Revise lease', date: '2026-07-06' },
+  ], { today: '2026-07-08' });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].text, 'Revise lease');
+  assert.equal(out[0].count, 2);
+});

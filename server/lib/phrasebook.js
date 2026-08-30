@@ -2,11 +2,16 @@
 // narratives by frequency × recency → the matter's recurring "moves".
 // Pure — callers fetch rows from the DB and pass them in.
 
+import { stripMatterTag } from './exemplars.js';
+
 const DAY_MS = 86_400_000;
 
+// A leading "(YEL)" / "[LVL08]" / "(EAT02 - Cedar Lease)" is a matter tag the
+// Intapp import writes in front of the prose, not prose itself. Suggested to
+// the attorney it is noise on its own matter, and on a client sibling it
+// labels the suggestion with the WRONG matter (2026-08-21 feedback).
 export function normalizePhrase(text) {
-  return String(text ?? '')
-    .replace(/\s+/g, ' ')
+  return stripMatterTag(String(text ?? '').replace(/\s+/g, ' ').trim())
     .trim()
     .replace(/[.;,:\s]+$/, '');
 }
