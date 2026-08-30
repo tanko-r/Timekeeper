@@ -64,9 +64,9 @@ One rule, applied everywhere — the ghost, the candidate list, the API:
 
 | Kind | This matter | Client siblings | Global manual |
 |---|---|---|---|
-| document | yes | **never** | yes, ranked last |
-| organisation | yes | yes, ranked last | yes, ranked last |
-| person | yes | yes, ranked last | yes, ranked last |
+| `document` | yes | **never** | yes, ranked last |
+| `org` | yes | yes, ranked last | yes, ranked last |
+| `person` | yes | yes, ranked last | yes, ranked last |
 
 A document belongs to one deal. An organisation and a person move between a
 client's matters, so they may be borrowed — but always below the matter's own,
@@ -78,17 +78,33 @@ so they surface only when the matter itself has nothing better.
 matter_entities
   id, matter_id→matters ON DELETE CASCADE  NULLABLE,
   name TEXT,               -- display casing, from the most recent sighting
-  kind TEXT,               -- 'document' | 'org'
+  kind TEXT,               -- 'document' | 'org' | 'person'
   count INTEGER,
   last_seen_at TEXT,       -- the ENTRY DATE (YYYY-MM-DD), not a wall clock
   origin TEXT,             -- 'derived' | 'manual'
   hidden INTEGER 0/1,      -- user suppressed it; rebuild must not resurrect it
   locked INTEGER 0/1,      -- user edited name/kind; rebuild must not overwrite
-  UNIQUE(matter_id, name)
+  UNIQUE(IFNULL(matter_id,0), name COLLATE NOCASE)   -- an expression index:
+    -- plain UNIQUE(matter_id, name) does not constrain rows where matter_id
+    -- is NULL, because SQLite treats every NULL as distinct
 ```
 
-The same three override columns are added to `matter_people`, so a wrongly
-captured name can be fixed or hidden the same way.
+**One table holds all three kinds** — documents, organisations and people —
+and it is the only thing the ghost and the dictionary read. `matter_people` is
+NOT changed by this feature: it keeps feeding the AI prompt and the `/people`
+endpoint exactly as it does today, and `rebuildMatterMemory` writes both from
+one pass over the matter's rows, so the two cannot drift.
+
+The alternative — override columns on `matter_people` and a read-time merge of
+two tables with different rules — was rejected while planning: it puts the
+same three flags in two places and gives the Settings page two sources to
+reconcile. The cost of this choice is that a derived person is stored twice.
+Both copies come from one extraction in one transaction, which is what makes
+that acceptable.
+
+`matterPeopleList()` gains one filter: a name hidden in the dictionary is
+dropped from the AI prompt roster too. Hiding a mis-captured name has to mean
+hidden everywhere, or the same bad name keeps reaching the model.
 
 - **`matter_id` NULL = a global dictionary entry**, available to every matter
   and ranked last. This is what makes "editable dictionary in Settings"
@@ -272,7 +288,8 @@ deterministic engine.
   global rows come last.
 - `test/api.dictionary.test.js` — a manual row survives a rebuild; a hidden
   derived row is not resurrected; a locked row keeps its edited name while its
-  count still updates; deleting a derived row hides it instead.
+  count still updates; deleting a derived row hides it instead; a hidden person
+  also disappears from `matterPeopleList()`.
 - `scripts/e2e-smoke.mjs` — type a trigger in the narrative, expect grey ghost
   text; Tab accepts it; ↓ opens the list and Escape closes it without closing
   the editor.
