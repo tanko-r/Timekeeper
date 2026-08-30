@@ -25,15 +25,18 @@ const OWN_PHRASES = `
     SELECT e.narrative AS text, e.date FROM entries e
     WHERE e.cm_id = ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
 
+// Task-line FRAGMENTS only — deliberately narrower than OWN_PHRASES. A
+// fragment is a recurring move ("negotiate crossing agreement") and still
+// earns a cold matter a warm start. A sibling's whole narrative is a finished
+// statement about work done on a DIFFERENT matter, and the suggestion chips
+// file the text they offer as this matter's record: "(YEL) All-hands call
+// with Microsoft and BGE teams…" was offered under matter LVL08 (2026-08-21
+// feedback). Own-matter narratives are unaffected.
 const SIBLING_PHRASES = `
     SELECT et.fragment AS text, e.date FROM entry_tasks et
     JOIN entries e ON e.id = et.entry_id
     JOIN matters m ON m.id = e.cm_id
-    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND TRIM(et.fragment) != ''
-    UNION ALL
-    SELECT e.narrative AS text, e.date FROM entries e
-    JOIN matters m ON m.id = e.cm_id
-    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND ${FREE_NARRATIVE}`;
+    WHERE m.client_id = ? AND m.id != ? AND e.deleted_at IS NULL AND TRIM(et.fragment) != ''`;
 
 // Suggestions for one matter — exported for reuse (precedent: loadEntry /
 // syncNarrative in entries.js): timers.js calls this at timer START to
@@ -47,7 +50,7 @@ export function matterSuggestions(db, matterId, today) {
   let occurrences = own;
   let borrowed = false;
   if (rankPhrases(own, { today }).length < THIN_PHRASES && matter.client_id != null) {
-    const sib = db.prepare(SIBLING_PHRASES).all(matter.client_id, matter.id, matter.client_id, matter.id)
+    const sib = db.prepare(SIBLING_PHRASES).all(matter.client_id, matter.id)
       .map((o) => ({ ...o, source: 'client' }));
     if (sib.length > 0) { borrowed = true; occurrences = own.concat(sib); }
   }

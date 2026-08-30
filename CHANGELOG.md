@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-08-30
 
+- **Fix: a client sibling no longer lends its whole narratives.** When a
+  matter's own history is thin the phrasebook borrows from the client's other
+  matters. It borrowed finished narratives too, so a chip under Microsoft
+  matter LVL08 offered work recorded on matter YEL. Borrowing is now limited
+  to task-line fragments; the matter's own narratives are unaffected.
+
 - **Fix: matter tags no longer reach the narrative suggestions.** A phrase
   imported as "(YEL) All-hands call with…" was offered verbatim as a
   suggestion chip and as ghost text, so the tag of one matter could be typed

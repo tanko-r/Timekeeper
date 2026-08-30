@@ -80,6 +80,45 @@ test('suggestions: a cold matter borrows client siblings, not strangers', () =>
     assert.equal(r.body.phrases.find((p) => p.text === 'negotiate crossing agreement').source, 'client');
   }));
 
+// 2026-08-21 feedback: an LVL08 chip offered a whole narrative written for the
+// sibling Microsoft matter YEL. A borrowed FRAGMENT is a recurring move and
+// still earns a cold matter a warm start; a borrowed whole narrative is a
+// finished statement about work done somewhere else, and clicking the chip
+// files it as this matter's record.
+test('suggestions: a cold matter borrows sibling fragments, never their whole narratives', () =>
+  withServer(async (t) => {
+    const { warm, cold } = await seed(t);
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-05', cm_id: warm.id,
+      tasks: [{ task_code: 'Negotiate', duration: 0.5, fragment: 'negotiate crossing agreement' }],
+    });
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: warm.id,
+      narrative: 'All-hands call with the client and utility teams.',
+      tasks: [{ task_code: 'Call', duration: 0.4, fragment: '' }],
+    });
+    const r = await t.fetchJson('GET', `/api/matters/${cold.id}/suggestions`);
+    assert.equal(r.body.borrowed, true);
+    const texts = r.body.phrases.map((p) => p.text);
+    assert.ok(texts.includes('negotiate crossing agreement'));
+    assert.ok(!texts.includes('All-hands call with the client and utility teams'));
+  }));
+
+// The same narrative on the matter's OWN history is not a leak — it is what
+// he wrote here last time, and it must keep ranking.
+test('suggestions: a matter still gets its own whole narratives', () =>
+  withServer(async (t) => {
+    const { warm } = await seed(t);
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-07-06', cm_id: warm.id,
+      narrative: 'All-hands call with the client and utility teams.',
+      tasks: [{ task_code: 'Call', duration: 0.4, fragment: '' }],
+    });
+    const r = await t.fetchJson('GET', `/api/matters/${warm.id}/suggestions`);
+    assert.deepEqual(r.body.phrases.map((p) => p.text),
+      ['All-hands call with the client and utility teams']);
+  }));
+
 test('people: roster ranked by recency; cold sibling borrows; strangers do not', () =>
   withServer(async (t) => {
     const { warm, cold, other } = await seed(t);
