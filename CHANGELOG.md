@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-08-30
 
+- **Flagged, not built: entity-aware ghost text.** The 2026-08-30 10:55 item
+  asks the ghost text to predict documents, people, and entities the matter
+  has seen ("review and analyze" → "Development Agreement"). That is a new
+  extraction layer plus a change to how completions are ranked, not a fix —
+  it stays in TODO.md pending a spec.
+
 - **Fix: stopping a timer from an entry card now offers the narrative chips.**
   The play/stop button on a draft entry card filed the time silently, while
   the same stop on a timer card popped the one-tap narrative suggestions. Both
