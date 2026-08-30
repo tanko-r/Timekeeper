@@ -279,6 +279,25 @@ await step('backdated start (10m ago) → stop → non-blocking chips; picking o
   if (entries < 2) throw new Error(`expected 2 entries on dashboard, got ${entries}`);
 });
 
+// 2026-08-27 feedback: "when a timer is stopped from the start/stop button in
+// the entries pane, it should also pop up the narrative suggestions same as in
+// a timer field." The entry card's stop filed the time silently.
+await step('entry card: start → stop pops the same narrative chips as a timer card', async () => {
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  await waitFor('.entry-card .entry-timer-btn');
+  await page.click('.entry-card .entry-timer-btn');
+  await page.waitForFunction(() => document.querySelector('.entry-card .entry-timer-btn.running'),
+    { timeout: 5000 });
+  await sleep(2500); // past the 2s misclick grace, so the stop actually files
+  await page.click('.entry-card .entry-timer-btn.running');
+  await waitFor('.stop-chips');
+  if (await page.$('.modal')) throw new Error('the entry card stop must not open a modal');
+  const head = await page.$eval('.stop-chips-head', (el) => el.textContent);
+  if (!head.includes('filed')) throw new Error(`chips head does not report a filing: "${head}"`);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.stop-chips'), { timeout: 4000 });
+});
+
 await step('quick-capture palette (q): "call re acme .3" parses clean and files', async () => {
   await page.evaluate(() => { document.activeElement?.blur(); });
   const d = new Date();

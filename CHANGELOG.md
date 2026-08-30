@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-08-30
 
+- **Fix: stopping a timer from an entry card now offers the narrative chips.**
+  The play/stop button on a draft entry card filed the time silently, while
+  the same stop on a timer card popped the one-tap narrative suggestions. Both
+  stops now show the same chips.
+
 - **Fix: a client sibling no longer lends its whole narratives.** When a
   matter's own history is thin the phrasebook borrows from the client's other
   matters. It borrowed finished narratives too, so a chip under Microsoft

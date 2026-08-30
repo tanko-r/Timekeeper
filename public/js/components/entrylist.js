@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import {
-  html, useState, useEffect, fmtHours, fmtTenths, emitToast, BillableBadge, StatusChip,
+  html, useState, useEffect, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
   ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm,
 } from '/js/ui.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
@@ -192,11 +192,25 @@ export function EntryList({
     }
   }
 
+  // A stop here files exactly what a stop on the timer card files, so it has
+  // to offer the same one-tap narratives (2026-08-27 feedback). The chips are
+  // TimerGrid's to render — it owns the popup state and the deduct action —
+  // so hand it the stop result the way the app already hands around timer
+  // news, and let it pop the same StopChips. The button only exists on the
+  // dashboard (the `timers` prop), where TimerGrid is always mounted.
   async function stopTimer(timer) {
     try {
       const r = await api.post(`/api/timers/${timer.id}/stop`);
       onChanged();
-      if (r.discarded) emitToast('Misclick (under 2s) — nothing recorded.');
+      if (r.entry) {
+        window.dispatchEvent(new CustomEvent('tk:timer-stopped', {
+          detail: { timer: r.timer || timer, result: r },
+        }));
+      } else if (r.discarded) {
+        emitToast('Misclick (under 2s) — nothing recorded.');
+      } else {
+        emitToast(`Nothing to file yet — clock keeps counting (${fmtClock(r.seconds)}).`);
+      }
     } catch (e) {
       emitToast(e.message, { error: true });
     }

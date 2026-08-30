@@ -206,6 +206,16 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
     return () => window.removeEventListener('tk:timers-changed', onChanged);
   }, [reload]);
 
+  // …and when that outside stop actually FILED an entry, pop the same chips a
+  // stop on a timer card pops (2026-08-27 feedback). The grid owns the popup
+  // state and the deduct action, so the entry card hands it the stop result
+  // rather than growing a second copy of the affordance.
+  useEffect(() => {
+    const onStopped = (e) => { if (e.detail) setStopPopup(e.detail); };
+    window.addEventListener('tk:timer-stopped', onStopped);
+    return () => window.removeEventListener('tk:timer-stopped', onStopped);
+  }, []);
+
   // ---------- actions ----------
 
   const guard = (p) => p.catch((e) => emitToast(e.message, { error: true }));
