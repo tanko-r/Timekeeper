@@ -10,6 +10,13 @@ Newest entries first.
 
 ## 2026-08-30
 
+- **Specced and planned: entity-aware ghost text.** The 2026-08-30 10:55 item
+  now has a design doc and a 10-task implementation plan, split into two
+  stages so the predictions can be lived with before the Settings dictionary
+  is built. Four directions were confirmed with David and two design errors
+  were caught while planning (a UNIQUE that would not have constrained the
+  global rows, and a rebuild that would have erased his hand edits). No code
+  written.
 - **Flagged, not built: entity-aware ghost text.** The 2026-08-30 10:55 item
   asks the ghost text to predict documents, people, and entities the matter
   has seen ("review and analyze" → "Development Agreement"). That is a new
