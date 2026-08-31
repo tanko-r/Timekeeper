@@ -5,7 +5,7 @@ import {
 } from '/js/ui.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
-import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 
@@ -23,6 +23,7 @@ function InlineNarrative({ entry, onChanged }) {
   // matter's ghost completions. Suggestions fetch only while editing.
   const shortcuts = useShortcuts();
   const phrases = useMatterSuggestions(editing ? entry.cm?.id : null);
+  const ents = useMatterEntities(editing ? entry.cm?.id : null);
   const expand = (t, caret) => expandShortcuts(t, caret, shortcuts);
 
   if (entry.status !== 'draft') {
@@ -68,7 +69,7 @@ function InlineNarrative({ entry, onChanged }) {
   return html`
     <${GhostInput} multiline class="narrative-inline-input" autoFocus
       rows=${Math.max(2, Math.ceil(text.length / 90))}
-      value=${text} suggestions=${phrases} expand=${expand}
+      value=${text} suggestions=${phrases} entities=${ents} expand=${expand}
       onChange=${setText}
       onFocus=${(e) => e.target.setSelectionRange(e.target.value.length, e.target.value.length)}
       onBlur=${save}

@@ -3,7 +3,7 @@ import {
   html, useState, useEffect, useRef, useMemo, useCallback, createPortal,
   fmtHours, emitToast, Icon, Spinner, ValidationList,
 } from '/js/ui.js';
-import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
@@ -40,6 +40,7 @@ export function CloseOut({ onClose, openEditor }) {
   // Ghost-text suggestions for the current card's matter (Task 4's phrasebook,
   // same component the entry editor uses); expand wired exactly like it too.
   const phrases = useMatterSuggestions(current && !current.narrative_auto ? (current.cm?.id ?? null) : null);
+  const ents = useMatterEntities(current && !current.narrative_auto ? (current.cm?.id ?? null) : null);
   const shortcuts = useShortcuts();
   const expand = useCallback((t, caret) => expandShortcuts(t, caret, shortcuts), [shortcuts]);
 
@@ -275,7 +276,7 @@ export function CloseOut({ onClose, openEditor }) {
             <span class="auto-badge">AUTO</span>
             <textarea readOnly value=${current.narrative || ''}></textarea>
           </div>` : html`
-          <${GhostInput} multiline rows=${3} value=${text} suggestions=${phrases} expand=${expand}
+          <${GhostInput} multiline rows=${3} value=${text} suggestions=${phrases} entities=${ents} expand=${expand}
             placeholder="What did you do?" onChange=${setText} />`}
         <div class="closeout-keys muted small">
           <kbd>Enter</kbd> accept · <kbd>e</kbd> edit · <kbd>↓</kbd> skip · <kbd>Esc</kbd> quit

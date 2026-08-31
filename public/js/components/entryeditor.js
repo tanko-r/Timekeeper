@@ -5,7 +5,7 @@ import {
   ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly, markJustFinalized,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
-import { GhostInput, useMatterSuggestions } from '/js/components/ghosttext.js';
+import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/components/ghosttext.js';
 import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
@@ -88,6 +88,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   // Ghost-text autocomplete (spec §6): deterministic phrasebook completions
   // for the picked matter; Tab accepts. No LLM anywhere in this path.
   const phrases = useMatterSuggestions(local?.cm?.id);
+  const ents = useMatterEntities(local?.cm?.id);
 
   // Custom fields for the picked matter (client-level + matter-level —
   // spec 2026-07-15). Values live in local.custom_values keyed by field id
@@ -713,7 +714,7 @@ export function EntryEditor({ spec, settings, onClose }) {
             <input type="number" min="0" step=${increment} value=${t.duration || ''}
               placeholder="0.0" disabled=${finalized} class="mono"
               onInput=${(e) => updateLineDuration(i, e.target.value)} />
-            <${GhostInput} value=${t.fragment} suggestions=${phrases} disabled=${finalized}
+            <${GhostInput} value=${t.fragment} suggestions=${phrases} entities=${ents} disabled=${finalized}
               expand=${expand} onSelectionChange=${onFieldSelect}
               placeholder=${autoAvailable ? 'narrative fragment for this task' : 'optional fragment (used if you add more lines)'}
               onChange=${(v) => updateLine(i, { fragment: v })} />
@@ -781,7 +782,7 @@ export function EntryEditor({ spec, settings, onClose }) {
           <textarea value=${autoText || ''} disabled=${finalized} spellCheck=${true}
             onInput=${(e) => applyAutoEdit(e.target.value)}></textarea>` : html`
           <${GhostInput} multiline rows=${3} value=${local.narrative} disabled=${finalized}
-            suggestions=${phrases} expand=${expand} onSelectionChange=${onFieldSelect}
+            suggestions=${phrases} entities=${ents} expand=${expand} onSelectionChange=${onFieldSelect}
             placeholder="What did you do? (specific verbs — banned vague phrases are flagged)"
             onChange=${(v) => { if (aiUndo) setAiUndo(null); update({ narrative: v }); }} />`}
       </div>

@@ -1010,3 +1010,18 @@ tr.import-skip td { opacity: 0.55; }
   display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 10px; margin: 10px 0 4px;
 }
+
+/* Ghost-text candidate list (↓). Sits under the field, above everything else
+   in the editor; the field keeps focus, so it is a menu the keyboard drives. */
+.ghost-list {
+  position: absolute; z-index: 40; margin-top: 2px;
+  background: var(--surface-1); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.12);
+  max-width: min(420px, 90%); overflow: hidden;
+}
+.ghost-list button {
+  display: block; width: 100%; text-align: left;
+  padding: 5px 10px; border: 0; background: none; cursor: pointer;
+  font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ghost-list button.on, .ghost-list button:hover { background: var(--surface-2); }

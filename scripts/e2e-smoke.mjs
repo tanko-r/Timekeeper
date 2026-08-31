@@ -1621,6 +1621,69 @@ await step('one-sweep close-out: card stack finalizes & exports the day (c)', as
   if (!after.exported_at) throw new Error('seeded draft was finalized but never marked exported');
 });
 
+// 2026-08-30 feedback: ghost text should predict the matter's own documents
+// and people, not only whole stored phrases. Placed last so the entries it
+// seeds cannot disturb any earlier step's counts.
+await step('ghost text: a trigger word predicts an entity; ↓ opens the list', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];
+  // A derived dictionary row needs two sightings before it predicts, so seed
+  // a document this matter has actually seen more than once.
+  const seeded = [];
+  for (const n of [1, 2, 3]) {
+    seeded.push(await (await fetch(`${base}/api/entries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: todayLocal(),
+        cm_id: acme.id,
+        narrative: `Revise the Cedar Utility Easement, pass ${n}.`,
+        tasks: [{ task_code: 'Revise', duration: 0.2, fragment: '' }],
+      }),
+    })).json());
+  }
+  // The browser caches /suggestions per matter in module state, so a reload is
+  // what makes the freshly seeded dictionary visible to the editor.
+  await page.goto(base, { waitUntil: 'networkidle0' });
+  await page.waitForFunction((id) => [...document.querySelectorAll('.entry-card')]
+    .some((c) => c.textContent.includes(id)), { timeout: 5000 }, 'pass 3');
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.entry-card')]
+      .find((c) => c.textContent.includes('pass 3'));
+    card.querySelector('button[title="Edit"]').click();
+  });
+  const sel = '.modal-wide .narrative-preview textarea';
+  await waitFor(sel);
+  await page.evaluate((s) => {
+    const el = document.querySelector(s);
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    set.call(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, sel);
+  await page.click(sel);
+  await page.type(sel, 'Review and analyze ', { delay: 5 });
+  await page.waitForFunction(
+    () => !!document.querySelector('.ghost-mirror .ghost-hint')?.textContent.trim(),
+    { timeout: 4000 });
+  const ghosted = await page.$eval('.ghost-mirror .ghost-hint', (el) => el.textContent.trim());
+  if (!ghosted.includes('Cedar Utility Easement')) {
+    throw new Error(`ghost did not offer the seeded document: "${ghosted}"`);
+  }
+
+  await page.keyboard.press('ArrowDown');
+  await waitFor('.ghost-list');
+  const items = await page.$$eval('.ghost-list button', (els) => els.length);
+  if (items < 1) throw new Error('↓ opened an empty candidate list');
+
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.ghost-list'), { timeout: 4000 });
+  if (!(await page.$('.modal-wide'))) throw new Error('Escape closed the editor, not just the list');
+  await shot('ghost-entity');
+  await clickText('.modal-wide button', 'Save & close');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+  if (!seeded.every((e) => e && e.id)) throw new Error('entry seeding failed');
+});
+
 await browser.close();
 server.close();
 db.close();
