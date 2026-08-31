@@ -8,6 +8,7 @@ import { shortcutsRouter } from './routes/shortcuts.js';
 import { quickCaptureRouter } from './routes/quickcapture.js';
 import { taskCodesRouter } from './routes/taskcodes.js';
 import { customFieldsRouter } from './routes/customfields.js';
+import { dictionaryRouter } from './routes/dictionary.js';
 import { settingsRouter } from './routes/settings.js';
 import { entriesRouter, finalizeDayRouter } from './routes/entries.js';
 import { timersRouter, timerGroupsRouter } from './routes/timers.js';
@@ -41,6 +42,7 @@ export function createApp(deps) {
   app.use('/api', quickCaptureRouter(deps));
   app.use('/api/task-codes', taskCodesRouter(deps));
   app.use('/api/custom-fields', customFieldsRouter(deps));
+  app.use('/api/dictionary', dictionaryRouter(deps));
   app.use('/api/settings', settingsRouter(deps));
   app.use('/api/entries', entriesRouter(deps));
   app.use('/api', finalizeDayRouter(deps));
