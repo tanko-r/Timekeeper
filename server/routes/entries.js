@@ -4,6 +4,7 @@ import { isValidDate, todayLocal } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
+import { extractEntities } from '../lib/entities.js';
 import { loadEffectiveFields } from './customfields.js';
 
 const ENTRY_COLS = `id, date, cm_id, narrative, billable, status, total_override,
@@ -171,39 +172,94 @@ export function touchCm(db, cmId, nowIso) {
   db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, cmId);
 }
 
-// matter_people is a DERIVED CACHE: rebuild the whole roster for one matter
-// from its live (non-deleted) entries. Idempotent — safe to call on every
-// write, edit, move, copy, delete, and restore; a per-matter scan is cheap in
-// a single-user DB and makes edits exactly correct with zero bookkeeping.
-// Names come from the narrative plus all task fragments, deduped per entry,
-// so count = number of live entries mentioning the person. last_seen_at
-// stores the entry DATE (local YYYY-MM-DD), not a wall clock, so backfilled
-// history ranks correctly by recency. Safe inside an outer db.transaction
+// Rebuild BOTH derived caches for one matter from its entries, in one pass and
+// one transaction, so they can never drift apart (2026-08-30: was
+// rebuildMatterPeople, people only).
+//
+//   matter_people    — unchanged behaviour, a full replace. It feeds the AI
+//                      prompt and /people and holds nothing the user owns.
+//   matter_entities  — an UPSERT. Its rows carry the attorney's corrections,
+//                      and this runs on EVERY entry write, so a full replace
+//                      would erase an edit within minutes of him making it.
+//
+// The upsert contract, in four lines:
+//   sighted + locked=0    → refresh name, kind, count, last_seen_at
+//   sighted + locked=1    → refresh count and last_seen_at only
+//   unsighted + purely derived → delete
+//   anything he touched   → leave alone
+// A locked row matches its sighting on derived_name, not on name — otherwise
+// renaming a row makes the extractor's name reappear as a second row.
+//
+// Names come from the narrative plus all task fragments, deduped per entry, so
+// count = number of live entries mentioning the thing. last_seen_at stores the
+// entry DATE (local YYYY-MM-DD), not a wall clock, so backfilled history ranks
+// correctly by recency. Idempotent, and safe inside an outer db.transaction
 // (better-sqlite3 nests transactions via savepoints).
-export function rebuildMatterPeople(db, matterId) {
+export function rebuildMatterMemory(db, matterId) {
+  if (matterId == null) return;
   const rows = db.prepare(`
     SELECT e.date, e.narrative,
       (SELECT group_concat(t.fragment, char(10)) FROM entry_tasks t WHERE t.entry_id = e.id) AS fragments
     FROM entries e WHERE e.cm_id = ? AND e.deleted_at IS NULL
   `).all(matterId);
-  const agg = new Map(); // lower-cased name → { name, count, last }
+
+  const people = new Map();   // lower(name) → { name, count, last }
+  const sighted = new Map();  // lower(name) → { name, kind, count, last }
+  const bump = (map, name, kind, date) => {
+    const key = name.toLowerCase();
+    const cur = map.get(key);
+    if (!cur) { map.set(key, { name, kind, count: 1, last: date }); return; }
+    cur.count += 1;
+    if (date >= cur.last) { cur.last = date; cur.name = name; }
+  };
+
   for (const row of rows) {
-    for (const name of extractPeople(`${row.narrative}\n${row.fragments || ''}`)) {
-      const key = name.toLowerCase();
-      const cur = agg.get(key);
-      if (!cur) {
-        agg.set(key, { name, count: 1, last: row.date });
-      } else {
-        cur.count += 1;
-        if (row.date >= cur.last) { cur.last = row.date; cur.name = name; }
-      }
+    const text = `${row.narrative}\n${row.fragments || ''}`;
+    for (const name of extractPeople(text)) {
+      bump(people, name, 'person', row.date);
+      bump(sighted, name, 'person', row.date);
+    }
+    for (const e of extractEntities(text)) {
+      // A person already claimed under this name wins: people.js is the more
+      // precise extractor, and one name is one dictionary row.
+      const hit = sighted.get(e.name.toLowerCase());
+      if (hit && hit.kind === 'person') continue;
+      bump(sighted, e.name, e.kind, row.date);
     }
   }
+
   db.transaction(() => {
     db.prepare('DELETE FROM matter_people WHERE matter_id=?').run(matterId);
-    const ins = db.prepare(
+    const insPerson = db.prepare(
       'INSERT INTO matter_people (matter_id, name, count, last_seen_at) VALUES (?, ?, ?, ?)');
-    for (const p of agg.values()) ins.run(matterId, p.name, p.count, p.last);
+    for (const p of people.values()) insPerson.run(matterId, p.name, p.count, p.last);
+
+    const existing = db.prepare(
+      'SELECT id, name, derived_name, origin, hidden, locked FROM matter_entities WHERE matter_id=?'
+    ).all(matterId);
+    // Key on what the EXTRACTOR called it, falling back to the display name.
+    const byKey = new Map(existing.map((r) => [(r.derived_name || r.name).toLowerCase(), r]));
+
+    const insert = db.prepare(`INSERT INTO matter_entities
+      (matter_id, name, derived_name, kind, count, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`);
+    const refreshAll = db.prepare(
+      'UPDATE matter_entities SET name=?, kind=?, count=?, last_seen_at=? WHERE id=?');
+    const refreshCount = db.prepare(
+      'UPDATE matter_entities SET count=?, last_seen_at=? WHERE id=?');
+    const drop = db.prepare('DELETE FROM matter_entities WHERE id=?');
+
+    for (const e of sighted.values()) {
+      const key = e.name.toLowerCase();
+      const hit = byKey.get(key);
+      if (!hit) { insert.run(matterId, e.name, e.name, e.kind, e.count, e.last); continue; }
+      byKey.delete(key);
+      if (hit.locked) refreshCount.run(e.count, e.last, hit.id);
+      else refreshAll.run(e.name, e.kind, e.count, e.last, hit.id);
+    }
+    // Whatever is left was not sighted this pass.
+    for (const stale of byKey.values()) {
+      if (stale.origin === 'derived' && !stale.hidden && !stale.locked) drop.run(stale.id);
+    }
   })();
 }
 
@@ -282,8 +338,8 @@ export function entriesRouter({ db, clock }) {
                   .run(cm_id, id);
               }
               recordAudit(db, row, { cm_id }, now());
-              rebuildMatterPeople(db, cm_id);
-              if (cm_id !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
+              rebuildMatterMemory(db, cm_id);
+              if (cm_id !== row.cm_id) rebuildMatterMemory(db, row.cm_id);
             })();
             done.push(id);
             break;
@@ -361,7 +417,7 @@ export function entriesRouter({ db, clock }) {
       applyCustomValues(db, i.lastInsertRowid, cv.ops);
       syncNarrative(db, i.lastInsertRowid);
       touchCm(db, cm.id, now());
-      rebuildMatterPeople(db, cm.id);
+      rebuildMatterMemory(db, cm.id);
       return i;
     })();
     res.status(201).json(loadEntry(db, info.lastInsertRowid));
@@ -439,8 +495,8 @@ export function entriesRouter({ db, clock }) {
         timersSynced = syncTimersToEntry(db, row.id, now(), todayLocal(clock()));
       }
       recordAudit(db, row, req.body, now());
-      rebuildMatterPeople(db, cmId);
-      if (cmId !== row.cm_id) rebuildMatterPeople(db, row.cm_id);
+      rebuildMatterMemory(db, cmId);
+      if (cmId !== row.cm_id) rebuildMatterMemory(db, row.cm_id);
     })();
     // timers_synced tells the client to refresh the timer surfaces too — an
     // entry write otherwise only announces tk:entries-changed (see api.js).
@@ -480,7 +536,7 @@ export function entriesRouter({ db, clock }) {
         SELECT ?, field_id, value FROM entry_custom_values WHERE entry_id=?`)
         .run(i.lastInsertRowid, src.id);
       touchCm(db, src.cm_id, now());
-      rebuildMatterPeople(db, src.cm_id);
+      rebuildMatterMemory(db, src.cm_id);
       return i;
     })();
     res.status(201).json(loadEntry(db, info.lastInsertRowid));
@@ -531,7 +587,7 @@ function softDeleteEntry(db, row, nowIso) {
       db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
         .run(row.id, 'delete', JSON.stringify({ date: row.date, narrative: row.narrative }), nowIso);
     }
-    rebuildMatterPeople(db, row.cm_id);
+    rebuildMatterMemory(db, row.cm_id);
   })();
 }
 
@@ -542,7 +598,7 @@ function restoreEntry(db, row, nowIso) {
       db.prepare('INSERT INTO audit_log (entry_id, action, detail, created_at) VALUES (?, ?, ?, ?)')
         .run(row.id, 'restore', '{}', nowIso);
     }
-    rebuildMatterPeople(db, row.cm_id);
+    rebuildMatterMemory(db, row.cm_id);
   })();
 }
 

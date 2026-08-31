@@ -1,7 +1,7 @@
 // Deterministic counterparty-name extraction from narrative text (spec §5):
 // "telephone conference with M. Smith", "email to John Doe", ...
 // Pure functions only — no DB access, no clock. The matter_people cache that
-// stores these lives in server/routes/entries.js (rebuildMatterPeople).
+// stores these lives in server/routes/entries.js (rebuildMatterMemory).
 
 // Roles are not people: a capture whose lowercased form is one of these is
 // dropped ("Opposing Counsel" describes a role, not a rosterable person).

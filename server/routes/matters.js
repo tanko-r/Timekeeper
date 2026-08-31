@@ -61,6 +61,17 @@ export function matterSuggestions(db, matterId, today) {
 // roster first (most recently seen first), then client-sibling names — a
 // "jeff" may only ever appear on a sibling matter, so unlike the /people
 // endpoint this always blends, not just when own history is thin.
+// A name he hid in the dictionary is hidden everywhere, the AI prompt included
+// (spec 2026-08-30). Matter-scoped and global hides both count. Shared by the
+// roster the model is given and the roster the editor shows, so hiding a
+// mis-captured name cannot fix one and leave the other still saying it.
+export function hiddenPeopleNames(db, matterId) {
+  return new Set(db.prepare(`
+    SELECT LOWER(name) AS n FROM matter_entities
+    WHERE kind='person' AND hidden=1 AND (matter_id = ? OR matter_id IS NULL)
+  `).all(matterId).map((r) => r.n));
+}
+
 export function matterPeopleList(db, matterId, limit = 20) {
   const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
   if (!matter) return [];
@@ -78,7 +89,8 @@ export function matterPeopleList(db, matterId, limit = 20) {
   `).all(matter.client_id, matter.id)
     .map((p) => p.name)
     .filter((n) => !have.has(n.toLowerCase()));
-  return own.concat(sib).slice(0, limit);
+  const hidden = hiddenPeopleNames(db, matter.id);
+  return own.concat(sib).filter((n) => !hidden.has(n.toLowerCase())).slice(0, limit);
 }
 
 export function mattersRouter({ db, clock }) {
@@ -132,12 +144,16 @@ export function mattersRouter({ db, clock }) {
   r.get('/:id/people', (req, res) => {
     const matter = getMatter.get(req.params.id);
     if (!matter) return res.status(404).json({ error: 'Matter not found.' });
-    const own = ownPeople.all(matter.id).map((p) => ({ ...p, source: 'matter' }));
+    const hidden = hiddenPeopleNames(db, matter.id);
+    const visible = (p) => !hidden.has(p.name.toLowerCase());
+    const own = ownPeople.all(matter.id)
+      .filter(visible).map((p) => ({ ...p, source: 'matter' }));
     let people = own;
     let borrowed = false;
     if (own.length < THIN_PEOPLE && matter.client_id != null) {
       const have = new Set(own.map((p) => p.name.toLowerCase()));
       const sib = siblingPeople.all(matter.client_id, matter.id)
+        .filter(visible)
         .filter((p) => !have.has(p.name.toLowerCase()))
         .map((p) => ({ ...p, source: 'client' }));
       if (sib.length > 0) { borrowed = true; people = own.concat(sib); }

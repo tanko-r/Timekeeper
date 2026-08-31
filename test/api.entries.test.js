@@ -425,3 +425,88 @@ test('custom_values: round-trip, empty-string delete, non-applicable keys skippe
     const copy = await t.fetchJson('POST', `/api/entries/${created.body.id}/copy`, { date: '2026-07-16' });
     assert.equal(copy.body.custom_values[field.id], 'P100');
   }));
+
+test('rebuild: derived rows refresh, but manual, hidden and locked rows survive', async () => {
+  const t = await startTestServer();
+  try {
+    const cm = (await t.fetchJson('POST', '/api/cms',
+      { cm_number: '100001-000012', short_name: 'Cedar Lease' })).body;
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-20', cm_id: cm.id,
+      narrative: 'Revise the Access Agreement and circulate it.',
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: '' }],
+    });
+    const rows = () => t.db.prepare(
+      'SELECT * FROM matter_entities WHERE matter_id=? ORDER BY name').all(cm.id);
+    assert.deepEqual(rows().map((r) => r.name), ['Access Agreement']);
+
+    // three rows the attorney owns, in the three ways he can own one
+    t.db.prepare(`INSERT INTO matter_entities (matter_id, name, kind, origin)
+      VALUES (?, 'Hand Typed Agreement', 'document', 'manual')`).run(cm.id);
+    t.db.prepare(`INSERT INTO matter_entities (matter_id, name, kind, hidden)
+      VALUES (?, 'Bad Capture', 'org', 1)`).run(cm.id);
+    t.db.prepare(`INSERT INTO matter_entities
+      (matter_id, name, derived_name, kind, locked) VALUES
+      (?, 'Sewer Use Agreement', 'Use Agreement', 'document', 1)`).run(cm.id);
+
+    // a second entry forces a rebuild, and mentions the locked row's DERIVED name
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-21', cm_id: cm.id,
+      narrative: 'Revise the Use Agreement; recirculate the Access Agreement.',
+      tasks: [{ task_code: 'Revise', duration: 0.4, fragment: '' }],
+    });
+
+    const after = rows();
+    const byName = Object.fromEntries(after.map((r) => [r.name, r]));
+    // manual survives untouched
+    assert.ok(byName['Hand Typed Agreement']);
+    // hidden is not resurrected and stays hidden
+    assert.equal(byName['Bad Capture'].hidden, 1);
+    // locked keeps HIS name, gains the count, and the derived name does not
+    // come back as a second row
+    assert.ok(byName['Sewer Use Agreement']);
+    assert.equal(byName['Sewer Use Agreement'].count, 1);
+    assert.equal(byName['Use Agreement'], undefined);
+    // the plain derived row still refreshes
+    assert.equal(byName['Access Agreement'].count, 2);
+    assert.equal(byName['Access Agreement'].last_seen_at, '2026-08-21');
+  } finally { await t.close(); }
+});
+
+test('rebuild: a derived row that stops appearing is dropped', async () => {
+  const t = await startTestServer();
+  try {
+    const cm = (await t.fetchJson('POST', '/api/cms',
+      { cm_number: '100001-000012', short_name: 'Cedar Lease' })).body;
+    const e = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-20', cm_id: cm.id,
+      narrative: 'Revise the Access Agreement.',
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: '' }],
+    })).body;
+    await t.fetchJson('PATCH', `/api/entries/${e.id}`,
+      { narrative: 'Revise the Utility Easement.' });
+    const names = t.db.prepare(
+      'SELECT name FROM matter_entities WHERE matter_id=?').all(cm.id).map((r) => r.name);
+    assert.deepEqual(names, ['Utility Easement']);
+  } finally { await t.close(); }
+});
+
+test('a person hidden in the dictionary leaves the AI prompt roster too', async () => {
+  const t = await startTestServer();
+  try {
+    const cm = (await t.fetchJson('POST', '/api/cms',
+      { cm_number: '100001-000012', short_name: 'Cedar Lease' })).body;
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-20', cm_id: cm.id,
+      narrative: 'Telephone conference with A. Turner regarding access.',
+      tasks: [{ task_code: 'Call', duration: 0.3, fragment: '' }],
+    });
+    const before = await t.fetchJson('GET', `/api/matters/${cm.id}/people`);
+    assert.ok(before.body.people.some((p) => p.name === 'A. Turner'));
+
+    t.db.prepare(`UPDATE matter_entities SET hidden=1
+      WHERE matter_id=? AND kind='person' AND name='A. Turner'`).run(cm.id);
+    const after = await t.fetchJson('GET', `/api/matters/${cm.id}/people`);
+    assert.ok(!after.body.people.some((p) => p.name === 'A. Turner'));
+  } finally { await t.close(); }
+});

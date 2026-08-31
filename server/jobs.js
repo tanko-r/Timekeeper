@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { getSetting, setSetting } from './db.js';
 import { todayLocal } from './lib/dates.js';
 import { applyRollovers } from './routes/timers.js';
-import { rebuildMatterPeople } from './routes/entries.js';
+import { rebuildMatterMemory } from './routes/entries.js';
 
 const UNDO_WINDOW_DAYS = 7;
 
@@ -32,9 +32,24 @@ export function runJobs({ db, config, clock }) {
   if (!state.peopleBackfillDone) {
     const matterIds = db.prepare(
       'SELECT DISTINCT cm_id FROM entries WHERE deleted_at IS NULL').all();
-    for (const { cm_id } of matterIds) rebuildMatterPeople(db, cm_id);
+    for (const { cm_id } of matterIds) rebuildMatterMemory(db, cm_id);
     setSetting(db, 'jobs_state',
       { ...(getSetting(db, 'jobs_state') || {}), peopleBackfillDone: true });
+  }
+
+  // One-time (per upgrade) cache backfill: matter_people arrived with the
+  // memory-layer migration and matter_entities with v18, and SQL migrations
+  // cannot run the JS extractors — so the first tick derives both from all
+  // existing entries. The key is versioned: peopleBackfillDone is already true
+  // on this box, and the entity half still has to run. The block above stays:
+  // it is idempotent, it costs one pass on a fresh database, and removing it
+  // would re-run the people backfill on any box that has not upgraded yet.
+  if (!state.memoryBackfillV18) {
+    const matterIds = db.prepare(
+      'SELECT DISTINCT cm_id FROM entries WHERE deleted_at IS NULL').all();
+    for (const { cm_id } of matterIds) rebuildMatterMemory(db, cm_id);
+    setSetting(db, 'jobs_state',
+      { ...(getSetting(db, 'jobs_state') || {}), memoryBackfillV18: true });
   }
 
   const purgeBefore = new Date(clock().getTime() - UNDO_WINDOW_DAYS * 86400_000).toISOString();

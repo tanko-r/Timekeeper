@@ -5,7 +5,7 @@ import { secondsToHours } from '../lib/rounding.js';
 import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
-import { loadEntry, syncNarrative, rebuildMatterPeople } from './entries.js';
+import { loadEntry, syncNarrative, rebuildMatterMemory } from './entries.js';
 import { ensureClient } from './cms.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { matterSuggestions } from './matters.js';
@@ -92,7 +92,7 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
     }
     if (timer.cm_id) {
       db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(nowIso, timer.cm_id);
-      rebuildMatterPeople(db, timer.cm_id);
+      rebuildMatterMemory(db, timer.cm_id);
     }
   })();
 
@@ -344,9 +344,9 @@ export function timersRouter({ db, clock }) {
         db.prepare('UPDATE entries SET cm_id=?, billable=?, updated_at=? WHERE id=?')
           .run(fresh.cm_id, cmRow ? cmRow.billable : 1, now(), linked.id);
         db.prepare('UPDATE matters SET last_used_at=? WHERE id=?').run(now(), fresh.cm_id);
-        rebuildMatterPeople(db, fresh.cm_id);
+        rebuildMatterMemory(db, fresh.cm_id);
         // the entry left the old matter — its people roll-up must lose it too
-        if (linked.cm_id) rebuildMatterPeople(db, linked.cm_id);
+        if (linked.cm_id) rebuildMatterMemory(db, linked.cm_id);
       })();
       entry = loadEntry(db, linked.id);
     }

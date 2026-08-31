@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { loadConfig } from '../server/config.js';
 import { openDb, nowIso } from '../server/db.js';
 import { planIntappImport } from '../server/lib/intappimport.js';
-import { rebuildMatterPeople } from '../server/routes/entries.js';
+import { rebuildMatterMemory } from '../server/routes/entries.js';
 
 // ---------- minimal .xlsx reader (sheet 1, inline via system unzip) ----------
 
@@ -153,7 +153,7 @@ const imported = db.transaction(() => {
     touched.add(matter.id);
     n++;
   }
-  for (const id of touched) rebuildMatterPeople(db, id);
+  for (const id of touched) rebuildMatterMemory(db, id);
   return { n, matters: touched.size };
 })();
 
