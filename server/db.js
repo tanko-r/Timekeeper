@@ -350,6 +350,41 @@ const MIGRATIONS = [
   DROP INDEX IF EXISTS idx_entries_exemplar;
   CREATE INDEX idx_entries_exemplar ON entries(status, narrative_ai, date DESC);
   `,
+
+  // Entity dictionary (spec 2026-08-30): the documents, organisations and
+  // people a matter has seen, feeding the ghost-text second tier. One table
+  // for all three kinds — matter_people stays exactly as it is and keeps
+  // feeding the AI prompt, and rebuildMatterMemory writes both in one pass.
+  //   matter_id NULL  = a global row, offered on every matter, ranked last.
+  //   origin 'manual' = the attorney typed it; a rebuild must never remove it.
+  //   hidden          = he suppressed it; a rebuild must never resurrect it.
+  //   locked          = he edited name or kind; a rebuild must not overwrite
+  //                     those two fields, but still updates count/last_seen_at.
+  // last_seen_at is the ENTRY DATE (YYYY-MM-DD), not a wall clock.
+  `
+  CREATE TABLE matter_entities (
+    id           INTEGER PRIMARY KEY,
+    matter_id    INTEGER REFERENCES matters(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL CHECK (length(trim(name)) > 0),
+    -- The name the extractor produced, frozen at insert. A renamed row must
+    -- still MATCH its sighting on the next rebuild, or the old name comes
+    -- straight back as a second row. NULL for a hand-added row.
+    derived_name TEXT,
+    kind         TEXT NOT NULL CHECK (kind IN ('document','org','person')),
+    count        INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TEXT,
+    origin       TEXT NOT NULL DEFAULT 'derived' CHECK (origin IN ('derived','manual')),
+    hidden       INTEGER NOT NULL DEFAULT 0,
+    locked       INTEGER NOT NULL DEFAULT 0
+  );
+  -- An EXPRESSION index, not UNIQUE(matter_id, name): SQLite treats every
+  -- NULL as distinct, so the plain form would let the global rows duplicate
+  -- each other freely.
+  CREATE UNIQUE INDEX idx_matter_entities_key
+    ON matter_entities(IFNULL(matter_id, 0), name COLLATE NOCASE);
+  CREATE INDEX idx_matter_entities_lookup
+    ON matter_entities(matter_id, kind, hidden);
+  `,
 ];
 
 const SEED_SETTINGS = {

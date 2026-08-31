@@ -107,6 +107,7 @@ test('migration v3 flips a pre-existing rounding mode to up', () => {
   // against a column that's still there errors "duplicate column name".
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
   db1.exec(`
+    DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE entries DROP COLUMN narrative_manual;
@@ -159,6 +160,7 @@ test('migration v4 backfills clients and links matters', () => {
   // survives untouched across all of this, so its later ADD COLUMN
   // (narrative_manual) must be dropped too or the replay errors on it.
   db1.exec(`
+    DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE entries DROP COLUMN narrative_manual;
@@ -223,14 +225,15 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // schema-idempotent, its only effect is making cm_id nullable — the
   // timers.held_since column, the AOT-window timers.pinned/
   // draft_narrative columns, the timers.narrative_template column, and the
-  // v15 custom-fields tables, and the AI-voice entries columns) and roll
-  // user_version back by thirteen (positional — no hardcoded version numbers)
+  // v15 custom-fields tables, the AI-voice entries columns and the v18 entity dictionary) and roll
+  // user_version back by fourteen (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
     DROP INDEX idx_entries_exemplar;
     ALTER TABLE entries DROP COLUMN ai_draft;
     ALTER TABLE entries DROP COLUMN ai_brief;
     ALTER TABLE entries DROP COLUMN narrative_ai;
+    DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
@@ -243,7 +246,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 13}`);
+  db1.pragma(`user_version = ${v - 14}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -324,20 +327,22 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   db1.prepare("INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, 'Review', 0.5, 'lease', 0)").run(eid);
   db1.prepare(`INSERT INTO timers (name, last_reset_date, held_since, accumulated_seconds)
     VALUES ('Quick timer', '2026-07-11', '2026-07-10', 1800)`).run();
-  // narrative_template, the v15 custom-fields tables and the AI-voice entries
-  // columns landed after the rebuild — undo them too so the replay window
-  // (rebuild + template column + custom fields + AI voice) applies cleanly
+  // narrative_template, the v15 custom-fields tables, the AI-voice entries
+  // columns and the v18 entity dictionary landed after the rebuild — undo them too so the replay window
+  // (rebuild + template column + custom fields + AI voice + dictionary) applies
+  // cleanly
   db1.exec(`
     DROP INDEX idx_entries_exemplar;
     ALTER TABLE entries DROP COLUMN ai_draft;
     ALTER TABLE entries DROP COLUMN ai_brief;
     ALTER TABLE entries DROP COLUMN narrative_ai;
+    DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
   `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 5}`);
+  db1.pragma(`user_version = ${v - 6}`);
   db1.close();
 
   const db2 = openDb(path);
@@ -394,4 +399,43 @@ test('v15 custom_fields: exactly one owner, unique name per owner, value cascade
   db.prepare('DELETE FROM entries WHERE id=?').run(entryId);
   assert.equal(db.prepare('SELECT COUNT(*) c FROM entry_custom_values').get().c, 0);
   db.close();
+});
+
+test('v18 matter_entities: kinds constrained, global rows unique, matter rows cascade', () => {
+  const db = openDb(':memory:');
+  const clientId = db.prepare("INSERT INTO clients (client_number) VALUES ('100001')").run().lastInsertRowid;
+  const matterId = db.prepare(
+    "INSERT INTO matters (cm_number, client_id, matter_number) VALUES ('100001-000012', ?, '000012')"
+  ).run(clientId).lastInsertRowid;
+
+  const ins = db.prepare(
+    'INSERT INTO matter_entities (matter_id, name, kind, count, last_seen_at) VALUES (?, ?, ?, ?, ?)');
+  ins.run(matterId, 'Cedar Lease Agreement', 'document', 3, '2026-08-20');
+
+  // an unknown kind is rejected
+  assert.throws(() => ins.run(matterId, 'Something', 'gadget', 1, '2026-08-20'));
+
+  // same name on the same matter is one row, case-insensitively
+  assert.throws(() => ins.run(matterId, 'cedar lease agreement', 'document', 1, '2026-08-21'));
+
+  // a GLOBAL row (matter_id NULL) is also unique — the plain UNIQUE(matter_id,
+  // name) form would not constrain these, because SQLite treats each NULL as
+  // distinct. This is the whole reason for the expression index.
+  db.prepare("INSERT INTO matter_entities (name, kind) VALUES ('Letter of Intent', 'document')").run();
+  assert.throws(() => db.prepare(
+    "INSERT INTO matter_entities (name, kind) VALUES ('letter of intent', 'document')").run());
+  // ...and a global row does not collide with a matter row of the same name
+  ins.run(matterId, 'Letter of Intent', 'document', 1, '2026-08-21');
+
+  // defaults
+  const row = db.prepare("SELECT * FROM matter_entities WHERE name='Cedar Lease Agreement'").get();
+  assert.equal(row.origin, 'derived');
+  assert.equal(row.hidden, 0);
+  assert.equal(row.locked, 0);
+  assert.equal(row.derived_name, null);
+
+  // matter rows follow the matter out; global rows do not
+  db.prepare('DELETE FROM matters WHERE id=?').run(matterId);
+  assert.equal(db.prepare('SELECT COUNT(*) c FROM matter_entities').get().c, 1);
+  assert.equal(db.prepare('SELECT name FROM matter_entities').get().name, 'Letter of Intent');
 });
