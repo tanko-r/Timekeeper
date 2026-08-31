@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cleanCandidate, isUsableExemplar, looksLikeHouseVoice, pickExemplars, pickPairs, renderGlossary,
+  cleanCandidate, isUsableExemplar, looksLikeHouseVoice, pickExemplars, pickPairs,
 } from '../server/lib/exemplars.js';
 import { SEED_PAIRS as SEED_PAIRS_FOR_TEST } from '../server/routes/ai.js';
 
@@ -195,23 +195,6 @@ test('pickPairs does not return the same pair twice', () => {
   assert.equal(out.length, 1);
 });
 
-// ── renderGlossary ────────────────────────────────────────────────────────
-
-test('renderGlossary renders abbrev to phrase lines', () => {
-  const out = renderGlossary([{ abbrev: 'psa', phrase: 'Purchase and Sale Agreement' }]);
-  assert.match(out, /psa/);
-  assert.match(out, /Purchase and Sale Agreement/);
-});
-
-test('renderGlossary returns empty string for no rows', () => {
-  assert.equal(renderGlossary([]), '');
-  assert.equal(renderGlossary(null), '');
-});
-
-test('renderGlossary caps the number of rows it renders', () => {
-  const rows = Array.from({ length: 200 }, (_, i) => ({ abbrev: `a${i}`, phrase: `Phrase ${i}` }));
-  assert.ok(renderGlossary(rows).split('\n').length <= 41);
-});
 
 // Narratives autosave 600ms after you stop typing, so a pause mid-correction
 // stores half-edited text and makes it pool-eligible. The exemplar path is

@@ -117,13 +117,17 @@ test('buildVoiceContext omits AI-authored narratives from the exemplars', async 
   });
 });
 
-test('buildVoiceContext includes the shortcuts glossary', async () => {
+// The shortcuts glossary is deliberately ABSENT (2026-08-31 prompt audit):
+// the entry box expands shortcuts deterministically as David types, so the
+// model never receives them — the list restated a solved problem, and for
+// rewrites it could only tempt the model into putting the shorthand back.
+test('buildVoiceContext carries no shortcuts glossary', async () => {
   await withServer(async (t) => {
     await t.fetchJson('POST', '/api/shortcuts', {
       abbrev: 'psa', phrase: 'Purchase and Sale Agreement',
     });
     const v = buildVoiceContext(t.db, {});
-    assert.match(v.prompt, /psa → Purchase and Sale Agreement/);
+    assert.doesNotMatch(v.prompt, /psa/);
   });
 });
 
@@ -327,15 +331,9 @@ test('a fresh generation replaces the stored draft', async () => {
   });
 });
 
-// ── the glossary is an EXPANSION authority, not a contraction one ──────────
-// 2026-08-06 feedback: after an AI rewrite, names David had already expanded
-// ("A. Hessburg") came back as the shorthand he typed ("ah"). The glossary
-// rides in as a bare list of `abbrev = phrase` equations, which reads in both
-// directions — and "make this shorter" is an outright invitation to swap the
-// long side for the short one. A rewrite's input is finished prose, so the
-// abbreviation authority has no work to do there at all; it is dropped, the
-// same way the shorthand→narrative few-shot pairs already are.
-test('buildVoiceContext exposes a rewrite prompt with the exemplars but no glossary', async () => {
+// One voice prompt for every mode (2026-08-31 audit): the glossary that
+// once split drafting from rewriting is gone, so exemplars are all there is.
+test('buildVoiceContext voice prompt has the exemplars and nothing else', async () => {
   await withServer(async (t) => {
     const cm = await makeCm(t);
     await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'psa', phrase: 'Purchase and Sale Agreement' });
@@ -345,34 +343,56 @@ test('buildVoiceContext exposes a rewrite prompt with the exemplars but no gloss
     });
     finalize(t, e.body.id);
     const v = buildVoiceContext(t.db, { cmId: cm.id, brief: 'rev lease' });
-    assert.match(v.prompt, /psa → Purchase and Sale Agreement/, 'drafting still gets the glossary');
-    assert.doesNotMatch(v.rewritePrompt, /psa/, 'a rewrite never sees the short forms');
-    assert.match(v.rewritePrompt, /Review Cedar Lease and confer with client/,
-      'but it keeps the voice exemplars');
+    assert.doesNotMatch(v.prompt, /psa/, 'no short forms in any prompt');
+    assert.match(v.prompt, /Review Cedar Lease and confer with client/, 'voice exemplars ride along');
+    assert.equal(v.rewritePrompt, undefined, 'the separate rewrite prompt is gone');
   });
 });
 
-test('the glossary states the direction it is meant to be read in', async () => {
-  await withServer(async (t) => {
-    await t.fetchJson('POST', '/api/shortcuts', { abbrev: 'psa', phrase: 'Purchase and Sale Agreement' });
-    const v = buildVoiceContext(t.db, {});
-    assert.match(v.prompt, /psa → Purchase and Sale Agreement/,
-      'an arrow, not an equals sign — equations read both ways');
-  });
-});
-
-test('buildNarrateMessages: rewrites drop the glossary, drafts keep it', () => {
-  const voice = { prompt: '\n\nGLOSSARY_BLOCK\n\nEXEMPLAR_BLOCK', rewritePrompt: '\n\nEXEMPLAR_BLOCK', turns: [] };
+test('buildNarrateMessages: every mode carries the one voice prompt', () => {
+  const voice = { prompt: '\n\nEXEMPLAR_BLOCK', turns: [] };
   const sys = (mode) => buildNarrateMessages({
     instructions: 'Base.', brief: 'rev lease', narrative: 'Review Cedar Lease.', mode, voice,
   })[0].content;
-  for (const mode of ['shorter', 'longer']) {
-    assert.doesNotMatch(sys(mode), /GLOSSARY_BLOCK/, `${mode} must not carry the glossary`);
+  for (const mode of ['draft', 'regenerate', 'shorter', 'longer']) {
     assert.match(sys(mode), /EXEMPLAR_BLOCK/, `${mode} keeps the voice exemplars`);
   }
-  for (const mode of ['draft', 'regenerate']) {
-    assert.match(sys(mode), /GLOSSARY_BLOCK/, `${mode} expands shorthand, so it needs the glossary`);
-  }
+});
+
+// 2026-08-31 prompt audit, David's notes on the transcript:
+// - the live request should end with a clear call to action;
+// - the few-shot turns should say what they are;
+// - "longer" (the Expand button) should license unpacking plausible detail.
+test('buildNarrateMessages: draft asks for the narrative at the end of the request', () => {
+  const msgs = buildNarrateMessages({ instructions: 'Base.', brief: 'rev lease', mode: 'draft', voice: { prompt: '', turns: [] } });
+  assert.match(msgs.at(-1).content, /Work done: rev lease/);
+  assert.match(msgs.at(-1).content, /Write the finished billing narrative for this work\.$/);
+});
+
+test('buildNarrateMessages: the few-shot turns are labeled as worked examples', () => {
+  const withShots = buildNarrateMessages({
+    instructions: 'Base.', brief: 'rev lease', mode: 'draft',
+    voice: { prompt: '', turns: [{ role: 'user', content: 'Work done: x' }, { role: 'assistant', content: 'X.' }] },
+  })[0].content;
+  assert.match(withShots, /worked examples/);
+  const noShots = buildNarrateMessages({
+    instructions: 'Base.', brief: 'rev lease', mode: 'draft', voice: { prompt: '', turns: [] },
+  })[0].content;
+  assert.doesNotMatch(noShots, /worked examples/, 'no label when there is nothing to label');
+});
+
+test('buildNarrateMessages: longer mode states the fuller-entry exception in the system prompt', () => {
+  const sys = (mode) => buildNarrateMessages({
+    instructions: 'Brevity is the point.', narrative: 'Review Cedar Lease.', brief: 'x', mode,
+    voice: { prompt: '', turns: [] },
+  })[0].content;
+  assert.match(sys('longer'), /fuller entry/);
+  assert.doesNotMatch(sys('shorter'), /fuller entry/);
+  const ask = buildNarrateMessages({
+    instructions: 'Base.', narrative: 'Review Cedar Lease.', mode: 'longer', voice: { prompt: '', turns: [] },
+  }).at(-1).content;
+  assert.match(ask, /^Billing narrative:\n\nReview Cedar Lease\./, 'narrative first');
+  assert.match(ask, /plausibly performed/, 'instruction last, licensing unpacked detail');
 });
 
 test('buildNarrateMessages: a voice object without a rewrite prompt still works', () => {

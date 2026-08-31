@@ -4,7 +4,7 @@ import { allocateTenths } from '../lib/allocate.js';
 import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts, stripTimeAmounts } from '../lib/timeAmounts.js';
-import { pickExemplars, pickPairs, renderGlossary } from '../lib/exemplars.js';
+import { pickExemplars, pickPairs } from '../lib/exemplars.js';
 
 // Local-LLM narrative assist via Ollama (localhost only — no cloud calls).
 // Brief description in → professional narrative + optional task split out.
@@ -178,8 +178,6 @@ export function buildVoiceContext(db, { cmId = null, brief = '', seedPairs = nul
   `).all().map((r) => r.narrative);
 
   const exemplars = pickExemplars(own.concat(recent), { count: 6 });
-  const glossary = renderGlossary(db.prepare(
-    'SELECT abbrev, phrase FROM shortcuts ORDER BY id DESC').all());
 
   const pool = db.prepare(`
     SELECT ai_brief AS brief, narrative, cm_id, date FROM entries
@@ -191,32 +189,28 @@ export function buildVoiceContext(db, { cmId = null, brief = '', seedPairs = nul
   const seeds = seedPairs && seedPairs.length ? seedPairs : SEED_PAIRS;
   const pairs = pickPairs(pool, seeds, { count: 6, cmId, brief });
 
-  // Two blocks, because they are not wanted on the same occasions. The
-  // exemplars teach voice and belong in every call. The glossary is an
-  // EXPANSION authority — it earns its place only when the input is shorthand.
-  const glossaryBlock = glossary
-    ? `The attorney's shorthand, and the full wording it stands for:\n${glossary}`
-    : null;
-  const exemplarBlock = exemplars.length
-    ? `The attorney's entries:\n${exemplars.join('\n')}`
-    : null;
-  const join = (blocks) => {
-    const kept = blocks.filter(Boolean);
-    return kept.length ? `\n\n${kept.join('\n\n')}` : '';
-  };
+  // The exemplars teach voice and belong in every call. The shortcuts
+  // glossary used to ride along here as an expansion authority, but the entry
+  // box already expands shortcuts deterministically as David types, so the
+  // model never sees them — and for rewrites the list could only tempt the
+  // model into putting the shorthand back (2026-08-06). Removed on the
+  // 2026-08-31 prompt audit: it restated a solved problem in every request.
   return {
-    prompt: join([glossaryBlock, exemplarBlock]),
-    // Rewrites (shorter / longer) get this one instead: their input is already
-    // finished prose, so a list of short forms has nothing left to expand and
-    // can only tempt the model into putting the shorthand back (2026-08-06
-    // feedback). Same reason the shorthand→narrative pairs are dropped below.
-    rewritePrompt: join([exemplarBlock]),
+    prompt: exemplars.length
+      ? `\n\nThe attorney's entries, showing the voice and register to write in:\n${exemplars.join('\n')}`
+      : '',
     turns: pairs.flatMap((p) => [
       { role: 'user', content: `Work done: ${p.brief}` },
       { role: 'assistant', content: p.narrative },
     ]),
   };
 }
+
+// Labels the few-shot turns for what they are (2026-08-31 audit: the pairs
+// appeared in the transcript with no explanation of what they were doing
+// there). A small model imitates them either way; the label removes the
+// ambiguity about whether they are live work.
+export const FEW_SHOT_NOTE = `\n\nThe earlier turns of this conversation are worked examples of this exact task — the attorney's input, then the finished answer. Imitate them; their content is not part of the current request.`;
 
 export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
 
@@ -251,10 +245,17 @@ export function timeGroundingRule(totalHours) {
 
 // The two rewrite asks, kept in one place so the demonstrations below are
 // worded identically to the live request — a few-shot turn only teaches if the
-// model reads it as the same kind of question.
+// model reads it as the same kind of question. Narrative first, instruction
+// last (2026-08-31 prompt audit: David wanted a clear call to action at the
+// END of the request, closest to where the model starts writing).
+//
+// "longer" is the Expand button's mode: David writes a decent narrative and
+// wants a fuller, somewhat longer one, with the model filling in the steps he
+// plausibly performed. Guessing detail is invited; new people and documents
+// are not.
 export const REWRITE_ASK = {
-  shorter: (n) => `Rewrite this billing narrative to be tighter and shorter while keeping every distinct piece of work:\n\n${n}`,
-  longer: (n) => `Rewrite this billing narrative with slightly more specific detail. Do not invent facts, names, or documents:\n\n${n}`,
+  shorter: (n) => `Billing narrative:\n\n${n}\n\nRewrite this narrative to be tighter and shorter while keeping every distinct piece of work.`,
+  longer: (n) => `Billing narrative:\n\n${n}\n\nRewrite this narrative as a fuller, more detailed version, somewhat longer than the original. Unpack each task into the concrete steps the attorney plausibly performed to complete it. Keep every party, document and subject named in the narrative; do not add people or documents it does not name.`,
 };
 
 // What "shorter" is allowed to cut, shown rather than stated (2026-08-06
@@ -268,9 +269,13 @@ export const REWRITE_SHOTS = {
     before: 'Review and analyze the Purchase and Sale Agreement and confer with J. Larson regarding the escrow schedule; draft the revisions to the easement amendment.',
     after: 'Review Purchase and Sale Agreement and confer with J. Larson regarding escrow schedule; draft revisions to easement amendment.',
   }],
+  // The "longer" pair demonstrates the licensed kind of guessing: provisions
+  // a lease review plausibly covered and a summary step — detail about HOW
+  // the named work was done, never a new party or document. House fictional
+  // content only.
   longer: [{
     before: 'Review lease and email client.',
-    after: 'Review and analyze lease and email to client regarding same.',
+    after: 'Review and analyze lease with attention to term, renewal and assignment provisions; prepare summary of key issues and email to client regarding same.',
   }],
 };
 
@@ -288,21 +293,23 @@ export function rewriteShots(mode, overrides) {
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
 export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice, rewriteShotsOverride }) {
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
-  // A rewrite is handed finished prose, so it takes the voice block WITHOUT
-  // the abbreviation glossary (2026-08-06 feedback: names David had already
-  // expanded came back as shorthand). Older callers that only supply `prompt`
-  // keep their previous behaviour.
   const rewriting = mode === 'shorter' || mode === 'longer';
-  const voicePrompt = (voice && (rewriting ? (voice.rewritePrompt ?? voice.prompt) : voice.prompt)) || '';
-  const system = `${base}${voicePrompt}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}`;
-  const user = rewriting
-    ? [context, REWRITE_ASK[mode](narrative)].filter(Boolean).join('\n\n')
-    : [context, `Work done: ${brief}`].filter(Boolean).join('\n\n');
+  const voicePrompt = (voice && voice.prompt) || '';
   // Few-shot pairs sit between the system prompt and the live request so the
   // model reads them as prior exchanges it should imitate. Rewrites get their
   // OWN demonstrations: the voice pairs are shorthand→narrative, which is the
   // wrong transformation for an input that is already finished prose.
   const shots = rewriting ? rewriteShots(mode, rewriteShotsOverride) : ((voice && voice.turns) || []);
+  // "longer" must out-shout the base instructions' brevity rule — the ask is
+  // a fuller entry, so the exception is stated in the system prompt too, not
+  // only in the live request (2026-08-31 audit).
+  const modeNote = mode === 'longer'
+    ? '\n\nFor this request the attorney wants a fuller entry than usual: somewhat longer than the narrative given, with each task unpacked into the concrete steps plausibly performed.'
+    : '';
+  const system = `${base}${voicePrompt}${modeNote}\n\nRespond with ONLY the billing narrative itself — plain text. No JSON, no quotes, no preamble, no explanations.\n\nNever include time amounts, durations, or task-billing parentheticals such as "(0.5)" — the app records time separately from the narrative text.${timeGroundingRule(totalHours)}${context ? NAME_RESOLUTION_RULE : ''}${shots.length ? FEW_SHOT_NOTE : ''}`;
+  const user = rewriting
+    ? [context, REWRITE_ASK[mode](narrative)].filter(Boolean).join('\n\n')
+    : [context, `Work done: ${brief}`, 'Write the finished billing narrative for this work.'].filter(Boolean).join('\n\n');
   return [{ role: 'system', content: system }, ...shots, { role: 'user', content: user }];
 }
 
@@ -411,7 +418,7 @@ export function aiRouter({ db }) {
       // The voice block sits before the JSON contract so the format
       // rules stay last and closest to the request — the exemplars
       // teach register, the contract still owns the response shape.
-      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') + (voice.turns.length ? FEW_SHOT_NOTE : '') },
       // The few-shot pairs, which this route built and then dropped on
       // the floor until 2026-08-11. /ai/narrate has always spliced them
       // in, and that is the whole reason plain Expand reads well while

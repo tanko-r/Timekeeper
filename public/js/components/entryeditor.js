@@ -578,7 +578,11 @@ export function EntryEditor({ spec, settings, onClose }) {
     // undone (2026-07-16 / 2026-07-20 feedback). Restores AUTO mode too.
     setAiUndo({ auto: autoOn, narrative: local.narrative });
     if (autoOn) update({ auto: false, narrative: seed });
-    if (kind === 'expand') { if (aiSplit) aiExpand(seed); else aiNarrate('draft', seed); return; }
+    // Plain Expand runs the 'longer' rewrite (2026-08-31 audit): David's
+    // input is already a decent narrative, and 'draft' treated it as
+    // shorthand — which handed the finished prose straight back. 'longer'
+    // asks for a fuller version with the plausible steps unpacked.
+    if (kind === 'expand') { if (aiSplit) aiExpand(seed); else aiNarrate('longer', seed); return; }
     if (kind === 'shorten') { aiNarrate('shorter', seed); return; }
     aiNarrate('regenerate', seed);
   }
