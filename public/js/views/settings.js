@@ -1,6 +1,7 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, Field, emitToast } from '/js/ui.js';
 import { useShortcuts, refreshShortcuts } from '/js/components/shortcuts.js';
+import { CmPicker } from '/js/components/cmpicker.js';
 
 // Category pages (2026-07-15 feedback): the sidebar's Settings entry expands
 // into these; each page renders one or two of the existing cards. Exported
@@ -10,6 +11,7 @@ export const SETTINGS_CATEGORIES = [
   ['ai', 'AI assist'],
   ['export', '.TIM export'],
   ['codes', 'Codes & shortcuts'],
+  ['dictionary', 'Dictionary'],
   ['validation', 'Validation'],
   ['server', 'Remote & backups'],
 ];
@@ -25,6 +27,7 @@ export function SettingsView({ page, settings, reloadSettings, authState, reload
     ],
     export: [html`<${TimCard} key="tim" settings=${settings} reloadSettings=${reloadSettings} />`],
     codes: [html`<${TaskCodesCard} key="codes" />`, html`<${ShortcutsCard} key="shortcuts" />`],
+    dictionary: [html`<${DictionaryCard} key="dictionary" />`],
     validation: [html`<${ValidationCard} key="validation" settings=${settings} reloadSettings=${reloadSettings} />`],
     server: [
       html`<${RemoteCard} key="remote" authState=${authState} reloadAuth=${reloadAuth} />`,
@@ -541,6 +544,104 @@ function ShortcutsCard() {
               <td>${s.phrase}</td>
               <td><button class="btn btn-ghost btn-sm" title="Delete shortcut"
                 onClick=${async () => { await api.del(`/api/shortcuts/${s.id}`); await refreshShortcuts(); }}>✕</button></td>
+            </tr>`)}</tbody>
+        </table></div>`}
+    </div>`;
+}
+
+const KIND_LABEL = { document: 'Document', org: 'Organisation', person: 'Person' };
+
+// The entity dictionary behind ghost text (spec 2026-08-30). Most rows are
+// derived from his own entries; this page is where a wrong one gets fixed and
+// a missing one gets added. Hidden rows stay listed, struck through — a
+// suppressed row he cannot see is a row he cannot restore.
+function DictionaryCard() {
+  const [scope, setScope] = useState(null);   // null = global rows
+  const [rows, setRows] = useState([]);
+  const [name, setName] = useState('');
+  const [kind, setKind] = useState('document');
+
+  const load = async () => {
+    const q = scope ? `?matter_id=${scope.id}` : '';
+    setRows((await api.get(`/api/dictionary${q}`)).rows);
+  };
+  useEffect(() => { load().catch((e) => emitToast(e.message, { error: true })); }, [scope]);
+
+  const guard = (p) => p.then(load).catch((e) => emitToast(e.message, { error: true }));
+
+  return html`
+    <div class="card dictionary-card">
+      <h2>Dictionary</h2>
+      <p class="muted small">
+        The documents, organisations and people ghost text offers while you type.
+        Most of these are read out of your own entries — fix a wrong one here, or add
+        one the app has not seen yet. A row needs two sightings before it starts
+        predicting; one you add by hand predicts straight away.
+      </p>
+      <p class="muted small">
+        ✕ removes a row you added. On a row read out of your entries it hides the row
+        instead — deleting one would only bring it back on your next entry — and a
+        hidden row stays listed, struck through, so you can put it back.
+      </p>
+
+      <${Field} label="Scope" hint="Global rows are offered on every matter, ranked last.">
+        <div class="row dictionary-scope">
+          <button class=${`btn btn-sm ${scope ? '' : 'on'}`}
+            onClick=${() => setScope(null)}>Global</button>
+          <${CmPicker} value=${scope} onChange=${setScope} allowCreate=${false}
+            placeholder="…or one matter" />
+        </div>
+      <//>
+
+      <div class="row dictionary-add">
+        <input placeholder="Name" value=${name} onInput=${(e) => setName(e.target.value)} />
+        <select value=${kind} onChange=${(e) => setKind(e.target.value)}>
+          ${Object.entries(KIND_LABEL).map(([k, label]) => html`
+            <option key=${k} value=${k}>${label}</option>`)}
+        </select>
+        <button class="btn btn-sm" onClick=${() => {
+          if (!name.trim()) return;
+          guard(api.post('/api/dictionary', {
+            name, kind, matter_id: scope ? scope.id : null,
+          }).then(() => setName('')));
+        }}>Add</button>
+      </div>
+
+      ${rows.length === 0 ? html`<p class="muted small">Nothing here yet.</p>` : html`
+        <div class="table-wrap"><table class="tk">
+          <thead><tr>
+            <th>Name</th><th>Kind</th><th>Uses</th><th>Last used</th><th>Where</th><th></th>
+          </tr></thead>
+          <tbody>${rows.map((row) => html`
+            <tr key=${row.id} class=${row.hidden ? 'hidden-row' : ''}>
+              <td>
+                <input value=${row.name} class="inline-edit"
+                  onBlur=${(e) => e.target.value !== row.name
+                    && guard(api.patch(`/api/dictionary/${row.id}`, { name: e.target.value }))} />
+              </td>
+              <td>
+                <select value=${row.kind}
+                  onChange=${(e) => guard(api.patch(`/api/dictionary/${row.id}`, { kind: e.target.value }))}>
+                  ${Object.entries(KIND_LABEL).map(([k, label]) => html`
+                    <option key=${k} value=${k}>${label}</option>`)}
+                </select>
+              </td>
+              <td class=${row.origin === 'derived' && row.count < 2 ? 'muted' : ''}
+                  title=${row.origin === 'derived' && row.count < 2 ? 'Not predicting yet — seen once' : ''}>
+                ${row.count}
+              </td>
+              <td class="muted small">${row.last_seen_at || '—'}</td>
+              <td class="muted small">
+                ${row.matter_id == null ? 'Global' : 'This matter'}${row.origin === 'manual' ? ' · added' : ''}
+              </td>
+              <td>
+                ${row.hidden ? html`
+                  <button class="btn btn-ghost btn-sm" title="Unhide"
+                    onClick=${() => guard(api.patch(`/api/dictionary/${row.id}`, { hidden: 0 }))}>↩</button>` : html`
+                  <button class="btn btn-ghost btn-sm"
+                    title=${row.origin === 'manual' ? 'Remove' : 'Hide'}
+                    onClick=${() => guard(api.del(`/api/dictionary/${row.id}`))}>✕</button>`}
+              </td>
             </tr>`)}</tbody>
         </table></div>`}
     </div>`;

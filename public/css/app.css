@@ -1025,3 +1025,26 @@ tr.import-skip td { opacity: 0.55; }
   font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ghost-list button.on, .ghost-list button:hover { background: var(--surface-2); }
+
+/* A hidden dictionary row stays visible, struck through — a suppression he
+   cannot see is one he cannot undo. */
+.dictionary-card tr.hidden-row td { opacity: .5; }
+.dictionary-card tr.hidden-row td:first-child input { text-decoration: line-through; }
+.dictionary-card .inline-edit { width: 100%; border: 0; background: none; font: inherit; }
+.dictionary-card .inline-edit:focus { background: var(--surface-2); }
+/* Scope and add rows wrap rather than pushing the matter picker off a phone.
+   The name box takes the slack; the kind menu and Add keep their own width so
+   they stay on the same line at any sane card width. */
+.dictionary-card .dictionary-scope,
+.dictionary-card .dictionary-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.dictionary-card .dictionary-scope .cmpicker,
+.dictionary-card .dictionary-add input { flex: 1 1 180px; min-width: 0; }
+.dictionary-card .dictionary-add select { flex: 0 0 auto; width: auto; }
+.dictionary-card .dictionary-add .btn { flex: 0 0 auto; }
+/* Below this the table scrolls inside .table-wrap instead of squeezing the
+   name column down to a few letters. The min-width:0 pair is what keeps that
+   scroll INSIDE the card: a grid item and a flex/table child both default to
+   min-width:auto, so without it the wide table pushes the whole page sideways. */
+.dictionary-card { min-width: 0; }
+.dictionary-card .table-wrap { min-width: 0; max-width: 100%; }
+.dictionary-card table.tk { min-width: 520px; }

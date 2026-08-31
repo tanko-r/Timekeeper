@@ -1684,6 +1684,37 @@ await step('ghost text: a trigger word predicts an entity; ↓ opens the list', 
   if (!seeded.every((e) => e && e.id)) throw new Error('entry seeding failed');
 });
 
+await step('settings: dictionary removes an added row and hides a derived one', async () => {
+  await page.goto(`${base}/#/settings/dictionary`, { waitUntil: 'domcontentloaded' });
+  await waitFor('.dictionary-card');
+  // Rows show their name in an editable input, so match on the input's value.
+  const ROW = `[...document.querySelectorAll('.dictionary-card tbody tr')]
+    .find((tr) => tr.querySelector('.inline-edit')?.value.includes(LABEL))`;
+  const rowShows = (label) => page.waitForFunction(
+    (src, LABEL) => !!eval(src), { timeout: 5000 }, ROW, label); // eslint-disable-line no-eval
+  const rowGone = (label) => page.waitForFunction(
+    (src, LABEL) => !eval(src), { timeout: 5000 }, ROW, label); // eslint-disable-line no-eval
+
+  // a row he added by hand: ✕ removes it outright
+  await type('.dictionary-card input[placeholder="Name"]', 'Standard Form Lease');
+  await clickText('.dictionary-card button', 'Add');
+  await rowShows('Standard Form Lease');
+  await page.click('.dictionary-card tbody tr button[title="Remove"]');
+  await rowGone('Standard Form Lease');
+
+  // a row read out of his entries: ✕ hides it, and it stays listed
+  await page.click('.dictionary-card .cmpicker input');
+  await page.type('.dictionary-card .cmpicker input', 'Acme lease', { delay: 5 });
+  await clickText('.cmpicker-item .name', 'Acme lease dispute');
+  await rowShows('Cedar Utility Easement');
+  await page.evaluate((src, LABEL) => {
+    eval(src).querySelector('button[title="Hide"]').click(); // eslint-disable-line no-eval
+  }, ROW, 'Cedar Utility Easement');
+  await page.waitForFunction(
+    () => !!document.querySelector('.dictionary-card tbody tr.hidden-row'), { timeout: 4000 });
+  await shot('settings-dictionary');
+});
+
 await browser.close();
 server.close();
 db.close();
