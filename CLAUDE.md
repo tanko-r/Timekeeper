@@ -17,7 +17,11 @@ daily entry; exports CSV for manual keying into the firm's billing system.
 - TDD: failing test first (`npm test`, node:test). E2E:
   `node scripts/e2e-smoke.mjs` (headless system Chromium, real server + temp DB).
 - Schema changes = append a migration to `MIGRATIONS` in `server/db.js`
-  (PRAGMA user_version); never mutate old migrations.
+  (PRAGMA user_version); never mutate old migrations. Adding one also means
+  updating the **migration-replay tests** in `test/db.test.js`: four of them
+  hand-undo every later migration before replaying, so each needs a `DROP` for
+  anything the new migration creates, and the two that roll `user_version`
+  back by a fixed count need that count raised by one.
 
 ## Deployment on this box
 
