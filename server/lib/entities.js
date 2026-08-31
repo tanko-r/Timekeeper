@@ -125,7 +125,15 @@ function trimJoiners(words) {
 
 function classify({ run, atStart }, people) {
   let words = run;
-  if (words.length && LEAD_VERBS.has(words[0].toLowerCase())) words = words.slice(1);
+  if (words.length && LEAD_VERBS.has(words[0].toLowerCase())) {
+    words = words.slice(1);
+  } else if (words.length > 1 && words[1].toLowerCase() === 'the') {
+    // LEAD_VERBS can never be complete — "Recirculate the Access Agreement"
+    // was captured whole until this rule existed. English does not put a
+    // determiner inside a noun phrase, so a capitalised word sitting directly
+    // in front of "the" is a verb, whatever the list happens to know.
+    words = words.slice(1);
+  }
   words = trimJoiners(words);
   if (!words.length) return [];
   // A single letter is an initial, so the run is somebody's name that

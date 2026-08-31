@@ -49,6 +49,15 @@ test('the matter tag is stripped before anything else', () => {
   assert.deepEqual(names('(YEL) Revise the Access Agreement.'), ['document:Access Agreement']);
 });
 
+test('a capitalised verb the list does not know is still not part of the name', () => {
+  // LEAD_VERBS cannot list every verb; "the" straight after a capitalised word
+  // is the grammar that gives it away
+  assert.deepEqual(names('Recirculate the Access Agreement.'),
+    ['document:Access Agreement']);
+  assert.deepEqual(names('Revise the Access Agreement; recirculate the Access Agreement.'),
+    ['document:Access Agreement']);
+});
+
 test('a bare head noun is not a document', () => {
   assert.deepEqual(names('Revise the Agreement.'), []);
 });
