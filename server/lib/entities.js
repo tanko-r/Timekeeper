@@ -166,3 +166,37 @@ function classify({ run, atStart }, people) {
   });
   return out;
 }
+
+const DAY_MS = 86_400_000;
+// A derived row must be seen twice before it predicts, so a one-off typo never
+// becomes a suggestion. A row the attorney typed himself is wanted from the
+// moment he types it, so the floor does not apply to it.
+const MIN_USES = 2;
+
+// Frequency × recency, the phrasebook's decay so the two tiers age at the same
+// rate. rankPhrases decays each sighting separately; this table stores only a
+// count and a last date, so this is that shape approximated. Accepted (spec):
+// entities are ranked against each other, never against phrases.
+export function rankEntities(rows, {
+  today, halfLifeDays = 30, minUses = MIN_USES, limit = 20,
+} = {}) {
+  const todayMs = Date.parse(`${today}T00:00:00Z`);
+  return (rows || [])
+    .filter((r) => r && !r.hidden)
+    .filter((r) => r.origin === 'manual' || (r.count || 0) >= minUses)
+    .map((r) => {
+      // No date = a hand-typed row that has never been seen in an entry. Score
+      // it as a single fully-decayed sighting: present, but under anything the
+      // matter actually used.
+      const ageDays = r.last_seen_at
+        ? Math.max(0, (todayMs - Date.parse(`${r.last_seen_at}T00:00:00Z`)) / DAY_MS)
+        : Infinity;
+      const decay = ageDays === Infinity ? 0 : Math.pow(0.5, ageDays / halfLifeDays);
+      const score = Math.max(0, r.count || 0) * decay;
+      return { ...r, score: Math.round(score * 1000) / 1000 };
+    })
+    .sort((a, b) => b.score - a.score
+      || (b.count || 0) - (a.count || 0)
+      || a.name.localeCompare(b.name))
+    .slice(0, limit);
+}

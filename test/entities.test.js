@@ -62,3 +62,48 @@ test('empty and missing input', () => {
   assert.deepEqual(extractEntities(''), []);
   assert.deepEqual(extractEntities(null), []);
 });
+
+import { rankEntities } from '../server/lib/entities.js';
+
+const row = (name, count, last, extra = {}) => ({
+  name, kind: 'document', count, last_seen_at: last,
+  origin: 'derived', hidden: 0, ...extra,
+});
+
+test('rankEntities: recent beats stale at equal count', () => {
+  const out = rankEntities([
+    row('Stale Agreement', 4, '2026-05-01'),
+    row('Fresh Agreement', 4, '2026-08-29'),
+  ], { today: '2026-08-30' });
+  assert.deepEqual(out.map((e) => e.name), ['Fresh Agreement', 'Stale Agreement']);
+  assert.ok(out[0].score > out[1].score);
+});
+
+test('rankEntities: a derived row needs two sightings, a manual row needs none', () => {
+  const out = rankEntities([
+    row('Once Seen Agreement', 1, '2026-08-29'),
+    row('Typed By Hand', 0, null, { origin: 'manual', count: 0 }),
+  ], { today: '2026-08-30' });
+  assert.deepEqual(out.map((e) => e.name), ['Typed By Hand']);
+});
+
+test('rankEntities: hidden rows never rank', () => {
+  const out = rankEntities([
+    row('Wrong Capture Agreement', 9, '2026-08-29', { hidden: 1 }),
+    row('Real Agreement', 2, '2026-08-29'),
+  ], { today: '2026-08-30' });
+  assert.deepEqual(out.map((e) => e.name), ['Real Agreement']);
+});
+
+test('rankEntities: a manual row with no date sorts below dated rows', () => {
+  const out = rankEntities([
+    row('Typed By Hand', 0, null, { origin: 'manual' }),
+    row('Seen Twice Agreement', 2, '2026-08-29'),
+  ], { today: '2026-08-30' });
+  assert.deepEqual(out.map((e) => e.name), ['Seen Twice Agreement', 'Typed By Hand']);
+});
+
+test('rankEntities: empty and missing input', () => {
+  assert.deepEqual(rankEntities([], { today: '2026-08-30' }), []);
+  assert.deepEqual(rankEntities(undefined, { today: '2026-08-30' }), []);
+});
