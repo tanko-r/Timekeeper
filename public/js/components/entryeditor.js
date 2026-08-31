@@ -74,6 +74,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   const setLastAiTask = (v) => { localStorage.setItem('tk:lastAiTask', v); setLastAiTaskState(v); };
   const [aiBusy, setAiBusy] = useState(false);
   const [aiUndo, setAiUndo] = useState(null); // pre-rewrite {auto, narrative} snapshot, or null
+  // The exact request the server sent to Ollama for the most recent AI run —
+  // {model, mode, temperature, messages} echoed back by both AI endpoints.
+  // Shown under "Last AI request" so a bad rewrite can be audited.
+  const [aiDebug, setAiDebug] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // "Reuse" — this matter's past narratives
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
@@ -492,6 +496,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         cm_id: local?.cm?.id, // lets the server attach the matter's people/phrases
         ...(preSplit ? { clauses: clauses.map((c) => c.fragment) } : {}),
       });
+      if (r.debug) setAiDebug({ ...r.debug, mode: preSplit ? 'expand (1:1 rewrite)' : 'expand (split)' });
       // A pre-split seed must come back with exactly one task per clause, so
       // any other count falls back to matching. Shorthand only falls back when
       // the model came back SHORT — coming back with more tasks than clauses
@@ -549,6 +554,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         totalHours: total > 0 ? total : (sum > 0 ? sum : undefined),
       }, (m) => {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
+        if (m.debug) setAiDebug(m.debug);
         if (m.error) throw new Error(m.message || m.error);
         if (m.token) { acc += m.token; update({ narrative: acc }); }
         if (m.done) update({ narrative: m.narrative, aiText: m.narrative, aiBrief: seed, aiAuto: false });
@@ -593,6 +599,16 @@ export function EntryEditor({ spec, settings, onClose }) {
     if (!aiUndo) return;
     update({ auto: aiUndo.auto, narrative: aiUndo.narrative });
     setAiUndo(null);
+  }
+
+  function copyAiDebug() {
+    const d = aiDebug;
+    if (!d) return;
+    const text = [
+      `model: ${d.model}`, `mode: ${d.mode}`, `temperature: ${d.temperature}`, '',
+      ...d.messages.map((m) => `─── ${m.role} ───\n${m.content}`),
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => emitToast('Copied AI request'));
   }
 
   function aiTaskLabel(kind) {
@@ -791,6 +807,26 @@ export function EntryEditor({ spec, settings, onClose }) {
         <${NarrativeHistory} cmId=${local.cm.id}
           cmLabel=${local.cm.short_name || local.cm.cm_number}
           onInsert=${insertFromHistory} onClose=${() => setHistoryOpen(false)} />` : null}
+
+      ${aiDebug ? html`
+        <details style=${{ marginTop: '6px' }}>
+          <summary class="muted small" style=${{ cursor: 'pointer' }}>
+            Last AI request — ${aiDebug.model} · ${aiDebug.mode} · temp ${aiDebug.temperature} · ${aiDebug.messages.length} messages
+          </summary>
+          <div style=${{ marginTop: '4px' }}>
+            ${aiDebug.messages.map((m, i) => html`
+              <div key=${i}>
+                <div class="muted small" style=${{ marginTop: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>${m.role}</div>
+                <pre class="small mono" style=${{
+                  whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: '2px 0 0',
+                  maxHeight: '280px', overflow: 'auto', background: 'var(--surface-2)',
+                  border: '1px solid var(--border)', borderRadius: '6px', padding: '8px',
+                }}>${m.content}</pre>
+              </div>`)}
+            <button type="button" class="btn btn-sm" style=${{ marginTop: '8px' }} onClick=${copyAiDebug}>
+              Copy full request</button>
+          </div>
+        </details>` : null}
 
       <${ValidationList} findings=${validation} />
 

@@ -405,6 +405,39 @@ export function aiRouter({ db }) {
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
     const voice = buildVoiceContext(db, { cmId: b.cm_id, brief, seedPairs: cfg.seedPairs });
 
+    // Assembled once so the audit record below is byte-for-byte what Ollama
+    // receives (2026-08-31: David wants to see the exact prompt per request).
+    const messages = [
+      // The voice block sits before the JSON contract so the format
+      // rules stay last and closest to the request — the exemplars
+      // teach register, the contract still owns the response shape.
+      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
+      // The few-shot pairs, which this route built and then dropped on
+      // the floor until 2026-08-11. /ai/narrate has always spliced them
+      // in, and that is the whole reason plain Expand reads well while
+      // Expand → split into tasks did not: the split was the ONLY AI
+      // path in the app running with no demonstrations at all. Measured
+      // on llama3.1:8b, adding them turned "draft psa; review loi; email
+      // w client re title co comments" from two tasks (the email clause
+      // silently gone) into three, properly expanded, and stopped the
+      // model answering in gerunds and inventing a person who appears
+      // nowhere in the brief. They go AFTER the system message for the
+      // same reason as in buildNarrateMessages — prior exchanges to
+      // imitate, not instructions to follow.
+      ...voice.turns,
+      {
+        role: 'user',
+        content: [
+          matterCtx,
+          rewriting
+            ? clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')
+            : (totalHours
+              ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
+              : `Work done: ${brief}`),
+        ].filter(Boolean).join('\n\n'),
+      },
+    ];
+
     let content;
     try {
       const resp = await fetch(`${cfg.url}/api/chat`, {
@@ -417,36 +450,7 @@ export function aiRouter({ db }) {
           keep_alive: KEEP_ALIVE,
           format: 'json',
           options: { temperature: 0.3 },
-          messages: [
-            // The voice block sits before the JSON contract so the format
-            // rules stay last and closest to the request — the exemplars
-            // teach register, the contract still owns the response shape.
-            { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') },
-            // The few-shot pairs, which this route built and then dropped on
-            // the floor until 2026-08-11. /ai/narrate has always spliced them
-            // in, and that is the whole reason plain Expand reads well while
-            // Expand → split into tasks did not: the split was the ONLY AI
-            // path in the app running with no demonstrations at all. Measured
-            // on llama3.1:8b, adding them turned "draft psa; review loi; email
-            // w client re title co comments" from two tasks (the email clause
-            // silently gone) into three, properly expanded, and stopped the
-            // model answering in gerunds and inventing a person who appears
-            // nowhere in the brief. They go AFTER the system message for the
-            // same reason as in buildNarrateMessages — prior exchanges to
-            // imitate, not instructions to follow.
-            ...voice.turns,
-            {
-              role: 'user',
-              content: [
-                matterCtx,
-                rewriting
-                  ? clauses.map((c, i) => `${i + 1}. ${c}`).join('\n')
-                  : (totalHours
-                    ? `Total time: ${totalHours} hours.\nWork done: ${brief}`
-                    : `Work done: ${brief}`),
-              ].filter(Boolean).join('\n\n'),
-            },
-          ],
+          messages,
         }),
         // 12B on CPU can be slow — generous timeout.
         signal: AbortSignal.timeout(180_000),
@@ -486,6 +490,9 @@ export function aiRouter({ db }) {
         fragment: t.fragment,
         hours: hours ? hours[i] : null,
       })),
+      // The exact request that produced this answer, for the editor's
+      // "Last AI request" audit view.
+      debug: { model: cfg.model, temperature: 0.3, messages },
     });
   });
 
@@ -524,6 +531,9 @@ export function aiRouter({ db }) {
     const upstream = new AbortController();
     res.on('close', () => { if (!res.writableEnded) upstream.abort(); });
 
+    // regenerate wants a *different* sample; rewrites stay conservative
+    const temperature = mode === 'regenerate' ? 0.8 : 0.3;
+
     let resp;
     try {
       resp = await fetch(`${cfg.url}/api/chat`, {
@@ -531,8 +541,7 @@ export function aiRouter({ db }) {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           model: cfg.model, stream: true, think: false, keep_alive: KEEP_ALIVE,
-          // regenerate wants a *different* sample; rewrites stay conservative
-          options: { temperature: mode === 'regenerate' ? 0.8 : 0.3 },
+          options: { temperature },
           messages,
         }),
         signal: AbortSignal.any([upstream.signal, AbortSignal.timeout(180_000)]),
@@ -549,6 +558,10 @@ export function aiRouter({ db }) {
     res.setHeader('content-type', 'application/x-ndjson');
     res.setHeader('cache-control', 'no-store');
     const send = (obj) => res.write(JSON.stringify(obj) + '\n');
+    // First line: the exact request Ollama received, ahead of any token —
+    // the editor's "Last AI request" audit view. Old clients ignore unknown
+    // line shapes, so this is safe to prepend.
+    send({ debug: { model: cfg.model, mode, temperature, messages } });
     let full = '';
     try {
       let buf = '';

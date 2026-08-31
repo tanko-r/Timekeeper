@@ -562,3 +562,44 @@ test('warm and generating calls both extend the model keep-alive', async () => {
     assert.equal(stub.state.lastChat.keep_alive, '15m', 'a generation also pushes the deadline out');
   } finally { await t.close(); await stub.close(); }
 });
+
+// Prompt audit (2026-08-31 report: rewrites often come back near-identical).
+// Both AI endpoints echo the EXACT request they sent to Ollama — model,
+// temperature, and the full messages array — so the entry editor can show it.
+test('ai narrate/expand return the exact Ollama request for audit', async () => {
+  const stub = await startStubOllama(GOOD_CHAT);
+  const t = await startTestServer();
+  try {
+    setSetting(t.db, 'ai', { enabled: true, model: 'llama3.1:8b', url: stub.url });
+
+    // narrate: the debug record is the FIRST NDJSON line, ahead of any token
+    const res = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'shorter', narrative: 'Review lease and confer with client.' }),
+    });
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split('\n').map((l) => JSON.parse(l));
+    const dbg = lines[0].debug;
+    assert.ok(dbg, 'first stream line carries the debug record');
+    assert.equal(dbg.model, 'llama3.1:8b');
+    assert.equal(dbg.mode, 'shorter');
+    assert.equal(dbg.temperature, 0.3);
+    assert.deepEqual(dbg.messages, stub.state.lastChat.messages,
+      'debug messages are byte-for-byte what Ollama received');
+
+    // regenerate samples hotter — the debug record must say so
+    const res2 = await fetch(`${t.base}/api/ai/narrate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'regenerate', brief: 'rev lease', narrative: 'Review lease.' }),
+    });
+    const dbg2 = JSON.parse((await res2.text()).trim().split('\n')[0]).debug;
+    assert.equal(dbg2.temperature, 0.8);
+
+    // expand: debug rides in the normal JSON response
+    const r = await t.fetchJson('POST', '/api/ai/expand', { brief: 'rev lease; draft amendment' });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.debug.model, 'llama3.1:8b');
+    assert.equal(r.body.debug.temperature, 0.3);
+    assert.deepEqual(r.body.debug.messages, stub.state.lastChat.messages);
+  } finally { await t.close(); await stub.close(); }
+});
