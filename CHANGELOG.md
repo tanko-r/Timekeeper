@@ -10,6 +10,24 @@ Newest entries first.
 
 ## 2026-08-30
 
+- **Shipped Stage B: the dictionary is editable.** Settings → Dictionary lists
+  what the app has learned for a matter or globally. A wrong capture can be
+  renamed, retyped or hidden, and a name the app has never seen can be added
+  by hand — a hand-added row predicts immediately, without the two-sighting
+  floor. Hiding a person also drops them from the AI prompt roster, so a
+  mis-read name cannot be fixed in one place and left saying itself in
+  another. ✕ removes a row you added but only HIDES one read out of your
+  entries, because deleting that kind would bring it back on the next entry.
+- **Shipped Stage A: ghost text now predicts things, not only phrases.** A new
+  extractor mines documents and organisations out of your own narratives and
+  files them, with the people layer, into one dictionary per matter. Typing
+  "review and analyze " now offers a document, "email to " a person, and
+  "email to A. Turner " chains to "regarding <document>"; ↓ opens a short list
+  of the alternatives. Documents stay on their own matter, while
+  organisations and people cross between a client's matters. Predictions need
+  two sightings, so a one-off typo never becomes a suggestion. Backfilled 414
+  rows from existing history, 95 of them already predicting.
+
 - **Specced and planned: entity-aware ghost text.** The 2026-08-30 10:55 item
   now has a design doc and a 10-task implementation plan, split into two
   stages so the predictions can be lived with before the Settings dictionary
