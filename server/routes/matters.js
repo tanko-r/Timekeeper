@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { rankPhrases } from '../lib/phrasebook.js';
+import { rankEntities } from '../lib/entities.js';
 import { pickRecentNarratives } from '../lib/recentnarratives.js';
 import { todayLocal } from '../lib/dates.js';
 
@@ -54,13 +55,15 @@ export function matterSuggestions(db, matterId, today) {
       .map((o) => ({ ...o, source: 'client' }));
     if (sib.length > 0) { borrowed = true; occurrences = own.concat(sib); }
   }
-  return { matter_id: matter.id, borrowed, phrases: rankPhrases(occurrences, { today }) };
+  return {
+    matter_id: matter.id,
+    borrowed,
+    phrases: rankPhrases(occurrences, { today }),
+    entities: matterEntityList(db, matter.id, today),
+    people: matterPeopleRanked(db, matter.id),
+  };
 }
 
-// Flat name list for prompt context (AI name resolution, 2026-07-10): own
-// roster first (most recently seen first), then client-sibling names — a
-// "jeff" may only ever appear on a sibling matter, so unlike the /people
-// endpoint this always blends, not just when own history is thin.
 // A name he hid in the dictionary is hidden everywhere, the AI prompt included
 // (spec 2026-08-30). Matter-scoped and global hides both count. Shared by the
 // roster the model is given and the roster the editor shows, so hiding a
@@ -72,14 +75,68 @@ export function hiddenPeopleNames(db, matterId) {
   `).all(matterId).map((r) => r.n));
 }
 
-export function matterPeopleList(db, matterId, limit = 20) {
+// Sibling matters are many; the same organisation on three of them is one
+// suggestion carrying their combined weight.
+function mergeByName(rows) {
+  const out = new Map();
+  for (const r of rows) {
+    const key = r.name.toLowerCase();
+    const cur = out.get(key);
+    if (!cur) { out.set(key, { ...r }); continue; }
+    cur.count += r.count;
+    if ((r.last_seen_at || '') >= (cur.last_seen_at || '')) {
+      cur.last_seen_at = r.last_seen_at;
+      cur.name = r.name;
+    }
+  }
+  return [...out.values()];
+}
+
+// The scope rule from the spec, in one place. A document belongs to one deal;
+// an organisation and a person move around a client's matters. Everything
+// borrowed ranks after everything the matter owns, and hand-added global rows
+// come last of all — they are always available and never urgent.
+export function matterEntityList(db, matterId, today) {
+  const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
+  if (!matter) return [];
+  const own = db.prepare('SELECT * FROM matter_entities WHERE matter_id=?').all(matter.id);
+  const sib = matter.client_id == null ? [] : mergeByName(db.prepare(`
+    SELECT me.* FROM matter_entities me JOIN matters m ON m.id = me.matter_id
+    WHERE m.client_id = ? AND m.id != ? AND me.kind IN ('org','person')
+  `).all(matter.client_id, matter.id));
+  const global = db.prepare('SELECT * FROM matter_entities WHERE matter_id IS NULL').all();
+
+  const seen = new Set();
+  const out = [];
+  for (const [rows, source] of [[own, 'matter'], [sib, 'client'], [global, 'global']]) {
+    for (const r of rankEntities(rows, { today })) {
+      const key = r.name.toLowerCase();
+      if (seen.has(key)) continue;   // the matter's own copy always wins
+      seen.add(key);
+      out.push({
+        name: r.name, kind: r.kind, count: r.count,
+        last_seen: r.last_seen_at, source,
+      });
+    }
+  }
+  return out;
+}
+
+// Ranked people with their provenance. matterPeopleList() becomes the
+// flat-name view of exactly this list, so the AI prompt and the ghost can
+// never disagree about who is on the matter or in what order.
+//
+// Own roster first (most recently seen first), then client-sibling names — a
+// "jeff" may only ever appear on a sibling matter, so unlike the /people
+// endpoint this always blends, not just when own history is thin.
+export function matterPeopleRanked(db, matterId, limit = 20) {
   const matter = db.prepare('SELECT id, client_id FROM matters WHERE id=?').get(matterId);
   if (!matter) return [];
   const own = db.prepare(`
     SELECT name FROM matter_people WHERE matter_id = ?
     ORDER BY last_seen_at DESC, count DESC, name
-  `).all(matter.id).map((p) => p.name);
-  const have = new Set(own.map((n) => n.toLowerCase()));
+  `).all(matter.id).map((p) => ({ name: p.name, source: 'matter' }));
+  const have = new Set(own.map((p) => p.name.toLowerCase()));
   const sib = matter.client_id == null ? [] : db.prepare(`
     SELECT MIN(mp.name) AS name, SUM(mp.count) AS count, MAX(mp.last_seen_at) AS last_seen
     FROM matter_people mp JOIN matters m ON m.id = mp.matter_id
@@ -87,10 +144,34 @@ export function matterPeopleList(db, matterId, limit = 20) {
     GROUP BY LOWER(mp.name)
     ORDER BY last_seen DESC, count DESC, name
   `).all(matter.client_id, matter.id)
-    .map((p) => p.name)
-    .filter((n) => !have.has(n.toLowerCase()));
+    .filter((p) => !have.has(p.name.toLowerCase()))
+    .map((p) => ({ name: p.name, source: 'client' }));
+
   const hidden = hiddenPeopleNames(db, matter.id);
-  return own.concat(sib).filter((n) => !hidden.has(n.toLowerCase())).slice(0, limit);
+
+  // Hand-added people, matter-scoped then global, after everything derived.
+  const manual = db.prepare(`
+    SELECT name, matter_id FROM matter_entities
+    WHERE kind='person' AND origin='manual' AND hidden=0
+      AND (matter_id = ? OR matter_id IS NULL)
+    ORDER BY (matter_id IS NULL), name COLLATE NOCASE
+  `).all(matter.id)
+    .map((r) => ({ name: r.name, source: r.matter_id == null ? 'global' : 'matter' }));
+
+  const out = [];
+  const seen = new Set();
+  for (const p of [...own, ...sib, ...manual]) {
+    const key = p.name.toLowerCase();
+    if (seen.has(key) || hidden.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out.slice(0, limit);
+}
+
+// Flat name list for prompt context (AI name resolution, 2026-07-10).
+export function matterPeopleList(db, matterId, limit = 20) {
+  return matterPeopleRanked(db, matterId, limit).map((p) => p.name);
 }
 
 export function mattersRouter({ db, clock }) {

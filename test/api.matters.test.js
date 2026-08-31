@@ -206,3 +206,63 @@ test('recent-narratives: unknown matter is a 404', () =>
     const r = await t.fetchJson('GET', '/api/matters/9999/recent-narratives');
     assert.equal(r.status, 404);
   }));
+
+test('suggestions: documents stay on their matter, organisations and people cross', () =>
+  withServer(async (t) => {
+    const { warm, cold, other } = await seed(t);
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-20', cm_id: warm.id,
+      narrative: 'Revise the Access Agreement; call regarding Cedar Utility.',
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: '' }],
+    });
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-21', cm_id: warm.id,
+      narrative: 'Recirculate the Access Agreement; email to A. Turner regarding Cedar Utility.',
+      tasks: [{ task_code: 'Revise', duration: 0.4, fragment: '' }],
+    });
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-21', cm_id: other.id,
+      narrative: 'Revise the Stranger Agreement twice; revise the Stranger Agreement again.',
+      tasks: [{ task_code: 'Revise', duration: 0.4, fragment: '' }],
+    });
+
+    const r = await t.fetchJson('GET', `/api/matters/${cold.id}/suggestions`);
+    const byName = Object.fromEntries(r.body.entities.map((e) => [e.name, e]));
+    // the sibling's ORGANISATION crosses, ranked as borrowed
+    assert.equal(byName['Cedar Utility'].source, 'client');
+    // the sibling's DOCUMENT does not cross at all
+    assert.equal(byName['Access Agreement'], undefined);
+    // a different client's matter never crosses
+    assert.equal(byName['Stranger Agreement'], undefined);
+    // the sibling's person crosses
+    assert.ok(r.body.people.some((p) => p.name === 'A. Turner' && p.source === 'client'));
+
+    // ...and on the matter that owns them, both are its own
+    const own = await t.fetchJson('GET', `/api/matters/${warm.id}/suggestions`);
+    const ownNames = Object.fromEntries(own.body.entities.map((e) => [e.name, e]));
+    assert.equal(ownNames['Access Agreement'].source, 'matter');
+    assert.equal(ownNames['Access Agreement'].kind, 'document');
+  }));
+
+test('suggestions: a global dictionary row is offered everywhere, ranked last', () =>
+  withServer(async (t) => {
+    const { warm } = await seed(t);
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-20', cm_id: warm.id,
+      narrative: 'Revise the Access Agreement.',
+      tasks: [{ task_code: 'Revise', duration: 0.5, fragment: '' }],
+    });
+    await t.fetchJson('POST', '/api/entries', {
+      date: '2026-08-21', cm_id: warm.id,
+      narrative: 'Recirculate the Access Agreement.',
+      tasks: [{ task_code: 'Revise', duration: 0.4, fragment: '' }],
+    });
+    t.db.prepare(`INSERT INTO matter_entities (matter_id, name, kind, origin)
+      VALUES (NULL, 'Standard Form Lease', 'document', 'manual')`).run();
+
+    const r = await t.fetchJson('GET', `/api/matters/${warm.id}/suggestions`);
+    const names = r.body.entities.map((e) => e.name);
+    assert.ok(names.includes('Standard Form Lease'));
+    assert.equal(r.body.entities.at(-1).name, 'Standard Form Lease');
+    assert.equal(r.body.entities.at(-1).source, 'global');
+  }));
