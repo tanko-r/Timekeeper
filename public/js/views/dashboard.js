@@ -9,6 +9,7 @@ import { EntryList } from '/js/components/entrylist.js';
 import { TodayFooter } from '/js/components/todayfooter.js';
 import { CloseOut } from '/js/components/closeout.js';
 import { SummaryModal } from '/js/components/summary.js';
+import { ExportGate } from '/js/components/exportgate.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
 import { nav } from '/js/app.js';
 
@@ -17,6 +18,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
   const [warnGate, setWarnGate] = useState(null);
   const [closeOut, setCloseOut] = useState(false);
   const [summary, setSummary] = useState(null);
+  const [exportGate, setExportGate] = useState(0);
   // Timestamp of the dashboard payload — the footer adds wall-clock time since
   // this moment to the (fetch-frozen) running-timer seconds.
   const fetchedAt = useMemo(() => Date.now(), [data]);
@@ -112,7 +114,7 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     bumpRefresh();
   }
 
-  async function exportToday() {
+  async function doExportToday() {
     const r = await api.post('/api/export', { from: d.date, to: d.date });
     if (r.count === 0) {
       emitToast('No finalized entries today — finalize first (or use the Export page for drafts).');
@@ -121,6 +123,14 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
     downloadText(`timekeeper-${d.date}.csv`, r.csv);
     emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`);
     bumpRefresh();
+  }
+
+  // Draft entries silently drop out of a default export — warn before that
+  // happens rather than after, since "0 entries exported" doesn't say why.
+  async function exportToday() {
+    const draftCount = d.entries.filter((e) => e.status === 'draft' && e.cm).length;
+    if (draftCount > 0) { setExportGate(draftCount); return; }
+    await doExportToday();
   }
 
   return html`
@@ -192,6 +202,9 @@ export function DashboardView({ settings, openEditor, refreshKey, bumpRefresh })
         message=${warnGate.message}
         onConfirm=${() => finalizeToday(true)}
         onClose=${() => setWarnGate(null)} />` : null}
+    ${exportGate ? html`
+      <${ExportGate} count=${exportGate} onClose=${() => setExportGate(0)}
+        onFinalize=${() => finalizeToday()} onExportAnyway=${doExportToday} />` : null}
     </div>
 
     <${TodayFooter} today=${d.today} timers=${d.timers} fetchedAt=${fetchedAt}

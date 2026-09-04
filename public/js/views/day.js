@@ -7,6 +7,7 @@ import { rangeFor, shiftAnchor } from '/js/lib/daterange.js';
 import { buildDaySummary } from '/js/lib/daysummary.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { SummaryModal } from '/js/components/summary.js';
+import { ExportGate } from '/js/components/exportgate.js';
 import { nav } from '/js/app.js';
 
 // Entry viewer for a date (2026-07-13 feedback): Day / Week / Month / Range
@@ -47,6 +48,7 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
 
   const [warnGate, setWarnGate] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [exportGate, setExportGate] = useState(0);
 
   const monthLabel = (() => {
     const [y, m] = day.split('-').map(Number);
@@ -97,7 +99,7 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     bumpRefresh();
   }
 
-  async function exportRange() {
+  async function doExportRange() {
     const r = await api.post('/api/export', { from: range.from, to: range.to });
     if (r.count === 0) {
       emitToast('No finalized entries in this range — finalize first (or use the Export page for drafts).');
@@ -106,6 +108,17 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     downloadText(`timekeeper-${range.from}${range.to !== range.from ? `_${range.to}` : ''}.csv`, r.csv);
     emitToast(`Exported ${r.count} ${r.count === 1 ? 'entry' : 'entries'}`);
     bumpRefresh();
+  }
+
+  // Draft entries silently drop out of a default export — warn before that
+  // happens rather than after. Finalizing is only offered for a single day
+  // in view (Week/Month/Range have no bulk "finalize this range" action).
+  async function exportRange() {
+    if (mode === 'day') {
+      const draftCount = entries.filter((e) => e.status === 'draft' && e.cm).length;
+      if (draftCount > 0) { setExportGate(draftCount); return; }
+    }
+    await doExportRange();
   }
 
   return html`
@@ -150,5 +163,8 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
         message=${warnGate.message}
         onConfirm=${() => finalizeDay(true)}
         onClose=${() => setWarnGate(null)} />` : null}
+    ${exportGate ? html`
+      <${ExportGate} count=${exportGate} onClose=${() => setExportGate(0)}
+        onFinalize=${() => finalizeDay()} onExportAnyway=${doExportRange} />` : null}
   `;
 }

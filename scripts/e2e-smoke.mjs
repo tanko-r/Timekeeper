@@ -1514,6 +1514,55 @@ await step('day view: Finalize day posts cleanly (no circular-JSON crash)', asyn
   await page.waitForFunction(() => document.body.textContent.includes('Nothing to finalize'), { timeout: 4000 });
 });
 
+// Feedback 2026-09-03 09:34: exporting a day with drafts on it used to
+// silently skip them — no sign anything was left out. The day view's Export
+// button now gates on that first.
+await step('day view: exporting with an unfinalized entry offers to finalize first', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];
+  const draft = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      date: todayLocal(), cm_id: acme.id, narrative: 'Reviewed export-gate warning wiring today.',
+      tasks: [{ task_code: 'Review', duration: 0.3, fragment: '' }],
+    }),
+  })).json();
+
+  await page.goto(`${base}/#/day/${todayLocal()}`, { waitUntil: 'networkidle0' });
+  await waitFor('.entry-row, .entry-card, .page-head');
+  await clickText('.page-head button', 'Export');
+  await waitFor('.modal');
+  await page.waitForFunction(() => document.body.textContent.includes('not finalized'));
+  await shot('export-gate');
+
+  // "Export finalized only" exports what's finalized and leaves the draft alone
+  await clickText('.modal button', 'Export finalized only');
+  await page.waitForFunction(() => !document.querySelector('.modal-backdrop'), { timeout: 4000 });
+  const untouched = await (await fetch(`${base}/api/entries/${draft.id}`)).json();
+  if (untouched.status !== 'draft') throw new Error('"Export finalized only" should not touch the pending draft');
+
+  // "Finalize first" runs the same finalize-day flow as the page's own
+  // button — other entries seeded earlier in the run may carry warnings, in
+  // which case that flow opens its own "Finalize with warnings?" gate first.
+  await clickText('.page-head button', 'Export');
+  await waitFor('.modal');
+  await clickText('.modal button', 'Finalize first');
+  await sleep(500);
+  if (await page.evaluate(() => document.body.textContent.includes('Finalize with warnings?'))) {
+    await clickText('.modal button', 'Finalize anyway');
+  }
+  let finalized;
+  for (let i = 0; i < 10; i++) {
+    finalized = await (await fetch(`${base}/api/entries/${draft.id}`)).json();
+    if (finalized.status === 'finalized') break;
+    await sleep(300);
+  }
+  if (finalized.status !== 'finalized') throw new Error('"Finalize first" should finalize the pending draft');
+
+  await fetch(`${base}/api/entries/${draft.id}`, { method: 'DELETE' });
+});
+
 // Last data-mutating step (per plan): finalizes and exports today's drafts,
 // so it runs after everything else that reads today's entry/timer state.
 await step('alt+drag feedback: select region → note box → TODO entry filed', async () => {

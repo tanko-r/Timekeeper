@@ -10,6 +10,24 @@ Newest entries first.
 
 ## 2026-09-03
 
+- **A one-click export now warns before it silently drops unfinalized
+  entries.** The Day view's "Export" button and the Dashboard's "Export
+  today" button used to call the export API directly — which only ever sends
+  finalized entries — with no sign that anything was left out. Both now check
+  the day in view first: if it holds a draft, a modal ("N entries are not
+  finalized and will not be included in this export") offers "Finalize
+  first" (runs the existing Finalize day/today flow) or "Export finalized
+  only" (proceeds as before). New shared component
+  `public/js/components/exportgate.js`; wired into
+  `public/js/views/day.js` (day mode only — Week/Month/Range have no bulk
+  finalize action) and `public/js/views/dashboard.js`. The dedicated Export
+  page already previews drafts and needed no change. `scripts/e2e-smoke.mjs`
+  gained a scenario exercising both gate choices. `npm test`: 689/689 pass;
+  `node scripts/e2e-smoke.mjs`: all clear except a pre-existing flaky step
+  ("stalled time: banner pill → Export filtered...") that also fails
+  intermittently on master with no code changes — unrelated to this fix.
+  `public/sw.js` CACHE bumped to v107 (JS-only change).
+
 - **Export's plain-text copy now names the client.** The "Copy text" blob on
   the Export page (and the CSV/.TIM feeds it also builds from) already
   carried the matter's short name and CM number, but not who the client was
