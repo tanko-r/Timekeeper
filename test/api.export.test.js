@@ -7,7 +7,7 @@ async function withData(fn) {
   const t = await startTestServer({ clock });
   try {
     const acme = (await t.fetchJson('POST', '/api/cms', {
-      cm_number: '100001-000012', short_name: 'Acme lease', billable: 1,
+      cm_number: '100001-000012', short_name: 'Acme lease', billable: 1, client_name: 'Acme Corp',
     })).body;
     const bono = (await t.fetchJson('POST', '/api/cms', {
       cm_number: '100001-000099', short_name: 'Pro bono', billable: 0,
@@ -46,8 +46,8 @@ test('export: finalized only by default, exact CSV shape, stamps exported_at', (
     assert.match(lines[1], /""exhibit A""/); // quotes escaped
     assert.ok(lines[2].includes(',Draft,0.3,'));
 
-    // text summary groups by entry
-    assert.match(r.body.text, /Acme lease/);
+    // text summary groups by entry and names the client, not just the matter
+    assert.match(r.body.text, /Acme Corp — Acme lease/);
     assert.match(r.body.text, /1\.5/);
 
     const after = (await t.fetchJson('GET', `/api/entries/${fin.id}`)).body;

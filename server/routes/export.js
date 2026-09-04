@@ -68,7 +68,9 @@ export function buildExport(db, { from, to, includeDrafts = false, attention = n
   }
 
   const text = entries.map((e) => {
-    const head = `${e.date} — ${e.cm.cm_number} ${e.cm.short_name} [${e.billable ? 'billable' : 'non-billable'}] — ${durationLabel(e.total, increment)}h${e.status === 'draft' ? ' (DRAFT)' : ''}`;
+    const client = String(e.cm.client_name || '').trim();
+    const matter = client ? `${client} — ${e.cm.short_name}` : e.cm.short_name;
+    const head = `${e.date} — ${e.cm.cm_number} ${matter} [${e.billable ? 'billable' : 'non-billable'}] — ${durationLabel(e.total, increment)}h${e.status === 'draft' ? ' (DRAFT)' : ''}`;
     return `${head}\n  ${e.narrative || '(no narrative)'}`;
   }).join('\n\n');
 

@@ -8,6 +8,22 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-03
+
+- **Export's plain-text copy now names the client.** The "Copy text" blob on
+  the Export page (and the CSV/.TIM feeds it also builds from) already
+  carried the matter's short name and CM number, but not who the client was
+  — you'd get "Acme lease" with no indication of which client that matter
+  belonged to. `server/routes/export.js`'s `text` field now prefixes the
+  matter with `<client name> — ` the same way the Day/Dashboard Summary
+  button already did (`public/js/lib/daysummary.js`), so pasting either one
+  into an outside tool (e.g. ChatGPT) carries the same identifying
+  information. The CSV/.TIM columns are untouched — those are tied to the
+  firm's billing import format, not a display convenience.
+  `test/api.export.test.js` gained a `client_name` on its fixture matter and
+  now asserts the text blob reads "Acme Corp — Acme lease". `npm test`: 689/689
+  pass.
+
 ## 2026-08-30
 
 - **Shipped Stage B: the dictionary is editable.** Settings → Dictionary lists
