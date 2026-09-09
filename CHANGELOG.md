@@ -10,6 +10,23 @@ Newest entries first.
 
 ## 2026-09-09
 
+- **TODO.md feedback (2026-09-03 22:26), "needs a summary button for
+  today's entries to plug into ChatGPT" — already shipped, no code change.**
+  Both the Day view (`public/js/views/day.js`) and the Dashboard's
+  today-footer (`public/js/components/todayfooter.js`) already have a
+  "Summary" button (also bound to the `s` key) that opens a plain-text
+  rendition of the day — client, matter, hours, narrative — via
+  `buildDaySummary`/`SummaryModal`, explicitly documented as "for reading
+  back and pasting into email" (equally suited to ChatGPT). That code
+  shipped 2026-07-24, before this note was written, and the screenshot
+  attached to the note shows the button already present on the Dashboard.
+  Confirmed via the existing e2e-smoke.mjs step ("day summary: button and
+  `s` render the day as plain text"), still passing. Flagging for David: if
+  this is about the button being hard to notice (small icon button in a
+  crowded footer) rather than missing outright, say so and it can be made
+  more prominent — no such repositioning was done here since that wasn't
+  what the note asked for.
+
 - **Ghost-text autocomplete no longer floats 3px above the real typed text
   in an entry card's inline narrative editor.** `.entry-card
   .narrative-inline-input` carried its own `margin-top: 3px` (to keep the
