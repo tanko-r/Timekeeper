@@ -8,6 +8,27 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-09
+
+- **Ghost-text autocomplete no longer floats 3px above the real typed text
+  in an entry card's inline narrative editor.** `.entry-card
+  .narrative-inline-input` carried its own `margin-top: 3px` (to keep the
+  card's footprint tight against the label above it) but the ghost-text
+  mirror overlay — a sibling `.ghost-wrap` div with `position: absolute;
+  inset: 0` — was never shifted by that margin, so the grey suggestion text
+  rendered 3px higher than the real caret. Moved the margin from the field
+  onto `.ghost-wrap` itself so the field and its mirror move together.
+  Confirmed the bug and the fix with exact pixel measurements from a headless
+  browser (before: field top 3px below wrap top; after: equal), and added a
+  permanent regression step to `scripts/e2e-smoke.mjs` that seeds a
+  phrasebook phrase, opens the inline editor, and asserts the two tops match
+  (verified it fails on the old CSS, passes on the new). Only the
+  card's inline editor was affected — the modal editor's textarea has no such
+  margin and was never broken. `npm test`: 689/689 pass. E2E smoke: all
+  steps pass (one unrelated step, "stalled time export filter", failed on an
+  earlier run and passed clean on a re-run with no code touched — pre-existing
+  flake, not caused by this change).
+
 ## 2026-09-03
 
 - **A one-click export now warns before it silently drops unfinalized

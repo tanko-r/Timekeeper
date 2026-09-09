@@ -547,7 +547,11 @@ div:first-child > .entry-day-head { margin-top: 4px; }
    and a textarea that keeps the card's footprint instead of the 84px min */
 .entry-card .narrative-editable { cursor: text; border-radius: 4px; margin-left: -4px; padding: 0 4px; }
 .entry-card .narrative-editable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
-.entry-card .narrative-inline-input { width: 100%; margin-top: 3px; min-height: 0; font: inherit; color: var(--text-secondary); }
+/* margin lives on the wrap, not the field: the field and its ghost-text
+   mirror must move together, or the ghost's grey suggestion (absolutely
+   positioned to fill the wrap) drifts off the real typed text above it. */
+.entry-card .ghost-wrap { margin-top: 3px; }
+.entry-card .narrative-inline-input { width: 100%; min-height: 0; font: inherit; color: var(--text-secondary); }
 .entry-card .hours { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .entry-card .hours.active { color: var(--status-good); }
 .entry-card.nonbillable .hours { color: var(--nonbillable); }

@@ -1733,6 +1733,64 @@ await step('ghost text: a trigger word predicts an entity; ↓ opens the list', 
   if (!seeded.every((e) => e && e.id)) throw new Error('entry seeding failed');
 });
 
+// 2026-09-07 feedback: "ghost text is misaligned" — the entry-CARD's inline
+// editor gave its textarea its own margin-top (to keep the card's footprint
+// tight) without moving the ghost-text mirror the same amount, so the grey
+// suggestion rendered a few pixels above the real typed text. The modal
+// editor's textarea carries no such margin, so this never showed up there.
+await step('ghost text: inline card editor keeps the ghost mirror aligned with the real text', async () => {
+  const seedCm = await (await fetch(`${base}/api/cms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cm_number: '100002-000099', short_name: 'Align Check Matter', billable: 1 }),
+  })).json();
+  // a prior entry on the same matter so the phrasebook has a phrase to complete
+  await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: '2026-01-01', cm_id: seedCm.id,
+      narrative: 'Review and respond to message from J. F regarding lease terms.',
+      tasks: [{ task_code: 'Review', duration: 0.5, fragment: '' }],
+    }),
+  });
+  const todayEntry = await (await fetch(`${base}/api/entries`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: todayLocal(), cm_id: seedCm.id, narrative: 'Review and respond to message from J. F',
+      tasks: [{ task_code: 'Review', duration: 0.9, fragment: '' }],
+    }),
+  })).json();
+  if (!todayEntry.id) throw new Error('entry seeding failed');
+  // suggestions are cached per matter in module state, so a reload is what
+  // makes this brand-new matter's phrasebook visible to the dashboard card.
+  await page.goto(base, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.entry-card')].some((c) => c.textContent.includes('Align Check Matter')),
+    { timeout: 5000 });
+  await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.entry-card')]
+      .find((c) => c.textContent.includes('Align Check Matter'));
+    card.querySelector('.narrative-editable').click();
+  });
+  await waitFor('.entry-card .narrative-inline-input');
+  await new Promise((r) => setTimeout(r, 800)); // let the /suggestions fetch land
+  await page.keyboard.type(' ', { delay: 20 }); // re-run recompute with the loaded phrasebook
+  await page.waitForFunction(
+    () => !!document.querySelector('.entry-card .ghost-mirror .ghost-hint')?.textContent.trim(),
+    { timeout: 4000 });
+  const rects = await page.evaluate(() => ({
+    wrapTop: document.querySelector('.entry-card .ghost-wrap').getBoundingClientRect().top,
+    taTop: document.querySelector('.entry-card .narrative-inline-input').getBoundingClientRect().top,
+  }));
+  if (Math.abs(rects.wrapTop - rects.taTop) > 0.5) {
+    throw new Error(`ghost mirror misaligned with the real field: wrap top ${rects.wrapTop}, field top ${rects.taTop}`);
+  }
+  await shot('ghost-inline-alignment');
+  await page.keyboard.press('Escape');
+});
+
 await step('settings: dictionary removes an added row and hides a derived one', async () => {
   await page.goto(`${base}/#/settings/dictionary`, { waitUntil: 'domcontentloaded' });
   await waitFor('.dictionary-card');
