@@ -10,6 +10,13 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Flagged, not implemented: TODO.md item (2026-09-14 08:59), "quick-add
+  matter button."** This is a new UI flow (a CM#/client/matter quick-create
+  form with free-text CM-number parsing out of pasted text, client-name
+  prefill, billable/task defaults, and a grouping picker), not a bug fix —
+  left in TODO.md's backlog for a proper spec/plan rather than guessing at
+  the parsing rules and UI placement.
+
 - **TODO.md feedback (2026-09-12 13:07), the entry-card finalize icon read as
   ambiguous.** Each entry card's action row swapped between an open and a
   closed padlock glyph for draft vs. finalized — screenshot showed David
