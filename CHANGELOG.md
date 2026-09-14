@@ -10,6 +10,11 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Flagged again, nothing implemented.** Re-ran `/todo`; TODO.md's only live
+  item is still the "quick-add matter button" idea flagged below in this
+  same run's earlier entry — no change to it, so it stays in the backlog
+  for a spec rather than a guessed implementation.
+
 - **Flagged, not implemented: TODO.md item (2026-09-14 08:59), "quick-add
   matter button."** This is a new UI flow (a CM#/client/matter quick-create
   form with free-text CM-number parsing out of pasted text, client-name
