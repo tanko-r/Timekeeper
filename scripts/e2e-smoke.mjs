@@ -1483,11 +1483,6 @@ await step('tk:open-entry event opens the entry editor (float → main app)', as
   await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 4000 });
 });
 
-// Regression (2026-07-15 feedback): the day view's "Finalize day" button was
-// wired as onClick=${finalizeDay}, so the click event landed in the ack
-// parameter and JSON.stringify(body) died on the circular DOM structure
-// before the request was ever sent. An empty far-past day keeps this
-// side-effect-free: the only success signal is the "Nothing to finalize" toast.
 await step('day summary: button and `s` render the day as plain text', async () => {
   await page.goto(`${base}/#/day/${todayLocal()}`, { waitUntil: 'networkidle0' });
   await waitFor('.entry-row, .entry-card, .page-head');
@@ -1508,10 +1503,19 @@ await step('day summary: button and `s` render the day as plain text', async () 
   await page.waitForFunction(() => !document.querySelector('.summary-text'), { timeout: 4000 });
 });
 
-await step('day view: Finalize day posts cleanly (no circular-JSON crash)', async () => {
+// 2026-09-14 feedback: the day view's old "Finalize day" button was too easy
+// to confuse with the dashboard's "Close the day". It's now "Close day",
+// opening the same review sweep scoped to whatever date is in view — this
+// also covers the 2026-07-15 regression (click landing in the ack param and
+// crashing JSON.stringify on the circular DOM structure), since the handler
+// now just flips a boolean instead of posting straight from the click.
+await step('day view: Close day opens the sweep for a past date', async () => {
   await page.goto(`${base}/#/day/2020-01-01`, { waitUntil: 'networkidle0' });
-  await clickText('.page-head button', 'Finalize day');
-  await page.waitForFunction(() => document.body.textContent.includes('Nothing to finalize'), { timeout: 4000 });
+  await clickText('.page-head button', 'Close day');
+  await waitFor('.closeout-card');
+  await page.waitForFunction(() => document.body.textContent.includes('Nothing to close'), { timeout: 4000 });
+  await clickText('.closeout-card button', 'Close');
+  await page.waitForFunction(() => !document.querySelector('.closeout-backdrop'), { timeout: 4000 });
 });
 
 // Feedback 2026-09-03 09:34: exporting a day with drafts on it used to

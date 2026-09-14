@@ -1,7 +1,7 @@
 import { api, downloadText } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useMemo, useCallback, createPortal,
-  fmtHours, emitToast, Icon, Spinner, ValidationList,
+  fmtHours, fmtDateLong, todayStr, emitToast, Icon, Spinner, ValidationList,
 } from '/js/ui.js';
 import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/components/ghosttext.js';
 import { useShortcuts } from '/js/components/shortcuts.js';
@@ -13,7 +13,22 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 // end, a single Finalize & export action closes the day. Keys: Enter accept
 // · e edit (opens the full editor, closes the sweep) · ↓ skip · Esc quit
 // (nothing lost — drafts stay drafts either way).
-export function CloseOut({ onClose, openEditor }) {
+//
+// `date` selects which day this sweep reviews. Omitted (dashboard's own
+// "Close the day"), it reads live today-state from /api/dashboard, which
+// also carries timers/alerts the dashboard needs. Given (the day view's
+// "Close day", any date past or present), it reads that one day's entries
+// from /api/entries instead — dashboard has no notion of a non-today date.
+async function loadDay(forDate) {
+  if (forDate) {
+    const entries = await api.get(`/api/entries?from=${forDate}&to=${forDate}`);
+    return { date: forDate, entries, total: entries.reduce((a, e) => a + e.total, 0) };
+  }
+  const d = await api.get('/api/dashboard');
+  return { date: d.date, entries: d.entries, total: d.today.total };
+}
+
+export function CloseOut({ date: forDate, onClose, openEditor }) {
   const [cards, setCards] = useState(null); // null = loading; frozen at open
   const [date, setDate] = useState(null);
   const [idx, setIdx] = useState(0);
@@ -48,10 +63,10 @@ export function CloseOut({ onClose, openEditor }) {
   // stale (a stop-chip pick, another tab, etc.).
   useEffect(() => {
     let alive = true;
-    api.get('/api/dashboard').then((d) => {
+    loadDay(forDate).then(({ date, entries }) => {
       if (!alive) return;
-      const drafts = d.entries.filter((e) => e.status === 'draft');
-      setDate(d.date);
+      const drafts = entries.filter((e) => e.status === 'draft');
+      setDate(date);
       setCards(drafts);
       setPhase(drafts.length === 0 ? 'empty' : 'sweep');
     }).catch((e) => {
@@ -130,12 +145,12 @@ export function CloseOut({ onClose, openEditor }) {
         // acknowledged and finalized sight unseen. Guard client-side: only
         // ack if today's draft set is still exactly what this sweep reviewed
         // (the frozen cards + the blocked ids the warning screen listed).
-        const freshD = await api.get('/api/dashboard');
+        const { entries: freshEntries } = await loadDay(forDate);
         const reviewed = new Set([
           ...(cards || []).map((c) => c.id),
           ...(warnInfo ? [...warnInfo.warnOnly, ...warnInfo.hard].map((b) => b.id) : []),
         ]);
-        const newDrafts = freshD.entries.filter((e) => e.status === 'draft' && !reviewed.has(e.id));
+        const newDrafts = freshEntries.filter((e) => e.status === 'draft' && !reviewed.has(e.id));
         if (newDrafts.length > 0) {
           setWarnInfo((w) => ({ ...w, newDrafts }));
           return;
@@ -170,9 +185,9 @@ export function CloseOut({ onClose, openEditor }) {
     prevIdxRef.current = -1;
     lastAutoRef.current = '';
     try {
-      const d = await api.get('/api/dashboard');
-      const drafts = d.entries.filter((e) => e.status === 'draft');
-      setDate(d.date);
+      const { date, entries } = await loadDay(forDate);
+      const drafts = entries.filter((e) => e.status === 'draft');
+      setDate(date);
       setCards(drafts);
       setPhase(drafts.length === 0 ? 'empty' : 'sweep');
     } catch (e) {
@@ -190,8 +205,8 @@ export function CloseOut({ onClose, openEditor }) {
       return;
     }
     downloadText(`timekeeper-${date}.csv`, r.csv);
-    const fresh = await api.get('/api/dashboard');
-    setClosedInfo({ total: fresh.today.total, stillBlocked });
+    const fresh = await loadDay(forDate);
+    setClosedInfo({ total: fresh.total, stillBlocked });
     setPhase('closed');
   }
 
@@ -251,9 +266,10 @@ export function CloseOut({ onClose, openEditor }) {
   if (phase === 'loading') {
     body = html`<div class="closeout-card"><${Spinner} /></div>`;
   } else if (phase === 'empty') {
+    const whenLabel = forDate && forDate !== todayStr() ? `on ${fmtDateLong(forDate)}` : 'today';
     body = html`
       <div class="closeout-card">
-        <p>Nothing to close — no drafts today.</p>
+        <p>Nothing to close — no drafts ${whenLabel}.</p>
         <div class="row-end">
           <button class="btn btn-primary" onClick=${() => onClose(false)}>Close</button>
         </div>

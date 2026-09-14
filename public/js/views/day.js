@@ -8,11 +8,14 @@ import { buildDaySummary } from '/js/lib/daysummary.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { SummaryModal } from '/js/components/summary.js';
 import { ExportGate } from '/js/components/exportgate.js';
+import { CloseOut } from '/js/components/closeout.js';
 import { nav } from '/js/app.js';
 
 // Entry viewer for a date (2026-07-13 feedback): Day / Week / Month / Range
 // scopes anchored on the VISIBLE date, with an export button for whatever
-// range is on screen. Day mode keeps the finalize/new-entry day workflow.
+// range is on screen. Day mode keeps the close-day/new-entry workflow —
+// "Close day" opens the same review-then-finalize-and-export sweep as the
+// dashboard's "Close the day", scoped to whatever date is in view.
 export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh }) {
   const day = date || todayStr();
   const [mode, setMode] = useState('day'); // day | week | month | range
@@ -49,6 +52,7 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
   const [warnGate, setWarnGate] = useState(null);
   const [summary, setSummary] = useState(null);
   const [exportGate, setExportGate] = useState(0);
+  const [closeOut, setCloseOut] = useState(false);
 
   const monthLabel = (() => {
     const [y, m] = day.split('-').map(Number);
@@ -148,7 +152,9 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
       <button class="btn" title="Download finalized entries in view as CSV (marks them exported)"
         onClick=${exportRange}><${Icon} name="export" size=${16} /> Export</button>
       ${mode === 'day' ? html`
-        <button class="btn" onClick=${() => finalizeDay()}><${Icon} name="lock" size=${16} /> Finalize day</button>
+        <button class="btn" onClick=${() => setCloseOut(true)}
+          title=${`Review, finalize, and export ${day === todayStr() ? 'today' : 'this day'}`}>
+          <${Icon} name="lock" size=${16} /> Close day</button>
         <button class="btn btn-primary" onClick=${() => openEditor({ template: { date: day } })}><${Icon} name="plus" size=${16} /> Entry</button>` : null}
     </div>
     ${loading && !data ? html`<${Spinner} />` : html`
@@ -166,5 +172,8 @@ export function DayView({ date, settings, openEditor, refreshKey, bumpRefresh })
     ${exportGate ? html`
       <${ExportGate} count=${exportGate} onClose=${() => setExportGate(0)}
         onFinalize=${() => finalizeDay()} onExportAnyway=${doExportRange} />` : null}
+    ${closeOut ? html`
+      <${CloseOut} date=${day} openEditor=${openEditor}
+        onClose=${(changed) => { setCloseOut(false); if (changed) bumpRefresh(); }} />` : null}
   `;
 }

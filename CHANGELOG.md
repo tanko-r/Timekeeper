@@ -8,6 +8,30 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-14
+
+- **TODO.md feedback (2026-09-12 13:03), day view's "Finalize Day" button too
+  similar to "Close Day" — replaced it.** The day view (`public/js/views/day.js`)
+  had its own plain "Finalize day" button that posted straight to
+  `/api/finalize-day` with no review step, confusingly close in name to the
+  dashboard's "Close the day", which opens a one-card-at-a-time review sweep
+  before finalizing and exporting. Swapped the day view's button for the same
+  "Close day" sweep, scoped to whatever date is in view (past or present).
+  `public/js/components/closeout.js`: added an optional `date` prop and a
+  `loadDay()` helper so the sweep can read one day's entries from
+  `/api/entries?from=X&to=X` instead of always reading "today" from
+  `/api/dashboard`; the empty-state message now names the date instead of
+  always saying "today". `public/js/views/day.js`: imports `CloseOut`, opens
+  it from the new "Close day" button instead of calling `finalizeDay()`
+  directly (that function stays — the Export button's "finalize first" gate
+  still uses it). `public/sw.js`: bumped `CACHE` to v109 for the JS change.
+  Tests: `npm test` 689/689 pass (no server code touched). Updated the e2e
+  regression step in `scripts/e2e-smoke.mjs` that used to click "Finalize
+  day" directly — it now clicks "Close day" and waits for the sweep's empty
+  state on a far-past date; `node scripts/e2e-smoke.mjs` 47/47 steps pass.
+  Left alone: the dashboard's own "Close the day" (today only, `c` shortcut)
+  is unchanged; the day view has no `c` shortcut binding — not asked for.
+
 ## 2026-09-09
 
 - **TODO.md feedback (2026-09-03 22:26), "needs a summary button for
