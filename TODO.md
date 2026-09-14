@@ -1,7 +1,8 @@
 # Backlog
 
-Ideas captured but not yet designed or planned. Pull one into a proper
-spec/plan (see `docs/superpowers/`) before implementing.
+Notes and feedback for `/todo` to work — every item here, however big, is an
+active task to build end to end, not an idea to defer. `/todo` only pauses to
+ask David a question when the codebase itself can't answer it.
 
 ## Manual Notes from David:
 

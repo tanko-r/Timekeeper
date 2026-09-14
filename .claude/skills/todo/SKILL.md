@@ -21,10 +21,16 @@ point if one turns out wrong.
    images — they carry the annotation and the context the text alone doesn't.
 2. **Scope it.** List every item found (silently, or in one short line each —
    no need to wait for confirmation). Order them sensibly: independent, small
-   fixes first. Skip straight to implementing — don't pause here.
-   - Exception: if an item is a backlog *idea* rather than a concrete fix
-     (see Notes below), don't implement it blind — flag it and move to the
-     next item instead of guessing at scope.
+   fixes first.
+   - Every item here is an active task, not a backlog idea to defer — David
+     asking for it means he wants it built now, even a whole new feature.
+     Read the existing code first (there is often more built already than
+     the TODO line suggests) to see how much of it is a real gap.
+   - If real ambiguity remains after that reading — a design choice only
+     David can make, not something inferable from the code — ask 1-3 focused
+     questions (per his global CLAUDE.md) before writing code. Don't guess at
+     a load-bearing decision, but don't stall on a question the codebase
+     already answers either.
 3. **Implement** following `CLAUDE.md`: failing test first (`npm test`,
    node:test), business rules as pure functions in `server/lib/*`, thin
    routes, prepared statements, no new runtime deps, no bundler.
@@ -58,18 +64,19 @@ point if one turns out wrong.
    - `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` trailer as usual
    Push right after each commit — don't accumulate a stack of unpushed work.
 8. **Repeat** for the next item until TODO.md's live sections are empty or
-   every remaining item is a flagged idea/blocker.
+   every remaining item is genuinely blocked (verification failed twice, or
+   it's waiting on an answer from David).
 9. **Update CHANGELOG.md every run, even an empty one.** If step 7 already
    added entries this run, this step is done. If nothing was shipped —
-   TODO.md's live sections were already empty, or every item found was
-   flagged rather than implemented — commit a single `CHANGELOG.md` line
-   under today's date saying so (e.g. "Nothing to do — TODO.md had no live
-   items." or "Flagged N backlog idea(s), nothing implemented."), and push
-   it. This file is the authoritative record of what a run actually did,
-   independent of the sidebar's "Run /todo" status indicator (which reflects
-   tmux window state and can lag).
+   TODO.md's live sections were already empty, or every item found is
+   blocked — commit a single `CHANGELOG.md` line under today's date saying
+   so (e.g. "Nothing to do — TODO.md had no live items." or "Blocked on N
+   item(s), nothing implemented."), and push it. This file is the
+   authoritative record of what a run actually did, independent of the
+   sidebar's "Run /todo" status indicator (which reflects tmux window state
+   and can lag).
 10. **Report** a short summary: items shipped (one line each, with commit
-    refs), items flagged or blocked and why.
+    refs), items blocked and why, questions asked and how they were answered.
 
 ## Notes
 
@@ -82,5 +89,7 @@ point if one turns out wrong.
   layout for phone width.
 - Never put real client, matter, firm, or PII names in code, tests, or commit
   messages — use the house fictional names.
-- If an item is a backlog *idea* rather than a concrete fix, say so and offer
-  to spec it (see `docs/superpowers/`) instead of implementing it blind.
+- A TODO/feedback item that reads like a whole new feature is still an active
+  task, not a reason to punt to a separate spec/plan step — build it here,
+  end to end, same as a one-line bug fix. Only pause with a clarifying
+  question (step 2) when the codebase genuinely doesn't answer it.

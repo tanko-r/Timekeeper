@@ -10,6 +10,15 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **`/todo` policy change: no more "backlog idea" deferral.** David asked
+  for this directly after the quick-add-matter item below got flagged twice
+  instead of built. `.claude/skills/todo/SKILL.md` step 2 and its Notes
+  section, and `TODO.md`'s own header, no longer treat a feature-shaped
+  feedback item as a reason to punt to a separate spec/plan step — every item
+  is now an active task to build end to end. The only thing that still
+  pauses a run is a genuine ambiguity the codebase can't answer (ask 1-3
+  focused questions, per David's global CLAUDE.md) or a verification failure.
+
 - **Flagged again, nothing implemented.** Re-ran `/todo`; TODO.md's only live
   item is still the "quick-add matter button" idea flagged below in this
   same run's earlier entry — no change to it, so it stays in the backlog
