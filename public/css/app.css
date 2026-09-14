@@ -409,6 +409,17 @@ table.tk tr.client-row td {
 }
 .timer-stop-btn:hover { background: color-mix(in srgb, var(--status-critical) 18%, var(--surface-1)); }
 
+/* entry card lock/unlock action (2026-09-12 feedback): the icon glyph always
+   reads as a padlock — a light red fill is what marks an entry as actually
+   finalized, instead of swapping to an open-padlock glyph that read as
+   ambiguous at a glance */
+.entry-lock-btn.finalized {
+  color: var(--status-critical);
+  border-color: color-mix(in srgb, var(--status-critical) 45%, var(--border));
+  background: color-mix(in srgb, var(--status-critical) 10%, var(--surface-1));
+}
+.entry-lock-btn.finalized:hover { background: color-mix(in srgb, var(--status-critical) 18%, var(--surface-1)); }
+
 .timer-search-wrap { display: inline-flex; align-items: center; gap: 6px; }
 .timer-search { width: 180px; padding: 3px 8px; font-size: 12.5px; }
 .clock-input {

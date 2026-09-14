@@ -309,10 +309,10 @@ export function EntryList({
               })() : null}
               ${e.status === 'draft' ? html`
                 <button class="btn btn-ghost btn-sm" title="Edit" onClick=${() => openEditor({ id: e.id })}><${Icon} name="edit" size=${16} /></button>
-                <button class="btn btn-ghost btn-sm" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>
+                <button class="btn btn-ghost btn-sm entry-lock-btn" title="Finalize" onClick=${() => finalize(e)}><${Icon} name="lock" size=${16} /></button>
                 <button class="btn btn-ghost btn-sm" title="Delete" onClick=${() => setDeleting(e)}><${Icon} name="trash" size=${16} /></button>` : html`
                 <button class="btn btn-ghost btn-sm" title="View" onClick=${() => openEditor({ id: e.id })}><${Icon} name="eye" size=${16} /></button>
-                <button class="btn btn-ghost btn-sm" title="Unlock" onClick=${() => unlock(e)}><${Icon} name="unlock" size=${16} /></button>`}
+                <button class="btn btn-ghost btn-sm entry-lock-btn finalized" title="Unlock" onClick=${() => unlock(e)}><${Icon} name="lock" size=${16} /></button>`}
               <button class="btn btn-ghost btn-sm" title="Copy to today"
                 onClick=${() => openEditor({ copyFrom: e.id })}><${Icon} name="copy" size=${16} /></button>
             </div>

@@ -10,6 +10,25 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **TODO.md feedback (2026-09-12 13:07), the entry-card finalize icon read as
+  ambiguous.** Each entry card's action row swapped between an open and a
+  closed padlock glyph for draft vs. finalized — screenshot showed David
+  circling that icon as confusing at a glance. `public/js/components/entrylist.js`:
+  both states now render the same "lock" glyph; only the finalized state adds
+  an `entry-lock-btn finalized` class. `public/css/app.css`: that class gives
+  the button a light red border/fill (mirrors the existing `.timer-stop-btn`
+  color-mix pattern), so a glance at the color says "finalized" instead of
+  reading two different padlock shapes. Tooltips are unchanged ("Finalize" /
+  "Unlock") — only the glyph and color changed. Other "unlock" icon usages
+  (export view, search bulk actions, entry editor) were left alone — not
+  flagged in the feedback and a different context. Verified visually: booted
+  a throwaway server instance with a seeded draft and a seeded finalized
+  entry and screenshotted the day view (script discarded after, not
+  committed) — draft entry shows a plain lock icon, finalized entry shows the
+  same lock icon with the light red fill. Tests: `npm test` 689/689 (no
+  server code touched), `node scripts/e2e-smoke.mjs` 47/47 (no e2e coverage
+  exercised this specific icon; nothing broke).
+
 - **TODO.md feedback (2026-09-12 13:03), day view's "Finalize Day" button too
   similar to "Close Day" — replaced it.** The day view (`public/js/views/day.js`)
   had its own plain "Finalize day" button that posted straight to
