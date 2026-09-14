@@ -10,6 +10,39 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Edit-entry modal: added an "edit matter" pencil next to Client/Matter.**
+  UI feedback: from the entry editor there was no way to open the matter for
+  editing — you had to close the entry, go to Clients/Matters, find the row,
+  and re-open your original entry after. Clicking the picker only let you
+  *change* which matter the entry uses, not edit the current one.
+  - `entry.cm` (the object the entry editor already had) is a narrow embed —
+    it carries `client_name` for display but not `client_id`, which the
+    existing edit-matter form (`EditCmModal` in
+    `public/js/components/cmpicker.js`) needs to know whether to show/patch
+    the shared client-name field. Rather than widening that embed (used
+    elsewhere and deliberately narrow), added `GET /api/cms/:id`
+    (`server/routes/cms.js`) returning the full record — the same shape
+    `GET /api/cms` and the picker already return, just for one id. New test:
+    `test/api.cms.test.js` ("GET /api/cms/:id returns the full record,
+    including client_id, or 404").
+  - `public/js/components/entryeditor.js`: new pencil button next to the
+    Client/Matter picker (`openMatterEdit`) fetches the full record and
+    opens the existing `NewCmModal`/`EditCmModal` — the very same modal the
+    Clients/Matters page uses, not a new one. On save, re-fetches the record
+    (`onMatterEdited`) rather than trusting the CM-patch response, because
+    `EditCmModal` patches the client name/task-billing in a second request
+    *after* the CM patch it returns — same ordering `cms.js`'s own flow
+    already has to work around by reloading.
+  - `public/sw.js` CACHE bumped to v115.
+  - Deliberately left out: no change to the narrow `entry.cm` embed shape
+    itself, and no new route beyond the single-record GET — both would have
+    been broader than this one feedback item asked for.
+
+  Verified: `npm test` 691/691 (includes the new test above); `node
+  scripts/e2e-smoke.mjs` all clear; manually confirmed in a scratch-DB
+  browser screenshot — pencil opens "Edit client/matter" pre-filled with
+  CM number, client name ("Cerebras"), and short name ("General").
+
 - **Entry cards on the dashboard now show the client name alongside the
   matter name.** UI feedback screenshot: a card only showed the matter's own
   short name (e.g. "General") with no client context, so two matters that

@@ -30,6 +30,22 @@ test('CM CRUD with format validation', () => withServer(async (t) => {
   assert.equal(list.body.length, 1);
 }));
 
+test('GET /api/cms/:id returns the full record, including client_id, or 404', () => withServer(async (t) => {
+  const created = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '100002-000001', short_name: 'Fetchable', client_name: 'Solstice',
+  })).body;
+
+  const got = await t.fetchJson('GET', `/api/cms/${created.id}`);
+  assert.equal(got.status, 200);
+  assert.equal(got.body.id, created.id);
+  assert.equal(got.body.client_id, created.client_id);
+  assert.equal(got.body.client_name, 'Solstice');
+  assert.equal(got.body.cm_number, '100002-000001');
+
+  const missing = await t.fetchJson('GET', '/api/cms/999999');
+  assert.equal(missing.status, 404);
+}));
+
 test('POST /api/cms carries client_task_billing onto a brand-new client', () => withServer(async (t) => {
   const created = await t.fetchJson('POST', '/api/cms', {
     cm_number: '700100-000001', short_name: 'No task billing', client_task_billing: 0,

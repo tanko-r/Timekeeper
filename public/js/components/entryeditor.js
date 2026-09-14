@@ -4,7 +4,7 @@ import {
   Modal, Field, fmtHours, todayStr, emitToast, clientLabel, ContextMenu, Confirm,
   ValidationList, fmtStamp, Spinner, Icon, splitTenthsEvenly, markJustFinalized,
 } from '/js/ui.js';
-import { CmPicker } from '/js/components/cmpicker.js';
+import { CmPicker, NewCmModal } from '/js/components/cmpicker.js';
 import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/components/ghosttext.js';
 import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
@@ -80,6 +80,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   const [aiDebug, setAiDebug] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false); // "Reuse" — this matter's past narratives
+  // Full CM record (client_id included) while the "edit matter" modal is open.
+  // entry.cm is a narrow embed (client_name but no client_id), so opening the
+  // modal fetches the full record from GET /api/cms/:id first.
+  const [editingCm, setEditingCm] = useState(null);
   const aiAbortRef = useRef(null); // in-flight narrate stream; aborted on new run/unmount
   const changedRef = useRef(false);
   const localRef = useRef(null);
@@ -326,6 +330,30 @@ export function EntryEditor({ spec, settings, onClose }) {
     setGate(null);
     queueSave();
   }, [queueSave]);
+
+  // 2026-09-14 feedback: "edit matter" pencil next to the Client/Matter field.
+  async function openMatterEdit() {
+    if (!localRef.current || !localRef.current.cm) return;
+    try {
+      const full = await api.get(`/api/cms/${localRef.current.cm.id}`);
+      setEditingCm(full);
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+
+  // The CM patch response can carry a stale client_name/task_billing (the
+  // client-row patches happen after it — same order EditCmModal always uses),
+  // so re-fetch the full record rather than trusting onCreated's argument.
+  async function onMatterEdited(cm) {
+    setEditingCm(null);
+    try {
+      const full = await api.get(`/api/cms/${cm.id}`);
+      setLocal((cur) => (cur && cur.cm && cur.cm.id === full.id ? { ...cur, cm: full } : cur));
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
 
   // Total is primary. With a single line, the line mirrors it.
   const updateTotal = useCallback((value) => {
@@ -656,8 +684,15 @@ export function EntryEditor({ spec, settings, onClose }) {
             onChange=${(e) => update({ date: e.target.value })} />
         <//>
         <${Field} label="Client/Matter">
-          <${CmPicker} value=${local.cm} autoFocus=${!local.cm}
-            onChange=${(cm) => update({ cm, billable: !!cm.billable })} />
+          <div class="row" style=${{ flexWrap: 'nowrap', alignItems: 'center' }}>
+            <div style=${{ flex: 1 }}>
+              <${CmPicker} value=${local.cm} autoFocus=${!local.cm}
+                onChange=${(cm) => update({ cm, billable: !!cm.billable })} />
+            </div>
+            ${local.cm ? html`
+              <button type="button" class="btn btn-ghost btn-sm" title="Edit this client/matter"
+                onClick=${openMatterEdit}><${Icon} name="edit" size=${16} /></button>` : null}
+          </div>
           ${local.cm ? html`<span class="cm-client-label muted small">${clientLabel(local.cm)}</span>` : null}
         <//>
         <${Field} label="Total hours">
@@ -879,6 +914,10 @@ export function EntryEditor({ spec, settings, onClose }) {
           message=${`Delete this ${fmtHours(total, increment)}h entry${local.cm ? ` for ${local.cm.short_name}` : ''}? You'll have a few seconds to undo from the toast.`}
           onConfirm=${del}
           onClose=${() => setConfirmDelete(false)} />` : null}
+      ${editingCm ? html`
+        <${NewCmModal} existing=${editingCm}
+          onCreated=${onMatterEdited}
+          onClose=${() => setEditingCm(null)} />` : null}
     <//>`;
 }
 

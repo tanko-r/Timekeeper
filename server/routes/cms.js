@@ -47,6 +47,15 @@ export function cmsRouter({ db, clock }) {
     res.json({ count: rows.length, csv: buildMattersCsv(rows) });
   });
 
+  // Single record, full CM shape (client_id included) — used by the edit-matter
+  // modal when opened from a context that only has the narrow entry.cm embed
+  // (client_name but no client_id), e.g. the time entry editor.
+  r.get('/:id', (req, res) => {
+    const cm = getCm.get(req.params.id);
+    if (!cm) return res.status(404).json({ error: 'CM not found.' });
+    res.json(cm);
+  });
+
   r.get('/', (req, res) => {
     const includeArchived = req.query.includeArchived === '1';
     const rows = db.prepare(`
