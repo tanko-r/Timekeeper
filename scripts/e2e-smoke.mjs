@@ -1826,6 +1826,66 @@ await step('settings: dictionary removes an added row and hides a derived one', 
   await shot('settings-dictionary');
 });
 
+await step('quick-add matter (Clients & Matters page): auto-creates a grouped timer', async () => {
+  // 2026-09-14 feedback: quick-adding a matter outside a "new timer" form
+  // should also create a timer for it, in a group picked right there.
+  const group = await (await fetch(`${base}/api/timer-groups`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'QuickAdd Test Group' }),
+  })).json();
+
+  await page.goto(`${base}/#/cms`, { waitUntil: 'domcontentloaded' });
+  await clickText('.btn-primary', 'New CM');
+  await waitFor('[data-nc-client]');
+  await type('[data-nc-client]', '700007');
+  await type('[data-nc-client-name]', 'Quickadd Client');
+  await type('[data-nc-matter]', '000009');
+  await type('[data-nc-name]', 'Quickadd Matter');
+  await waitFor('[data-nc-timer-group]');
+  await page.waitForFunction(
+    (gid) => !!document.querySelector(`[data-nc-timer-group] option[value="${gid}"]`),
+    { timeout: 4000 }, String(group.id));
+  await page.select('[data-nc-timer-group]', String(group.id));
+  await clickText('.modal button', 'Create matter');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+
+  const cms = await (await fetch(`${base}/api/cms?includeArchived=1`)).json();
+  const cm = cms.find((c) => c.cm_number === '700007-000009');
+  if (!cm) throw new Error('quick-added matter not found via API');
+  const timers = await (await fetch(`${base}/api/timers`)).json();
+  const timer = timers.find((t) => t.cm_id === cm.id);
+  if (!timer) throw new Error('quick-add did not create a timer for the new matter');
+  if (timer.group_id !== group.id) throw new Error(`timer not in chosen group: got ${timer.group_id}, want ${group.id}`);
+  if (timer.name !== 'Quickadd Matter') throw new Error(`timer name wrong: ${timer.name}`);
+});
+
+await step('new timer form: quick-adding a matter there does NOT create a second timer', async () => {
+  // The New Timer modal already has its own Group field for the timer it's
+  // about to create — CmPicker there passes alsoCreateTimer=false so this
+  // path never shows a second "Timer group" field or double-files a timer.
+  const before = (await (await fetch(`${base}/api/timers`)).json()).length;
+  await page.goto(`${base}/#/`, { waitUntil: 'domcontentloaded' });
+  await clickText('button', 'New timer');
+  await waitFor('.modal .cmpicker input');
+  await page.click('.modal .cmpicker input');
+  await clickText('.cmpicker-item .name', 'New client/matter');
+  await waitFor('[data-nc-client]');
+  if (await page.$('[data-nc-timer-group]')) {
+    throw new Error('New Timer flow must not show its own nested Timer group field');
+  }
+  await type('[data-nc-client]', '700008');
+  await type('[data-nc-client-name]', 'Nested Client');
+  await type('[data-nc-matter]', '000001');
+  await type('[data-nc-name]', 'Nested Matter');
+  await clickText('.modal button', 'Create matter');
+  // back in the New Timer modal with the matter picked — cancel without saving it
+  await waitFor('.modal .cmpicker button[title="Change CM"]');
+  await clickText('.modal button', 'Cancel');
+
+  const after = (await (await fetch(`${base}/api/timers`)).json()).length;
+  if (after !== before) throw new Error(`expected no new timer from the nested create (before ${before}, after ${after})`);
+});
+
 await browser.close();
 server.close();
 db.close();

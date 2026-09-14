@@ -19,6 +19,41 @@ Newest entries first.
   pauses a run is a genuine ambiguity the codebase can't answer (ask 1-3
   focused questions, per David's global CLAUDE.md) or a verification failure.
 
+- **Implemented, by direct instruction: quick-add matter button.** David
+  overrode the earlier flag below and asked for the build directly. Most of
+  the requested behavior already existed in the "New client/matter" form
+  (`public/js/components/cmpicker.js`'s `CreateMatterModal`) — client
+  prefill-if-exists, billable-by-default, task-billing-off-by-default were
+  all already there. Two real gaps closed:
+  - **Paste-anywhere CM# parsing.** The old prefill logic
+    (`initialQ.replace(/\D/g,'')`, then first-6/next-6 digits) broke on
+    anything but a bare CM# — any other digit in a pasted paragraph (a date,
+    a ZIP) shifted the split. New pure function
+    `public/js/lib/cmparse.js::extractCmDigits` finds the 6+6 digit CM#
+    pattern anywhere in arbitrary text via lookaround (rejects any digit run
+    that isn't exactly 12 digits, split by at most one separator), tested
+    against 12 fixtures in `test/cmparse.test.js` including a whole
+    paragraph with an unrelated date and ZIP code nearby.
+  - **Auto-created, grouped timer.** Clarified with David: "grouping" meant
+    timer groups (matters have no grouping concept of their own). Quick-
+    adding a matter now also creates a timer for it in a "Timer group" you
+    pick right there — UNLESS the picker is already inside the "New Timer"
+    form (`timergrid.js`), which has its own Group field for the timer it's
+    about to create; that path passes the new `alsoCreateTimer={false}` prop
+    to skip the redundant field/timer. New prop threaded through
+    `CmPicker` → `NewCmModal` → `CreateMatterModal`.
+  - Files: `public/js/lib/cmparse.js` (new), `public/js/components/cmpicker.js`,
+    `public/js/components/timergrid.js`, `public/sw.js` (CACHE bump to v111),
+    `test/cmparse.test.js` (new), `scripts/e2e-smoke.mjs` (two new steps).
+  - Verified: `npm test` — 690/690 pass. `node scripts/e2e-smoke.mjs` — all
+    steps pass, including the two new ones (grouped timer auto-created on
+    the Clients & Matters page; New Timer's own nested create does NOT
+    double-file a timer).
+  - Left out deliberately: the separator between the two 6-digit groups is
+    limited to zero or one character (hyphen, space, period, or none) —
+    matches the three formats David listed; a separator with surrounding
+    text between the two numbers is not handled.
+
 - **Flagged again, nothing implemented.** Re-ran `/todo`; TODO.md's only live
   item is still the "quick-add matter button" idea flagged below in this
   same run's earlier entry — no change to it, so it stays in the backlog

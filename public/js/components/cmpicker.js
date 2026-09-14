@@ -2,6 +2,7 @@ import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, Field, Modal, emitToast, clientLabel,
 } from '/js/ui.js';
+import { extractCmDigits } from '/js/lib/cmparse.js';
 
 const SIX_RE = /^\d{6}$/;
 const CM_RE = /^\d{6}-\d{6}$/;
@@ -10,7 +11,14 @@ const CM_RE = /^\d{6}-\d{6}$/;
 // onChange(cm). allowCreate shows a "New client/matter…" row.
 // Search is one unified fuzzy query over client name/number + matter
 // name/number (ranked server-side by /api/cms/picker).
-export function CmPicker({ value, onChange, autoFocus, allowCreate = true, placeholder = 'Search client or matter…' }) {
+// alsoCreateTimer: a freshly quick-added matter gets its own grouped timer
+// too (2026-09-14 feedback), UNLESS this picker is already embedded in a
+// "new timer" form (timergrid.js) — that form has its own Group field for
+// the timer it is about to create, so a second one here would be redundant.
+export function CmPicker({
+  value, onChange, autoFocus, allowCreate = true, alsoCreateTimer = true,
+  placeholder = 'Search client or matter…',
+}) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
@@ -97,7 +105,7 @@ export function CmPicker({ value, onChange, autoFocus, allowCreate = true, place
             </div>` : null}
         </div>` : null}
       ${creating ? html`
-        <${NewCmModal} initialQ=${q}
+        <${NewCmModal} initialQ=${q} alsoCreateTimer=${alsoCreateTimer}
           onCreated=${(cm) => { setCreating(false); pick(cm); }}
           onClose=${() => setCreating(false)} />` : null}
     </div>`;
@@ -186,24 +194,32 @@ function EditCmModal({ existing, onCreated, onClose }) {
 
 // ---------- create: client → matter path ----------
 
-function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
-  const digits = String(initialQ).replace(/\D/g, ''); // "100001-000012" → prefill both
+function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, onClose }) {
+  // A pasted CM# may arrive bare or buried in a whole paragraph (2026-09-14
+  // feedback) — extractCmDigits finds the 6+6 digit pair without grabbing
+  // stray digits (a date, a ZIP) elsewhere in the text.
+  const cmMatch = extractCmDigits(initialQ);
   const [clients, setClients] = useState([]);
-  const [clientQ, setClientQ] = useState(digits.slice(0, 6));
+  const [groups, setGroups] = useState([]);
+  const [clientQ, setClientQ] = useState(cmMatch ? cmMatch.clientNumber : '');
   const [picked, setPicked] = useState(null); // existing client chosen from the list
   const [clientName, setClientName] = useState('');
   const [listOpen, setListOpen] = useState(false);
-  const [matterNum, setMatterNum] = useState(digits.slice(6, 12));
-  const [name, setName] = useState(/^[\d\s-]*$/.test(initialQ) ? '' : initialQ);
+  const [matterNum, setMatterNum] = useState(cmMatch ? cmMatch.matterNumber : '');
+  const [name, setName] = useState(cmMatch ? '' : initialQ);
   const [billable, setBillable] = useState(true);
   const [favorite, setFavorite] = useState(false);
   // New clients start block-billed: task lines are the exception, so a matter
   // created in a hurry must not silently demand them at finalize time.
   const [taskBilling, setTaskBilling] = useState(false);
   const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
+  const [groupId, setGroupId] = useState('');
   const [error, setError] = useState(null);
 
   useEffect(() => { api.get('/api/clients').then(setClients).catch(() => {}); }, []);
+  useEffect(() => {
+    if (alsoCreateTimer) api.get('/api/timer-groups').then(setGroups).catch(() => {});
+  }, [alsoCreateTimer]);
 
   const ql = clientQ.trim().toLowerCase();
   const matches = (ql
@@ -250,6 +266,21 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
         cm.client_task_billing = taskBilling ? 1 : 0;
       }
       emitToast(`CM ${cm.cm_number} created`);
+      if (alsoCreateTimer) {
+        // The matter already exists at this point — a failed timer creation
+        // (e.g. a stale group) is a secondary problem, not a reason to undo
+        // the matter or block onCreated.
+        try {
+          await api.post('/api/timers', {
+            name: name.trim() || cm.cm_number,
+            cm_id: cm.id,
+            group_id: groupId === '' ? null : Number(groupId),
+          });
+          emitToast(`Timer added${groupId !== '' ? ` to ${groups.find((g) => g.id === Number(groupId))?.name || 'group'}` : ''}`);
+        } catch (timerErr) {
+          emitToast(`Matter created, but the timer could not be added: ${timerErr.message}`, { error: true });
+        }
+      }
       onCreated(cm);
     } catch (err) {
       setError(err.message);
@@ -321,6 +352,13 @@ function CreateMatterModal({ initialQ = '', onCreated, onClose }) {
           <input type="checkbox" checked=${favorite} onChange=${(e) => setFavorite(e.target.checked)} />
           Pin as favorite
         </label>
+        ${alsoCreateTimer ? html`
+          <${Field} label="Timer group" hint="Also creates a timer for this matter, in this group">
+            <select data-nc-timer-group value=${groupId} onChange=${(e) => setGroupId(e.target.value)}>
+              <option value="">Ungrouped</option>
+              ${groups.map((g) => html`<option key=${g.id} value=${g.id}>${g.name}</option>`)}
+            </select>
+          <//>` : null}
         ${error ? html`<div class="error-box">${error}</div>` : null}
         <div class="row-end">
           <button type="button" class="btn" onClick=${onClose}>Cancel</button>

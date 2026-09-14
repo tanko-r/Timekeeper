@@ -1074,7 +1074,8 @@ function TimerModal({ timer, taskCodes, groups, onDone, onClose }) {
             onKeyDown=${(e) => { if (e.key === 'Enter' && name.trim()) save(); }} />
         <//>
         <${Field} label="Client/Matter (optional — stops hold the time until assigned)">
-          <${CmPicker} value=${cm} onChange=${(v) => { setCm(v); if (!name) setName(v.short_name); }} />
+          <${CmPicker} value=${cm} alsoCreateTimer=${false}
+            onChange=${(v) => { setCm(v); if (!name) setName(v.short_name); }} />
         <//>
         <div class="grid" style=${{ gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
           <${Field} label="Default task code">
