@@ -83,9 +83,15 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Render-time validation against the current tab list (see `effectiveTab`
   // below) is what actually implements the "fall back to All" rule — this
   // effect just keeps `activeTab` itself in sync with the right mode's key.
-  const [activeTab, setActiveTabState] = useState(() => localStorage.getItem('tk:timerTab:group') || 'all');
+  // Default landing tab is Recent (2026-09-14 feedback), not All — but only
+  // for the default "group" view (the dashboard's normal first-visit state).
+  // Switching INTO "By client" for the first time still lands on All: that's
+  // a deliberate secondary view, and defaulting it to Recent too would hide
+  // any client whose timers just haven't run in the last two weeks.
+  const [activeTab, setActiveTabState] = useState(() => localStorage.getItem('tk:timerTab:group') || 'act-recent');
   useEffect(() => {
-    setActiveTabState(localStorage.getItem(`tk:timerTab:${grouping}`) || 'all');
+    const fallback = grouping === 'group' ? 'act-recent' : 'all';
+    setActiveTabState(localStorage.getItem(`tk:timerTab:${grouping}`) || fallback);
   }, [grouping]);
   const setActiveTab = (key) => {
     localStorage.setItem(`tk:timerTab:${grouping}`, key);

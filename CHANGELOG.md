@@ -10,6 +10,27 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Dashboard timer grid now opens on "Recent" instead of "All", by direct
+  instruction.** The dashboard's default view (by-group mode, no tab picked
+  yet) landed on "All" — every timer ever created. Now it opens on the
+  existing "Recent" activity tab (the rolling two-week window; see
+  `public/js/lib/activity.js`), so a long-lived install doesn't show months
+  of stale timers on open. Scoped narrowly: only the FIRST-visit default for
+  the primary "group" view changed. Switching INTO "By client" for the
+  first time still defaults to "All" — that's a deliberate secondary view,
+  and defaulting it to Recent too hid a client whose timer just hadn't run
+  in two weeks (caught by 3 e2e regressions on the first attempt, fixed by
+  scoping the change to `grouping === 'group'` only). File:
+  `public/js/components/timergrid.js` (activeTab's two fallback spots).
+  `public/sw.js` CACHE bumped to v113. New e2e step in
+  `scripts/e2e-smoke.mjs` clears the persisted tab, forces a real reload
+  (`page.reload`, not `page.goto` to the same hash — that's a same-document
+  no-op and doesn't remount the component, which is why the first version
+  of this check falsely passed as "All"), and confirms Recent is what
+  renders. Verified: `npm test` 690/690; `node scripts/e2e-smoke.mjs` all
+  clear on a clean run (one run hit the same pre-existing unrelated
+  stalled-time-export flake noted above; cleared on retry).
+
 - **Quick-add matter: paste-parsing now also works pasted straight into the
   Client number field, plus an explanatory hint.** Follow-up to the
   quick-add-matter feature below, by direct instruction. David couldn't find

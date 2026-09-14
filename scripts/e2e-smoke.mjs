@@ -1449,6 +1449,24 @@ await step('timer activity tabs include Yesterday', async () => {
   }
 });
 
+await step('dashboard timer grid: default tab is Recent, not All (2026-09-14 feedback)', async () => {
+  // Earlier steps already picked "All" and persisted it — clear the stored
+  // tab (any grouping mode) to see what a browser with nothing saved yet
+  // actually lands on.
+  await page.evaluate(() => {
+    localStorage.removeItem('tk:timerTab:group');
+    localStorage.removeItem('tk:timerTab:client');
+  });
+  // page.goto to the SAME hash URL we're already on is a same-document no-op
+  // (no remount) — force a real reload, same as the persistence check above.
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-tab.on');
+  const active = await page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
+  if (active !== 'Recent') throw new Error(`default tab should be Recent, got "${active}"`);
+  // Restore "All" so later steps see every timer again, same as before this check.
+  await clickText('.timer-tab', 'All');
+});
+
 await step('add-todo button: sidebar → note box → TODO entry filed (no screenshot)', async () => {
   await page.goto(`${base}/#/`, { waitUntil: 'networkidle0' });
   await waitFor('.timer-board');
