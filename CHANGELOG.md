@@ -10,6 +10,27 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Quick-add matter: paste-parsing now also works pasted straight into the
+  Client number field, plus an explanatory hint.** Follow-up to the
+  quick-add-matter feature below, by direct instruction. David couldn't find
+  the button, and once shown where it was, asked for a hint that pasting
+  works. While adding it I found the earlier fix only covered pasting into a
+  CmPicker SEARCH box before clicking "+ New client/matter" — the "New CM"
+  button opens the create form with nothing pre-typed, so pasting a
+  paragraph straight into its Client number field did nothing (the field
+  only ever read plain digits or a name query). Fixed
+  `public/js/components/cmpicker.js`'s `CreateMatterModal`: that field now
+  runs `extractCmDigits` on every input, so a paste there — bare CM# or
+  buried in a paragraph — fills both the client and matter number fields
+  from either entry point. Hint text on the "Client number" field and its
+  placeholder now say this out loud. New e2e step in
+  `scripts/e2e-smoke.mjs` covers the direct-paste path (the existing step
+  only covered the picker-search path). `public/sw.js` CACHE bumped to
+  v112. Verified: `npm test` 690/690; `node scripts/e2e-smoke.mjs` all clear
+  on a clean run (one run hit 3 unrelated pre-existing flakes — multi-select,
+  timer search bar, stalled-time export — that reproduce without this
+  change and cleared on retry).
+
 - **`/todo` policy change: no more "backlog idea" deferral.** David asked
   for this directly after the quick-add-matter item below got flagged twice
   instead of built. `.claude/skills/todo/SKILL.md` step 2 and its Notes

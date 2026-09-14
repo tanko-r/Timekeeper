@@ -1826,6 +1826,28 @@ await step('settings: dictionary removes an added row and hides a derived one', 
   await shot('settings-dictionary');
 });
 
+await step('quick-add matter: pasting a paragraph straight into Client number extracts the CM#', async () => {
+  // 2026-09-14 feedback, round 2: the New CM button opens this modal with no
+  // initialQ, so the original fix (parsing initialQ at mount) only helped
+  // when the picker's OWN search box carried the paste. Pasting directly
+  // into the Client number field must extract the CM# too.
+  await page.goto(`${base}/#/cms`, { waitUntil: 'domcontentloaded' });
+  await clickText('.btn-primary', 'New CM');
+  await waitFor('[data-nc-client]');
+  const paragraph = 'Hi — please open a matter for 700009-000004 by Friday 10/16. Thanks!';
+  await page.evaluate((text) => {
+    const input = document.querySelector('[data-nc-client]');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    set.call(input, text);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, paragraph);
+  await page.waitForFunction(
+    () => document.querySelector('[data-nc-client]')?.value === '700009', { timeout: 4000 });
+  const matterVal = await page.$eval('[data-nc-matter]', (el) => el.value);
+  if (matterVal !== '000004') throw new Error(`matter number not extracted from pasted paragraph: got "${matterVal}"`);
+  await clickText('.modal button', 'Cancel');
+});
+
 await step('quick-add matter (Clients & Matters page): auto-creates a grouped timer', async () => {
   // 2026-09-14 feedback: quick-adding a matter outside a "new timer" form
   // should also create a timer for it, in a group picked right there.

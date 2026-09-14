@@ -294,7 +294,7 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
           ? `Existing client ${effective.client_number}${effective.name ? '' : ' (unnamed)'}`
           : newNumber ? `New client ${newNumber} — created together with this matter`
           : wantNew ? 'Now type the 6-digit client number'
-          : 'Type the 6-digit number — or type a name to search existing clients'}>
+          : 'Type the 6-digit number, type a name to search existing clients, or paste the CM# — even pasted into a whole paragraph, it gets pulled out and fills this and the matter number below'}>
           ${picked ? html`
             <button type="button" class="btn" style=${{ justifyContent: 'space-between' }} title="Change client"
               onClick=${() => { setPicked(null); setClientQ(''); setListOpen(true); }}>
@@ -303,9 +303,23 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
             </button>` : html`
             <div class="cmpicker">
               <input type="search" data-nc-client value=${clientQ} autoFocus
-                placeholder=${wantNew ? '6-digit client number' : 'e.g. 100004 — or a name to search'}
+                placeholder=${wantNew ? '6-digit client number' : 'e.g. 100004 — or paste the CM#, even from a paragraph'}
                 onFocus=${() => setListOpen(true)}
-                onInput=${(e) => { setClientQ(e.target.value); setListOpen(true); }}
+                onInput=${(e) => {
+                  // A paste (bare CM# or a whole paragraph with one buried in
+                  // it) fills both number fields at once; anything else is a
+                  // normal keystroke — number or name search, unchanged.
+                  const v = e.target.value;
+                  const pasted = extractCmDigits(v);
+                  if (pasted) {
+                    setClientQ(pasted.clientNumber);
+                    setMatterNum(pasted.matterNumber);
+                    setListOpen(false);
+                  } else {
+                    setClientQ(v);
+                    setListOpen(true);
+                  }
+                }}
                 onBlur=${() => setTimeout(() => setListOpen(false), 150)} />
               ${listOpen && !exact && (matches.length > 0 || qt !== '') ? html`
                 <div class="cmpicker-menu">
