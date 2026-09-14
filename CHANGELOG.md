@@ -10,6 +10,22 @@ Newest entries first.
 
 ## 2026-09-14
 
+- **Entry cards on the dashboard now show the client name alongside the
+  matter name.** UI feedback screenshot: a card only showed the matter's own
+  short name (e.g. "General") with no client context, so two matters that
+  reuse a short name (a common thing across clients) looked identical at a
+  glance. `entry.cm` already carried `client_name` from the server's
+  `enrich()` join (`server/routes/entries.js`) — the edit-entry modal was
+  already using it via `clientLabel()`, so this was a display-only gap, not a
+  data gap. File: `public/js/components/entrylist.js` — the card's title now
+  renders `clientLabel(e.cm) + ' - ' + e.cm.short_name` (falls back to the
+  bare matter name when the client is still unnamed), matching the format
+  David gave in the screenshot annotation ("Cerebras - General"). The CM
+  number chip next to it is unchanged. `public/sw.js` CACHE bumped to v114.
+  Verified: `npm test` 691/691; `node scripts/e2e-smoke.mjs` all clear;
+  manually confirmed in a scratch-DB browser screenshot showing "Cerebras -
+  General" on the card.
+
 - **Dashboard timer grid now opens on "Recent" instead of "All", by direct
   instruction.** The dashboard's default view (by-group mode, no tab picked
   yet) landed on "All" — every timer ever created. Now it opens on the

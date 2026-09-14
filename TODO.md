@@ -10,3 +10,4 @@ ask David a question when the codebase itself can't answer it.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
+- [ ] 2026-09-14 14:43 — There should be an edit matter button here to pull up the matter for editing. (feedback/2026-09-14T14-43-54.png · #/)

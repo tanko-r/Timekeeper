@@ -1,7 +1,7 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
-  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm,
+  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm, clientLabel,
 } from '/js/ui.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
@@ -271,7 +271,7 @@ export function EntryList({
           <div class="body">
             <div class="entry-meta">
               ${e.cm ? html`
-                <strong>${e.cm.short_name}</strong>
+                <strong>${clientLabel(e.cm) ? `${clientLabel(e.cm)} - ${e.cm.short_name}` : e.cm.short_name}</strong>
                 <span class="muted mono small">${e.cm.cm_number}</span>` : html`
                 <strong class="muted">No matter yet</strong>
                 <button class="btn btn-sm" title="Assign a client/matter — required before this entry can finalize or export"
