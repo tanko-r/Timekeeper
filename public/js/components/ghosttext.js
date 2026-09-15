@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, useCallback } from '/js/ui.js';
-import { ghostCompletion } from '/js/lib/ghost.js';
+import { ghostMatch } from '/js/lib/ghost.js';
 
 // Ghost-text narrative autocomplete (spec §6): a grey inline completion from
 // the matter's phrasebook; Tab accepts. Deterministic — no LLM. Reusable:
@@ -84,7 +84,7 @@ export function GhostInput({
   const pendingCaret = useRef(null);
 
   const recompute = useCallback((text, caret) => {
-    setGhost(ghostCompletion(text, caret, suggestions, {
+    setGhost(ghostMatch(text, caret, suggestions, {
       entities: entities?.entities || [],
       people: entities?.people || [],
     }));
@@ -101,9 +101,26 @@ export function GhostInput({
     return all.filter((n) => !used.includes(n.toLowerCase())).slice(0, 5);
   }
 
-  // Both the Tab accept and the list share this, so they cannot drift.
+  // The candidate list appends a full, already-correctly-cased name, so it
+  // never needs a case fix.
   function accept(textToAppend) {
     const next = value + textToAppend;
+    pendingCaret.current = next.length;
+    setGhost(null);
+    setList(null);
+    onChange(next);
+  }
+
+  // Tab-accepting the ghost is different: what's already typed may be a
+  // case-insensitive match (typed "s", candidate is "S. Minhas"). Fix that
+  // typed prefix's case before appending the remainder, so accepting always
+  // produces the candidate's real casing.
+  function acceptGhost() {
+    if (!ghost) return;
+    const base = ghost.prefixFix
+      ? value.slice(0, value.length - ghost.prefixFix.length) + ghost.prefixFix.text
+      : value;
+    const next = base + ghost.text;
     pendingCaret.current = next.length;
     setGhost(null);
     setList(null);
@@ -211,7 +228,7 @@ export function GhostInput({
     }
     if (e.key === 'Tab' && ghost && !e.shiftKey) {
       e.preventDefault();
-      accept(ghost);
+      acceptGhost();
       return;
     }
     if (onKeyDownProp) onKeyDownProp(e);
@@ -239,7 +256,7 @@ export function GhostInput({
     <div class=${'ghost-wrap' + (multiline ? ' multiline' : '')}>
       ${ghost ? html`
         <div class="ghost-mirror" ref=${mirrorRef} aria-hidden="true">
-          <span class="ghost-typed">${value}</span><span class="ghost-hint">${ghost}</span>
+          <span class="ghost-typed">${value}</span><span class="ghost-hint">${ghost.text}</span>
         </div>` : null}
       ${multiline
         ? html`<textarea rows=${rows} ...${shared}></textarea>`

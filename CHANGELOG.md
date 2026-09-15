@@ -8,6 +8,34 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-15
+
+- **Narrative ghost-text: fixed the flicker-off on the first matched letter,
+  and it now corrects the typed case on accept.** UI feedback: typing toward
+  a suggested entity/person name (e.g. "with " triggers "A. Turner") made the
+  grey ghost text vanish the instant you typed its first letter, only to
+  reappear once you'd typed two. Cause: the mid-word match required 2+ typed
+  characters, but the trigger-word suggestion had already been showing the
+  full name at 0 characters — so 1 character was a dead zone. Also added:
+  matching is explicitly case-insensitive, and Tab-accepting now corrects the
+  already-typed prefix to the candidate's real casing (type "s", Tab into
+  "S. Minhas", not "s. Minhas") — phrasebook (tier 1) completions are
+  untouched, since their casing contract is deliberately "typed part stays
+  exactly as typed."
+  Files: `public/js/lib/ghost.js` (new `ghostMatch` returning `{text,
+  prefixFix}`; `ghostCompletion` is now a thin wrapper kept for its existing
+  callers/tests; mid-word match threshold lowered from 2 chars to 1 for tier
+  2 only), `public/js/components/ghosttext.js` (consumes `ghostMatch`; new
+  `acceptGhost()` applies `prefixFix` before appending on Tab), `public/sw.js`
+  (cache bump v116).
+  Tests: `npm test` — 694/694 pass (18/18 in `test/ghost.test.js`, 4 new).
+  `node scripts/e2e-smoke.mjs` — all clear (one unrelated "stalled time"
+  export-filter failure reproduced on a clean run of unmodified master too,
+  and passed on a second run against this change — pre-existing timing
+  flake, not caused by this fix).
+  Left out: the candidate-list (↓) accept path was not touched — it inserts
+  an already fully-cased name, not a partial match, so it was never affected.
+
 ## 2026-09-14
 
 - **Edit-entry modal: added an "edit matter" pencil next to Client/Matter.**

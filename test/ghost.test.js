@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ghostCompletion } from '../public/js/lib/ghost.js';
+import { ghostCompletion, ghostMatch } from '../public/js/lib/ghost.js';
 
 const PHRASES = [
   'revise lease legal description',
@@ -96,4 +96,31 @@ test('the phrasebook still wins when it matches', () => {
 test('with no entities or people, behaviour is exactly as before', () => {
   assert.equal(ghostCompletion('Review and analyze ', 18, PHRASES), null);
   assert.equal(ghostCompletion('rev', 3, PHRASES), 'ise lease legal description');
+});
+
+// Regression: the ghost was visible with 0 characters typed (trigger word
+// alone, e.g. "with "), then went quiet at 1 character (below the mid-word
+// minChars floor), then reappeared at 2+. A single typed character must
+// already continue the match.
+test('a single typed character continues an entity/person match instead of going quiet', () => {
+  assert.equal(ghost('Telephone conference with A'), '. Turner');
+  assert.equal(ghost('Review and analyze D'), 'evelopment Agreement');
+});
+
+test('matching a name is case-insensitive, and accepting it corrects the typed case', () => {
+  const typedLower = 'Email to a';
+  const wrongCase = ghostMatch(typedLower, typedLower.length, PHRASES, OPTS);
+  assert.equal(wrongCase.text, '. Turner');
+  assert.deepEqual(wrongCase.prefixFix, { length: 1, text: 'A' });
+
+  const typedUpper = 'Email to A';
+  const rightCase = ghostMatch(typedUpper, typedUpper.length, PHRASES, OPTS);
+  assert.equal(rightCase.text, '. Turner');
+  assert.equal(rightCase.prefixFix, null);
+});
+
+test('phrase-tier completions never carry a prefix fix — typed casing is left exactly as typed', () => {
+  const m = ghostMatch('Rev', 3, PHRASES);
+  assert.equal(m.text, 'ise lease legal description');
+  assert.equal(m.prefixFix, null);
 });
