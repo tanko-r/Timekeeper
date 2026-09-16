@@ -1,7 +1,7 @@
-import { api } from '/js/api.js';
+import { api, streamNdjson } from '/js/api.js';
 import {
-  html, useState, useEffect, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
-  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm, clientLabel,
+  html, useState, useEffect, useRef, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
+  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm, clientLabel, ContextMenu,
 } from '/js/ui.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
@@ -9,13 +9,137 @@ import { GhostInput, useMatterSuggestions, useMatterEntities } from '/js/compone
 import { useShortcuts } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 
+const AI_TASK_LABEL = { expand: 'Expand', shorten: 'Shorten', rewrite: 'Rewrite' };
+
+// Inline AI narrative assist (2026-09-15 feedback: "There should be an AI
+// narrative assist button on this screen too" — the dashboard's Today's
+// entries cards had click-to-edit narratives but no way to reach the
+// editor's AI rewrite). Expand/Shorten/Rewrite run right here, streamed the
+// same way the entry editor does. The one AI mode this card can't offer is
+// "expand → split into tasks" — that rewrites the task lines, and this card
+// has no task-line editor to show the result in — so that menu item opens
+// the full entry editor instead, where the rest of the AI menu also lives.
+function useAiAssist(entry, onChanged) {
+  const [busy, setBusy] = useState(false);
+  const [streamText, setStreamText] = useState(null); // live tokens while busy
+  const abortRef = useRef(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  const [lastTask, setLastTaskState] = useState(() => {
+    const v = localStorage.getItem('tk:lastAiTask');
+    return AI_TASK_LABEL[v] ? v : 'expand';
+  });
+  // Shared key with the entry editor (spec 2026-08-03): whichever surface
+  // ran an AI task last, the other one's default button picks it up too.
+  const setLastTask = (v) => { localStorage.setItem('tk:lastAiTask', v); setLastTaskState(v); };
+
+  const seed = (entry.narrative || '').trim();
+
+  async function finish(finalText, before) {
+    const substantive = entry.tasks.filter(
+      (x) => (x.fragment || '').trim() || (x.task_code || '').trim() || Number(x.duration) > 0);
+    try {
+      await api.patch(`/api/entries/${entry.id}`, {
+        narrative: finalText,
+        narrative_manual: substantive.length >= 2 ? 1 : 0,
+        narrative_ai: 1,
+        ai_brief: seed.slice(0, 500),
+        ai_draft: finalText,
+      });
+      onChanged();
+      emitToast('AI rewrite applied', {
+        actionLabel: 'Undo',
+        action: async () => {
+          await api.patch(`/api/entries/${entry.id}`, {
+            narrative: before.narrative, narrative_manual: before.narrative_manual, narrative_ai: 0,
+          });
+          onChanged();
+        },
+      });
+    } catch (e) {
+      emitToast(e.message, { error: true });
+    }
+  }
+
+  async function narrate(mode) {
+    if (!seed || busy) return;
+    setLastTask(mode === 'longer' ? 'expand' : mode === 'shorter' ? 'shorten' : 'rewrite');
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setStreamText('');
+    const before = { narrative: entry.narrative, narrative_manual: entry.narrative_manual };
+    try {
+      let acc = '';
+      await streamNdjson('/api/ai/narrate', {
+        mode, brief: seed, narrative: seed,
+        cm_id: entry.cm?.id,
+        totalHours: entry.total > 0 ? entry.total : undefined,
+      }, (m) => {
+        if (abortRef.current !== ctrl) return; // superseded — drop late lines
+        if (m.error) throw new Error(m.message || m.error);
+        if (m.token) { acc += m.token; setStreamText(acc); }
+        if (m.done) finish(m.narrative, before);
+      }, ctrl.signal);
+    } catch (e) {
+      if (e.name !== 'AbortError') emitToast(e.body?.message || e.message, { error: true });
+    } finally {
+      if (abortRef.current === ctrl) { setBusy(false); setStreamText(null); }
+    }
+  }
+
+  function run(kind) {
+    if (kind === 'expand') narrate('longer');
+    else if (kind === 'shorten') narrate('shorter');
+    else narrate('regenerate');
+  }
+
+  return { busy, streamText, seed, lastTask, run };
+}
+
+// AI assist button + caret menu, mirroring the entry editor's (spec 3.3):
+// main button re-runs the last task picked (shared with the editor), the
+// caret opens the full choice. "Expand → split into tasks" hands off to the
+// full editor rather than reimplementing task-line splitting here.
+function InlineAiAssist({ ai, assist, entry, openEditor }) {
+  const [menu, setMenu] = useState(null);
+  if (!ai || !ai.enabled || !ai.reachable) return null;
+  const disabled = !assist.seed || assist.busy;
+  const items = [
+    { label: 'Expand', icon: 'sparkles', disabled, onClick: () => assist.run('expand') },
+    { label: 'Shorten', disabled, onClick: () => assist.run('shorten') },
+    { label: 'Rewrite', disabled, onClick: () => assist.run('rewrite') },
+    { hr: true },
+    {
+      label: 'Expand → split into tasks', icon: 'layout', disabled,
+      onClick: () => openEditor({ id: entry.id }),
+    },
+  ];
+  return html`
+    <div class="inline-ai-assist">
+      <div class="btn-split">
+        <button type="button" class="btn btn-ghost btn-sm" title=${`AI: ${AI_TASK_LABEL[assist.lastTask]}`}
+          disabled=${disabled} onClick=${() => assist.run(assist.lastTask)}>
+          <${Icon} name="sparkles" size=${12} /> ${assist.busy ? 'Working…' : AI_TASK_LABEL[assist.lastTask]}
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm" title="Choose a different AI task"
+          disabled=${disabled}
+          onClick=${(e) => { const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.left, y: r.bottom + 4 }); }}>
+          <${Icon} name="chevronDown" size=${11} />
+        </button>
+      </div>
+      ${menu ? html`<${ContextMenu} x=${menu.x} y=${menu.y} items=${items} onClose=${() => setMenu(null)} />` : null}
+    </div>`;
+}
+
 // Inline narrative editing (2026-07-10 feedback): click a draft entry's
 // narrative to edit it in place — no editor round-trip. Same edit-through
 // contract as the editor's AUTO box: on a ≥2-line auto entry, text that still
 // parses folds back into the task lines (fragments + allocations, staying
 // AUTO); a structural break detaches to a durable manual narrative
 // (narrative_manual=1). Single/no-line entries just save the text.
-function InlineNarrative({ entry, onChanged }) {
+function InlineNarrative({ entry, onChanged, ai, openEditor }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
   // Same deterministic assists as the main editor (2026-07-14 feedback —
@@ -25,6 +149,7 @@ function InlineNarrative({ entry, onChanged }) {
   const phrases = useMatterSuggestions(editing ? entry.cm?.id : null);
   const ents = useMatterEntities(editing ? entry.cm?.id : null);
   const expand = (t, caret) => expandShortcuts(t, caret, shortcuts);
+  const assist = useAiAssist(entry, onChanged);
 
   if (entry.status !== 'draft') {
     return html`<p class="narrative">${entry.narrative || html`<em class="muted">No narrative yet</em>`}</p>`;
@@ -59,12 +184,26 @@ function InlineNarrative({ entry, onChanged }) {
     }
   }
 
+  // While streaming, the live tokens replace the paragraph outright — same
+  // spot, no separate progress area — and the AI button stays put (disabled,
+  // reading "Working…") so the row's shape doesn't jump mid-stream.
+  if (assist.busy) {
+    return html`
+      <div class="narrative-row">
+        <p class="narrative">${assist.streamText || html`<em class="muted">Working…</em>`}</p>
+        <${InlineAiAssist} ai=${ai} assist=${assist} entry=${entry} openEditor=${openEditor} />
+      </div>`;
+  }
+
   if (!editing) {
     return html`
-      <p class="narrative narrative-editable" title="Click to edit the narrative in place"
-        onClick=${() => { setText(entry.narrative); setEditing(true); }}>
-        ${entry.narrative || html`<em class="muted">No narrative yet</em>`}
-      </p>`;
+      <div class="narrative-row">
+        <p class="narrative narrative-editable" title="Click to edit the narrative in place"
+          onClick=${() => { setText(entry.narrative); setEditing(true); }}>
+          ${entry.narrative || html`<em class="muted">No narrative yet</em>`}
+        </p>
+        <${InlineAiAssist} ai=${ai} assist=${assist} entry=${entry} openEditor=${openEditor} />
+      </div>`;
   }
   return html`
     <${GhostInput} multiline class="narrative-inline-input" autoFocus
@@ -156,6 +295,10 @@ export function EntryList({
 }) {
   const increment = (settings?.rounding?.increment) || 0.1;
   const [deleting, setDeleting] = useState(null);
+  // One status check for the whole list (2026-09-15 feedback: inline AI
+  // assist on the dashboard cards) rather than one per card.
+  const [ai, setAi] = useState(null);
+  useEffect(() => { api.get('/api/ai/status').then(setAi).catch(() => setAi({ enabled: false })); }, []);
 
   const timerFor = (entry) => (timers || []).find((t) => t.linked_entry_id === entry.id);
 
@@ -285,7 +428,7 @@ export function EntryList({
                   <${Icon} name="timer" size=${12} /> running</span>`
               : e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
-            <${InlineNarrative} entry=${e} onChanged=${onChanged} />
+            <${InlineNarrative} entry=${e} onChanged=${onChanged} ai=${ai} openEditor=${openEditor} />
             ${e.tasks.length > 1 ? html`
               <div class="muted small">
                 ${e.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration, increment)}`).join(' · ')}

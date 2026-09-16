@@ -8,6 +8,44 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-16
+
+- **Dashboard entry cards: added an AI narrative-assist button (Expand /
+  Shorten / Rewrite).** UI feedback: the "Today's entries" cards on the
+  dashboard have click-to-edit narratives, but the only way to reach the
+  AI rewrite was to open the full entry editor. Asked David how the button
+  should handle "Expand → split into tasks" (the editor mode that rewrites
+  task lines), since the compact card has no task-line editor to show the
+  result in — he chose: run Expand/Shorten/Rewrite inline, and have the
+  split option open the full editor instead of reimplementing it. Built
+  that: a small split-button (main action re-runs whichever task was last
+  used, shared via the same `tk:lastAiTask` key the editor already uses;
+  the caret opens the full menu) streams tokens from `/api/ai/narrate`
+  straight into the card, same as the editor does, then PATCHes the result
+  with the same AI-provenance fields the editor sends
+  (`narrative_manual`/`narrative_ai`/`ai_brief`/`ai_draft`) and offers a
+  toast "Undo" (the app's existing undo-toast pattern, e.g. delete) rather
+  than porting the editor's separate Undo button. "Expand → split into
+  tasks" opens the full editor via the existing `openEditor` prop.
+  Files: `public/js/components/entrylist.js` (new `useAiAssist` hook and
+  `InlineAiAssist` component; `EntryList` fetches `/api/ai/status` once for
+  the whole card list rather than per card), `public/css/app.css` (narrative
+  + AI button share a row, wraps on narrow viewports), `public/sw.js`
+  (cache bump v117).
+  Verification: `npm test` — 694/694 pass (no new pure-function logic here,
+  so no new unit tests — this is a thin UI wrapper around the already-tested
+  `/api/ai/narrate` and `/api/entries` endpoints). `node scripts/e2e-smoke.mjs`
+  — all clear except the pre-existing "stalled time" export-filter flake
+  (unrelated timing test, reproduces on unmodified master too). Additionally
+  drove the actual feature in headless Chromium against a scratch
+  server + temp database with the real local Ollama (already running on
+  this box) — never touched production data — and confirmed live: the
+  button renders, Expand streams a real rewrite into the card, the Undo
+  toast reverts it, and the caret menu's "Expand → split into tasks" opens
+  the full editor.
+  Left out: the editor's "Last AI request" debug panel — audit-only, not
+  needed for a quick inline action.
+
 ## 2026-09-15
 
 - **Narrative ghost-text: fixed the flicker-off on the first matched letter,
