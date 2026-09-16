@@ -14,33 +14,40 @@ export function compareTimersAZ(a, b) {
     || String(a.cm_short_name || '').localeCompare(String(b.cm_short_name || ''), undefined, COLLATE);
 }
 
-// 2026-09-15 feedback: the time-based tabs (Today/Yesterday/Week/Recent) and
-// "All" show one list mixing every client, alphabetized purely by caption —
-// so timers for the same client end up scattered. Cluster them WITHOUT a
-// visible label (the ask was "subtle whitespace", not headers): a stable
-// group-by on client_id, ordered by each client's first appearance, so the
-// existing order (typically A–Z by name) still governs both the order
-// clients appear in and the order within each client's run. Matterless
-// timers (client_id null/undefined) all share one cluster rather than each
-// getting its own — there's no client to tell them apart by.
-// Returns { list, starts }: `list` is the reordered timers; `starts` is the
-// set of timer ids that begin a new cluster — every one except the very
-// first card overall, which needs no leading gap before anything is on
-// screen yet.
-export function clusterByClient(timers) {
+// 2026-09-15/16 feedback: the time-based tabs (Today/Yesterday/Week/Recent)
+// show one list mixing every client, alphabetized purely by caption — so
+// timers for the same client end up scattered. Group them by client, same
+// header style as the "All" tab's named groups — except a client with only
+// ONE timer in this list gets no header of its own (that would be a lot of
+// one-line "headers" for a busy Recent tab); those singles are pooled into a
+// single trailing "Other Clients" bucket instead.
+// Ordered by each client's first appearance in `timers`, so the existing
+// order (typically A–Z by name) still governs both which client's group
+// comes first and the order within it; "Other Clients" always comes last,
+// in the same first-appearance order among the singles.
+// A timer with no client (client_id null/undefined) groups with its peers
+// under "No client" the same as any other client — it only lands in "Other
+// Clients" if it is the ONLY matterless timer in the list, same rule as
+// everyone else.
+// Returns [{ key, label, list }, …] — `list` inside each group keeps the
+// timers' relative order from the input.
+export function groupTimersByClient(timers) {
   const order = [];
-  const buckets = new Map();
+  const buckets = new Map(); // key -> { key, label, list }
   for (const t of timers) {
     const key = t.client_id ?? 'none';
-    if (!buckets.has(key)) { buckets.set(key, []); order.push(key); }
-    buckets.get(key).push(t);
+    if (!buckets.has(key)) {
+      const label = t.client_name || t.client_number || 'No client';
+      buckets.set(key, { key: `client-${key}`, label, list: [] });
+      order.push(key);
+    }
+    buckets.get(key).list.push(t);
   }
-  const list = [];
-  const starts = new Set();
-  order.forEach((key, i) => {
-    const items = buckets.get(key);
-    if (i > 0 && items.length) starts.add(items[0].id);
-    list.push(...items);
-  });
-  return { list, starts };
+  const groups = order.map((key) => buckets.get(key));
+  const solo = groups.filter((g) => g.list.length === 1);
+  const result = groups.filter((g) => g.list.length > 1);
+  if (solo.length) {
+    result.push({ key: 'other-clients', label: 'Other Clients', list: solo.flatMap((g) => g.list) });
+  }
+  return result;
 }
