@@ -9,7 +9,7 @@ import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
 import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
-import { compareTimersAZ } from '/js/lib/timersort.js';
+import { compareTimersAZ, clusterByClient } from '/js/lib/timersort.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
 // drag-and-drop, day-accumulator clocks that are directly editable.
@@ -617,9 +617,29 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   }
   const activeSection = tabsEnabled && effectiveTab !== 'all'
     ? sections.find((sec) => sec.key === effectiveTab) : null;
-  const renderedSections = ACTIVITY[effectiveTab] && tabsEnabled
+  let renderedSections = ACTIVITY[effectiveTab] && tabsEnabled
     ? [{ key: effectiveTab, group: null, label: null, list: activityList(effectiveTab) }]
     : activeSection ? [activeSection] : sections;
+
+  // 2026-09-15 feedback: the time-based tabs (Today/Yesterday/Week/Recent)
+  // mix every client into one alphabetical run — cluster the cards by client
+  // (no label, just a subtle gap between runs; see clusterByClient).
+  // Deliberately NOT applied to "All": in by-group mode it already renders
+  // one headed section per named group (the user's own manual curation —
+  // drag order, Sort A–Z — which client-reordering would fight), and in
+  // by-client mode it's already one section per client. It's also NOT
+  // applied to a named-group or by-client tab for the same reason. Tried
+  // applying it everywhere first, but it silently reordered the Ungrouped
+  // section under "All" too, breaking the e2e multi-select test's assumption
+  // that freshly-created same-client timers land at the end of Ungrouped in
+  // creation order — a real sign it was fighting existing manual order, not
+  // just a test-fixture quirk.
+  if (tabsEnabled && ACTIVITY[effectiveTab]) {
+    renderedSections = renderedSections.map((sec) => {
+      const { list, starts } = clusterByClient(sec.list);
+      return { ...sec, list, clusterStarts: starts };
+    });
+  }
 
   // ordered list of cards actually on screen: the active tab's cards only,
   // or every section's cards under "All" (or in flat mode, which has no
@@ -816,7 +836,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
       onFocus=${(e) => { if (e.target === e.currentTarget && tabbableId != null) focusCard(tabbableId); }}>
 
     ${renderedSections.map((sec) => {
-      const { group, list } = sec;
+      const { group, list, clusterStarts } = sec;
       if (norm && list.length === 0) return null; // filtering hides empty sections
       if (byGroupMode && !group && list.length === 0 && hasGroups) return null;
       // Only the "All" view shows a plain heading (name + count, no
@@ -844,6 +864,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
               const dropHere = () => { endDrag(); guard(dropOn({ kind: 'timer', timer: t })); };
               const card = html`
                 <${TimerCard} key=${t.id} timer=${t} secs=${liveElapsed(t)} idleAfter=${idleAfter}
+                  clusterStart=${!!(clusterStarts && clusterStarts.has(t.id))}
                   canDrag=${byGroupMode} dragging=${draggingId === t.id}
                   selected=${selected.has(t.id)} onSelect=${(e) => selectCard(e, t, list)}
                   tabbable=${tabbableId === t.id} onFocusCard=${() => setFocusId(t.id)}
@@ -946,7 +967,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
 
 // ---------- compact card ----------
 
-function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging = false, selected = false, tabbable = false, onFocusCard, onSelect, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDragEnd, onDragOverCard, onDropOn }) {
+function TimerCard({ timer, secs, idleAfter, roundMode, clusterStart = false, canDrag = true, dragging = false, selected = false, tabbable = false, onFocusCard, onSelect, onStart, onStop, onDelta, onSet, onRename, onMenu, onDragStart, onDragEnd, onDragOverCard, onDropOn }) {
   const [editingClock, setEditingClock] = useState(false);
   const [clockText, setClockText] = useState('');
   const [editingName, setEditingName] = useState(false);
@@ -992,7 +1013,7 @@ function TimerCard({ timer, secs, idleAfter, roundMode, canDrag = true, dragging
   return html`
     <div class=${'timer-card' + (timer.running ? ' running' : '') + (worked ? ' worked' : '')
       + (timer.cm_id ? '' : ' unassigned') + (dragging ? ' dragging' : '') + (editingText ? ' editing' : '')
-      + (selected ? ' selected' : '')}
+      + (selected ? ' selected' : '') + (clusterStart ? ' cluster-start' : '')}
       tabIndex=${tabbable ? 0 : -1}
       data-timer-id=${timer.id}
       onFocus=${() => onFocusCard && onFocusCard()}

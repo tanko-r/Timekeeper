@@ -256,6 +256,9 @@ table.tk tr.client-row td {
    padding between columns". */
 .timer-grid { columns: 300px; column-gap: 18px; }
 .timer-grid > * { break-inside: avoid; margin-bottom: 6px; }
+/* Subtle by-client clustering (2026-09-15 feedback), no label — just extra
+   space where the client changes, on top of the normal 6px card gap. */
+.timer-card.cluster-start { margin-top: 10px; }
 .timer-section { margin-bottom: 4px; }
 .group-head {
   display: flex; align-items: center; gap: 4px; margin: 10px 0 6px; min-height: 28px;

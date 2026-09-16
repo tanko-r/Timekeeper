@@ -10,6 +10,40 @@ Newest entries first.
 
 ## 2026-09-16
 
+- **Timer grid: cluster the time-based tabs' cards by client, no labels.**
+  UI feedback: Today/Yesterday/Week/Recent each show one flat alphabetical
+  run of timer buttons mixing every client — hard to scan. Added a stable
+  `clusterByClient` (in `public/js/lib/timersort.js`) that groups same-client
+  cards together, ordered by each client's first appearance, and leaves a
+  10px gap (`.timer-card.cluster-start` in `public/css/app.css`) before the
+  first card of every cluster after the first — no name, no header, per the
+  ask ("don't need to name the client... subtle whitespace").
+  Scope note: tried applying this to the "All" tab too (as the TODO line
+  literally listed it), but backed that out — in by-group mode "All" already
+  renders one headed section per named group plus Ungrouped, and clustering
+  inside those sections reordered the Ungrouped section in a way that broke
+  an existing e2e test's documented assumption that freshly-created
+  same-client timers land at the end of Ungrouped in creation order. That
+  wasn't just a test-fixture quirk — it's a real sign the reordering was
+  fighting the user's own group curation (drag order, Sort A–Z), the same
+  reason named-group and by-client tabs were already excluded. Kept the
+  narrower scope: only the four activity tabs, which have no persisted
+  manual order to fight and are exactly what the feedback screenshot showed.
+  Files: `public/js/lib/timersort.js` (new `clusterByClient`),
+  `public/js/components/timergrid.js` (applies it only when
+  `ACTIVITY[effectiveTab]` is truthy, threads `clusterStarts` through
+  `renderedSections` so keyboard nav's `visible` list stays in the same
+  order as what's on screen), `public/css/app.css`, `public/sw.js` (cache
+  bump v118).
+  Tests: `npm test` — 698/698 pass (4 new `clusterByClient` cases in
+  `test/timersort.test.js`). `node scripts/e2e-smoke.mjs` — flaked twice on
+  an unrelated step while the "apply to All too" version was still in place
+  (see scope note above); with the narrowed scope, 4 clean runs in a row.
+  Also drove it live in headless Chromium against a scratch server (never
+  touched production data): five timers across three clients, interleaved
+  so alphabetical order would mix them, landed in the Recent tab correctly
+  grouped by client with the gap markers in the right places.
+
 - **Dashboard entry cards: added an AI narrative-assist button (Expand /
   Shorten / Rewrite).** UI feedback: the "Today's entries" cards on the
   dashboard have click-to-edit narratives, but the only way to reach the
