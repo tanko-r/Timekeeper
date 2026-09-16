@@ -10,6 +10,49 @@ Newest entries first.
 
 ## 2026-09-16
 
+- **Settings → Dictionary: clarified why "Global" looks empty, added an
+  explicit "auto-collected" flag, and fixed British spellings ("organisation"
+  → "organization") on this page and its Organisation kind label.** UI
+  feedback: the Dictionary page looked broken/empty — "This should be
+  populated with the entries auto collected from my narratives, and there
+  should be a flag indicating which were auto-collected." Investigated: the
+  per-matter extraction pipeline (`rebuildMatterMemory` in
+  `server/routes/entries.js`) already works correctly and is already
+  e2e-tested (confirmed live: picking a real matter shows its derived
+  entities with correct counts). The page defaults to "Global" scope, and
+  Global rows are intentionally hand-added only — nothing is ever
+  auto-derived there, since counts/predictions are inherently per-matter
+  (`rebuildMatterMemory` returns immediately for a null matter id). That's a
+  deliberate design, not a bug, but the page never said so, so landing on it
+  looked like the feature was broken. Fixed the confusion rather than
+  building cross-matter aggregation (a materially bigger, unasked-for
+  change to the data model): the empty state now explains Global is
+  hand-added-only and points at the matter picker, and a matter's empty
+  state explains what makes a row start appearing. Also made the per-row
+  "Where" column always show its origin explicitly ("This matter ·
+  auto-collected" / "This matter · added") instead of only flagging manual
+  rows — direct fix for "a flag indicating which were auto-collected".
+  American-spellings pass: grepped the whole client+server tree for common
+  British spellings; every hit besides this page was in a code comment
+  (developer-facing, out of scope for "the app") — the two real user-facing
+  ones were "Organisation" (the dropdown/kind label) and the page's own
+  "organisations" in its description text, both now "organization(s)".
+  Files: `public/js/views/settings.js`, `public/sw.js` (cache bump v119).
+  Verification: `npm test` — 698/698 pass (no pure-function logic changed
+  here — this is copy and an existing-field display change). Drove it live
+  in headless Chromium against a scratch server: the derived-row flag reads
+  "This matter · auto-collected" exactly as intended (screenshot showed a
+  real "Cedar Utility Easement" row derived from the Acme fixture matter's
+  entries), and the Global empty state shows the new explanatory copy.
+  `node scripts/e2e-smoke.mjs`: the dictionary-specific step ("settings:
+  dictionary removes an added row and hides a derived one") passed clean on
+  every run; a handful of runs (both with and without this change, and
+  reproduced on a clean run of unmodified master under the same system
+  load) hit unrelated pre-existing flakes in the multi-select/search-bar/
+  stalled-time steps — none of which touch Dictionary or settings.js.
+  Left out: no cross-matter aggregate view for Global — see design note
+  above.
+
 - **Timer grid: cluster the time-based tabs' cards by client, no labels.**
   UI feedback: Today/Yesterday/Week/Recent each show one flat alphabetical
   run of timer buttons mixing every client — hard to scan. Added a stable

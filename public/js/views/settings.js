@@ -549,7 +549,7 @@ function ShortcutsCard() {
     </div>`;
 }
 
-const KIND_LABEL = { document: 'Document', org: 'Organisation', person: 'Person' };
+const KIND_LABEL = { document: 'Document', org: 'Organization', person: 'Person' };
 
 // The entity dictionary behind ghost text (spec 2026-08-30). Most rows are
 // derived from his own entries; this page is where a wrong one gets fixed and
@@ -573,7 +573,7 @@ function DictionaryCard() {
     <div class="card dictionary-card">
       <h2>Dictionary</h2>
       <p class="muted small">
-        The documents, organisations and people ghost text offers while you type.
+        The documents, organizations and people ghost text offers while you type.
         Most of these are read out of your own entries — fix a wrong one here, or add
         one the app has not seen yet. A row needs two sightings before it starts
         predicting; one you add by hand predicts straight away.
@@ -607,7 +607,12 @@ function DictionaryCard() {
         }}>Add</button>
       </div>
 
-      ${rows.length === 0 ? html`<p class="muted small">Nothing here yet.</p>` : html`
+      ${rows.length === 0 ? html`
+        <p class="muted small">
+          ${scope
+            ? 'Nothing here yet — write a couple of entries mentioning a name or document on this matter and it will start showing up here, or add one below.'
+            : 'Nothing here yet. Global rows are hand-added only — nothing is auto-collected across every matter, since counts and predictions are per-matter. Pick a matter above to see what has been read out of its narratives, or add a global row below.'}
+        </p>` : html`
         <div class="table-wrap"><table class="tk">
           <thead><tr>
             <th>Name</th><th>Kind</th><th>Uses</th><th>Last used</th><th>Where</th><th></th>
@@ -632,7 +637,8 @@ function DictionaryCard() {
               </td>
               <td class="muted small">${row.last_seen_at || '—'}</td>
               <td class="muted small">
-                ${row.matter_id == null ? 'Global' : 'This matter'}${row.origin === 'manual' ? ' · added' : ''}
+                ${row.matter_id == null ? 'Global' : 'This matter'} ·
+                ${row.origin === 'manual' ? ' added' : ' auto-collected'}
               </td>
               <td>
                 ${row.hidden ? html`
