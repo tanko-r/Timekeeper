@@ -385,6 +385,16 @@ const MIGRATIONS = [
   CREATE INDEX idx_matter_entities_lookup
     ON matter_entities(matter_id, kind, hidden);
   `,
+
+  // Site-code narratives (2026-09-19 feedback). fixed_fee marks a fixed-fee
+  // matter; site_code_prefix makes every new narrative on the client's
+  // matters open with the site code from the short name — "(ABC02)", or
+  // "(ABC89 - Water Agreement)" for a fixed-fee matter (server/lib/sitecode.js).
+  // Both default off, so no existing client or matter changes behavior.
+  `
+  ALTER TABLE matters ADD COLUMN fixed_fee INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE clients ADD COLUMN site_code_prefix INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 const SEED_SETTINGS = {

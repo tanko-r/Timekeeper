@@ -3,13 +3,28 @@ import { validateCmNumber } from '../lib/validation.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { rankMatters } from '../lib/matterSearch.js';
 import { buildMattersCsv } from '../lib/mattersExport.js';
+import { narrativePrefix } from '../lib/sitecode.js';
 
 const CM_COLS = `matters.id, matters.cm_number, matters.short_name, matters.billable,
   matters.status, matters.favorite, matters.last_used_at, matters.created_at, matters.updated_at,
-  matters.client_id, matters.matter_number,
+  matters.client_id, matters.matter_number, matters.fixed_fee,
   clients.client_number, clients.name AS client_name,
-  COALESCE(clients.task_billing, 1) AS client_task_billing`;
+  COALESCE(clients.task_billing, 1) AS client_task_billing,
+  COALESCE(clients.site_code_prefix, 0) AS client_site_code_prefix`;
 const CM_FROM = 'FROM matters LEFT JOIN clients ON clients.id = matters.client_id';
+
+// The text a new narrative on this matter starts with (server/lib/sitecode.js),
+// or null — only a client that opted into site-code narratives gets one.
+export function withNarrativePrefix(row) {
+  if (!row) return row;
+  return { ...row, narrative_prefix: row.client_site_code_prefix ? narrativePrefix(row) : null };
+}
+
+// Just the prefix for one matter — timers.js seeds timer-created entries with it.
+export function matterNarrativePrefix(db, matterId) {
+  const row = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.id=?`).get(matterId);
+  return row ? withNarrativePrefix(row).narrative_prefix : null;
+}
 
 // Upsert the client for a 6-digit client number and return its id. Blank name;
 // the user fills it in later via /api/clients. Reused by the timer importer.
@@ -23,7 +38,8 @@ export function cmsRouter({ db, clock }) {
   const r = Router();
   const now = () => clock().toISOString();
 
-  const getCm = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.id=?`);
+  const getCmStmt = db.prepare(`SELECT ${CM_COLS} ${CM_FROM} WHERE matters.id=?`);
+  const getCm = { get: (id) => withNarrativePrefix(getCmStmt.get(id)) };
 
   // Fuzzy picker: load active matters (with their client fields) and rank in
   // JS via the pure lib — single-user scale, so O(n) per keystroke is fine.
@@ -31,7 +47,7 @@ export function cmsRouter({ db, clock }) {
 
   r.get('/picker', (req, res) => {
     const q = String(req.query.q || '').trim();
-    res.json(rankMatters(q, pickerStmt.all()));
+    res.json(rankMatters(q, pickerStmt.all().map(withNarrativePrefix)));
   });
 
   // Roster export: the full client/matter list, archived included. The roster
@@ -64,12 +80,13 @@ export function cmsRouter({ db, clock }) {
       ${CM_FROM} ${includeArchived ? '' : "WHERE matters.status='active'"}
       ORDER BY matters.favorite DESC, matters.short_name COLLATE NOCASE
     `).all();
-    res.json(rows);
+    res.json(rows.map(withNarrativePrefix));
   });
 
   r.post('/', (req, res) => {
     const {
-      cm_number, short_name = '', billable = 1, favorite = 0, client_name, client_task_billing,
+      cm_number, short_name = '', billable = 1, favorite = 0, fixed_fee = 0, client_name,
+      client_task_billing, client_site_code_prefix,
     } = req.body || {};
     if (!validateCmNumber(cm_number)) {
       return res.status(400).json({ error: 'CM number must match format 123456-123456.' });
@@ -85,8 +102,9 @@ export function cmsRouter({ db, clock }) {
       // Only once it has actually succeeded do we apply the client_name side
       // effect, so a failed (409) request never leaves a persisted mutation.
       const info = db.prepare(
-        'INSERT INTO matters (cm_number, short_name, billable, favorite, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, clientId, matterNumber, now(), now());
+        'INSERT INTO matters (cm_number, short_name, billable, favorite, fixed_fee, client_id, matter_number, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(cm_number, String(short_name), billable ? 1 : 0, favorite ? 1 : 0, fixed_fee ? 1 : 0,
+        clientId, matterNumber, now(), now());
       if (typeof client_name === 'string' && client_name.trim() !== '') {
         // Name a still-blank client at creation time; never overwrite a real name.
         db.prepare("UPDATE clients SET name=?, updated_at=? WHERE id=? AND name=''")
@@ -95,6 +113,12 @@ export function cmsRouter({ db, clock }) {
       if (clientIsNew && client_task_billing !== undefined) {
         db.prepare('UPDATE clients SET task_billing=?, updated_at=? WHERE id=?')
           .run(client_task_billing ? 1 : 0, now(), clientId);
+      }
+      // Same rule for site-code narratives: client-wide, so only the request
+      // that creates the client may set it.
+      if (clientIsNew && client_site_code_prefix !== undefined) {
+        db.prepare('UPDATE clients SET site_code_prefix=?, updated_at=? WHERE id=?')
+          .run(client_site_code_prefix ? 1 : 0, now(), clientId);
       }
       res.status(201).json(getCm.get(info.lastInsertRowid));
     } catch (e) {
@@ -121,6 +145,7 @@ export function cmsRouter({ db, clock }) {
       billable: b.billable !== undefined ? (b.billable ? 1 : 0) : cm.billable,
       status: b.status ?? cm.status,
       favorite: b.favorite !== undefined ? (b.favorite ? 1 : 0) : cm.favorite,
+      fixed_fee: b.fixed_fee !== undefined ? (b.fixed_fee ? 1 : 0) : cm.fixed_fee,
     };
     try {
       let clientId = null;
@@ -131,9 +156,9 @@ export function cmsRouter({ db, clock }) {
         matterNumber = parts.matterNumber;
       }
       db.prepare(
-        `UPDATE matters SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, updated_at=?
+        `UPDATE matters SET cm_number=?, short_name=?, billable=?, status=?, favorite=?, fixed_fee=?, updated_at=?
          ${clientId ? ', client_id=?, matter_number=?' : ''} WHERE id=?`
-      ).run(next.cm_number, next.short_name, next.billable, next.status, next.favorite, now(),
+      ).run(next.cm_number, next.short_name, next.billable, next.status, next.favorite, next.fixed_fee, now(),
         ...(clientId ? [clientId, matterNumber] : []), cm.id);
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) {

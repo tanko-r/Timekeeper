@@ -6,7 +6,8 @@ import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
 import { loadEntry, syncNarrative, rebuildMatterMemory } from './entries.js';
-import { ensureClient } from './cms.js';
+import { ensureClient, matterNarrativePrefix } from './cms.js';
+import { seedNarrative } from '../lib/sitecode.js';
 import { splitCmNumber } from '../lib/cmNumber.js';
 import { matterSuggestions } from './matters.js';
 import { refineSuggestedNarrative } from './ai.js';
@@ -75,12 +76,17 @@ function syncToEntry(db, timer, hours, dateStr, nowIso) {
         : null;
       // Every entry this timer creates STARTS with its template narrative
       // (2026-07-13 feedback); any stashed text follows it.
-      const seedNarrative = [timer.narrative_template, timer.draft_narrative]
-        .filter(Boolean).join(' ').trim();
+      // On a site-code client (2026-09-19 feedback) a timer with no template
+      // of its own starts the entry with the matter's site code instead.
+      const seed = seedNarrative({
+        template: timer.narrative_template,
+        prefix: timer.cm_id ? matterNarrativePrefix(db, timer.cm_id) : null,
+        draft: timer.draft_narrative,
+      });
       const info = db.prepare(`INSERT INTO entries
         (date, cm_id, narrative, billable, status, total_override, source, created_at, updated_at)
         VALUES (?, ?, ?, ?, 'draft', ?, 'timer', ?, ?)`)
-        .run(dateStr, timer.cm_id ?? null, seedNarrative,
+        .run(dateStr, timer.cm_id ?? null, seed,
           cm ? cm.billable : 1, hours, nowIso, nowIso);
       db.prepare(
         'INSERT INTO entry_tasks (entry_id, task_code, duration, fragment, sort_order) VALUES (?, ?, ?, ?, 0)'

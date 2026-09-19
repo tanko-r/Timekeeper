@@ -10,6 +10,7 @@ import { useShortcuts, SaveShortcutBar } from '/js/components/shortcuts.js';
 import { expandShortcuts } from '/js/lib/expand.js';
 import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { insertNarrative } from '/js/lib/narrativejoin.js';
+import { isPrefixOnly, prefixForMatter, afterPrefix, splitPrefix } from '/js/lib/narrativeprefix.js';
 import { NarrativeHistory } from '/js/components/narrativehistory.js';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion, splitNarrativeSegments,
@@ -146,11 +147,18 @@ export function EntryEditor({ spec, settings, onClose }) {
           setEntry(e);
           setLocal(toLocal(e));
         } else {
+          // A new entry on a site-code client starts with the matter's prefix
+          // (2026-09-19 feedback). Callers that build the cm from a timer row
+          // don't carry it, so fetch the full record for those.
+          let cm = spec.template.cm || null;
+          if (cm && !('narrative_prefix' in cm)) {
+            cm = await api.get(`/api/cms/${cm.id}`).catch(() => cm);
+          }
           setLocal({
             date: spec.template.date || todayStr(),
-            cm: spec.template.cm || null,
-            billable: spec.template.cm ? !!spec.template.cm.billable : true,
-            narrative: '',
+            cm,
+            billable: cm ? !!cm.billable : true,
+            narrative: prefixForMatter('', null, cm?.narrative_prefix),
             auto: true, // once ≥2 substantive lines exist, default to the live-AUTO box
             total: 0,
             tasks: [blankLine()],
@@ -195,8 +203,13 @@ export function EntryEditor({ spec, settings, onClose }) {
   const total = tenth(local?.total || 0);
   const remaining = tenth(total - sum);
   const finalized = local?.status === 'finalized';
-  const seedText = autoOn ? (autoText || '') : (local?.narrative || '').trim();
-  const suggestionChips = !autoOn && !String(local?.narrative || '').trim() ? suggestChips(phrases) : [];
+  const prefix = local?.cm?.narrative_prefix || null;
+  // The site-code prefix is not prose: AI and split work on what follows it,
+  // and a box holding only the prefix counts as empty (2026-09-19 feedback).
+  const { lead: seedLead, body: seedBody } = autoOn
+    ? { lead: null, body: autoText || '' } : splitPrefix(local?.narrative, prefix);
+  const seedText = seedBody;
+  const suggestionChips = !autoOn && isPrefixOnly(local?.narrative, prefix) ? suggestChips(phrases) : [];
 
   // Edit-through parser for the AUTO box (spec: two-way binding). Parse OK →
   // fold fragments/durations back into local.tasks in a single batch (only
@@ -552,7 +565,8 @@ export function EntryEditor({ spec, settings, onClose }) {
           aiAuto: true, aiBrief: seed, aiText: null,
         });
       } else {
-        update({ narrative: r.narrative, aiText: r.narrative, aiBrief: seed, aiAuto: false });
+        const text = afterPrefix(seedLead, r.narrative);
+        update({ narrative: text, aiText: text, aiBrief: seed, aiAuto: false });
       }
     } catch (e) {
       emitToast(e.body?.message || e.message, { error: true });
@@ -569,6 +583,7 @@ export function EntryEditor({ spec, settings, onClose }) {
   // for up to 180s. A superseded run's callbacks and state writes are
   // ignored so it can't fight the run that replaced it.
   async function aiNarrate(mode, seed) {
+    const lead = seedLead; // captured now: the stream outlives this render
     aiAbortRef.current?.abort();
     const ctrl = new AbortController();
     aiAbortRef.current = ctrl;
@@ -584,8 +599,11 @@ export function EntryEditor({ spec, settings, onClose }) {
         if (aiAbortRef.current !== ctrl) return; // superseded — drop late lines
         if (m.debug) setAiDebug(m.debug);
         if (m.error) throw new Error(m.message || m.error);
-        if (m.token) { acc += m.token; update({ narrative: acc }); }
-        if (m.done) update({ narrative: m.narrative, aiText: m.narrative, aiBrief: seed, aiAuto: false });
+        if (m.token) { acc += m.token; update({ narrative: afterPrefix(lead, acc) }); }
+        if (m.done) {
+          const text = afterPrefix(lead, m.narrative);
+          update({ narrative: text, aiText: text, aiBrief: seed, aiAuto: false });
+        }
       }, ctrl.signal);
     } catch (e) {
       if (e.name !== 'AbortError') emitToast(e.body?.message || e.message, { error: true });
@@ -622,7 +640,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   function insertFromHistory(text) {
     if (aiUndo) setAiUndo(null);
     const base = autoOn ? (autoText || '') : local.narrative;
-    update({ auto: false, aiAuto: false, narrative: insertNarrative(base, text) });
+    const narrative = !autoOn && prefix && isPrefixOnly(base, prefix)
+      ? afterPrefix(prefix, insertNarrative('', text))
+      : insertNarrative(base, text);
+    update({ auto: false, aiAuto: false, narrative });
   }
 
   // Restore the pre-rewrite narrative (and AUTO state). One-shot: the button
@@ -687,7 +708,13 @@ export function EntryEditor({ spec, settings, onClose }) {
           <div class="row" style=${{ flexWrap: 'nowrap', alignItems: 'center' }}>
             <div style=${{ flex: 1 }}>
               <${CmPicker} value=${local.cm} autoFocus=${!local.cm}
-                onChange=${(cm) => update({ cm, billable: !!cm.billable })} />
+                onChange=${(cm) => update({
+                  cm, billable: !!cm.billable,
+                  // an untouched box follows the matter's site-code prefix
+                  ...(autoOn ? {} : {
+                    narrative: prefixForMatter(local.narrative, local.cm?.narrative_prefix, cm.narrative_prefix),
+                  }),
+                })} />
             </div>
             ${local.cm ? html`
               <button type="button" class="btn btn-ghost btn-sm" title="Edit this client/matter"
@@ -829,7 +856,7 @@ export function EntryEditor({ spec, settings, onClose }) {
         <div class="editor-suggest-chips">
           ${suggestionChips.map((t) => html`
             <button key=${t} type="button" title=${t}
-              onClick=${() => { if (aiUndo) setAiUndo(null); update({ narrative: t }); }}>${t}</button>`)}
+              onClick=${() => { if (aiUndo) setAiUndo(null); update({ narrative: afterPrefix(prefix, t) }); }}>${t}</button>`)}
         </div>` : null}
       <div class="narrative-preview">
         ${autoOn ? html`

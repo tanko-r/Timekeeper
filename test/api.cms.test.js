@@ -307,3 +307,54 @@ test('GET /api/cms/export returns a CSV of every matter, archived included', () 
   assert.match(lines[1], /^600001,Initech,000001,600001-000001,Active matter,billable,active,/);
   assert.match(lines[2], /^600002,,000001,600002-000001,Retired matter,non-billable,archived,/);
 }));
+
+// 2026-09-19 feedback: a matter can be fixed-fee, and a client can ask for
+// every narrative to open with the matter's site code — "(ABC02)", or
+// "(ABC89 - Water Agreement)" for a fixed-fee matter with a descriptor.
+test('fixed_fee and client site_code_prefix drive narrative_prefix on matter payloads', () => withServer(async (t) => {
+  const plain = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '100001-000012', short_name: 'ABC02 - Cedar Point (WA)',
+  })).body;
+  assert.equal(plain.fixed_fee, 0);
+  assert.equal(plain.client_site_code_prefix, 0);
+  // the client has not opted in, so no prefix
+  assert.equal(plain.narrative_prefix, null);
+
+  const ff = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '100001-000013', short_name: 'ABC89 - Water Agreement', fixed_fee: 1,
+  })).body;
+  assert.equal(ff.fixed_fee, 1);
+
+  const c = await t.fetchJson('PATCH', `/api/clients/${plain.client_id}`, { site_code_prefix: 1 });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.site_code_prefix, 1);
+
+  assert.equal((await t.fetchJson('GET', `/api/cms/${plain.id}`)).body.narrative_prefix, '(ABC02)');
+  assert.equal((await t.fetchJson('GET', `/api/cms/${ff.id}`)).body.narrative_prefix,
+    '(ABC89 - Water Agreement)');
+  const list = (await t.fetchJson('GET', '/api/cms')).body;
+  assert.equal(list.find((m) => m.id === plain.id).narrative_prefix, '(ABC02)');
+  const pick = (await t.fetchJson('GET', '/api/cms/picker?q=ABC89')).body;
+  assert.equal(pick[0].narrative_prefix, '(ABC89 - Water Agreement)');
+
+  // fixed_fee flips via PATCH; an unrelated PATCH leaves it alone
+  const off = (await t.fetchJson('PATCH', `/api/cms/${ff.id}`, { fixed_fee: 0 })).body;
+  assert.equal(off.fixed_fee, 0);
+  assert.equal(off.narrative_prefix, '(ABC89)');
+  const on = (await t.fetchJson('PATCH', `/api/cms/${ff.id}`, { fixed_fee: 1 })).body;
+  const renamed = (await t.fetchJson('PATCH', `/api/cms/${ff.id}`, { favorite: 1 })).body;
+  assert.equal(on.fixed_fee, 1);
+  assert.equal(renamed.fixed_fee, 1);
+}));
+
+test('POST /api/cms carries client_site_code_prefix onto a brand-new client only', () => withServer(async (t) => {
+  const a = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '100001-000012', short_name: 'ABC02', client_site_code_prefix: 1,
+  })).body;
+  assert.equal(a.client_site_code_prefix, 1);
+  assert.equal(a.narrative_prefix, '(ABC02)');
+  const b = (await t.fetchJson('POST', '/api/cms', {
+    cm_number: '100001-000013', short_name: 'ABC03', client_site_code_prefix: 0,
+  })).body;
+  assert.equal(b.client_site_code_prefix, 1);
+}));

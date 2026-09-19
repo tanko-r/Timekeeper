@@ -8,6 +8,23 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-19
+
+- **Site-code narratives + a fixed-fee checkbox on matters.** UI feedback:
+  every narrative on one client's matters should open with the site code in
+  parens, e.g. "(ABC02)", and a fixed-fee matter with a descriptor with that
+  too, e.g. "(ABC89 - Water Agreement)"; new matters need a fixed-fee
+  checkbox. Added a per-client "Site-code narratives" switch and a per-matter
+  "Fixed fee" switch (migration v19, both default off), both on the new- and
+  edit-matter forms. The code is read from the matter's short name. New
+  entries from a timer start with the prefix (a timer's own template still
+  wins), and so do new entries in the editor; an untouched box follows a
+  matter change; suggestion chips, "insert from history" and AI rewrites keep
+  the prefix in front. Turned on for the client in question, and marked its
+  Water Development Agreement matter fixed fee. Not done: a task-billed entry
+  with 2+ task lines regenerates its narrative from the lines and drops the
+  prefix, as it already drops a timer template.
+
 ## 2026-09-16
 
 - **Settings → Dictionary: clarified why "Global" looks empty, added an

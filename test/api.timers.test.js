@@ -1323,3 +1323,33 @@ test('POST /api/timers/batch-delete is all-or-nothing when an id does not exist'
     assert.equal((await t.fetchJson('GET', '/api/timers')).body.length, 1,
       'nothing is deleted when the selection has gone stale');
   }));
+
+// 2026-09-19 feedback: on a site-code client, a timer with no template of its
+// own starts every entry with the matter's site code; its own template still
+// wins, and a stash that already opens with the code is not doubled.
+test('site-code client: timer entries start with the matter prefix unless the timer has a template', () =>
+  withServer('2026-09-19T09:00:00-07:00', async (t, cm) => {
+    const m = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '100002-000001', short_name: 'ABC89 - Water Agreement', fixed_fee: 1,
+      client_site_code_prefix: 1,
+    })).body;
+    const plain = (await t.fetchJson('POST', '/api/timers', { name: 'ABC89', cm_id: m.id })).body;
+    const started = (await t.fetchJson('POST', `/api/timers/${plain.id}/start`)).body;
+    assert.equal(started.entry.narrative, '(ABC89 - Water Agreement)');
+
+    await t.fetchJson('POST', `/api/timers/${plain.id}/fresh`);
+    await t.fetchJson('PATCH', `/api/timers/${plain.id}`,
+      { draft_narrative: '(ABC89 - Water Agreement) Call with board.' });
+    const again = (await t.fetchJson('POST', `/api/timers/${plain.id}/fresh`)).body;
+    assert.equal(again.entry.narrative, '(ABC89 - Water Agreement) Call with board.');
+
+    const own = (await t.fetchJson('POST', '/api/timers',
+      { name: 'TEL', cm_id: m.id, narrative_template: '(TEL)' })).body;
+    const s2 = (await t.fetchJson('POST', `/api/timers/${own.id}/start`)).body;
+    assert.equal(s2.entry.narrative, '(TEL)');
+
+    // a client that has not opted in is untouched
+    const other = (await t.fetchJson('POST', '/api/timers', { name: 'X', cm_id: cm.id })).body;
+    const s3 = (await t.fetchJson('POST', `/api/timers/${other.id}/start`)).body;
+    assert.equal(s3.entry.narrative, '');
+  }));

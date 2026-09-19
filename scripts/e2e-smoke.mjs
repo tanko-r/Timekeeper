@@ -1926,6 +1926,43 @@ await step('new timer form: quick-adding a matter there does NOT create a second
   if (after !== before) throw new Error(`expected no new timer from the nested create (before ${before}, after ${after})`);
 });
 
+await step('site-code narratives: new matter with the client flag + fixed fee seeds the entry narrative', async () => {
+  // 2026-09-19 feedback: on a site-code client every new narrative opens with
+  // the matter's site code, plus the descriptor for a fixed-fee matter.
+  await page.goto(`${base}/#/cms`, { waitUntil: 'domcontentloaded' });
+  await clickText('.btn-primary', 'New CM');
+  await waitFor('[data-nc-client]');
+  await type('[data-nc-client]', '700009');
+  await type('[data-nc-client-name]', 'Sitecode Client');
+  await type('[data-nc-matter]', '000001');
+  await type('[data-nc-name]', 'ABC89 - Water Agreement');
+  await page.click('[data-nc-site-codes]');
+  await page.click('[data-nc-fixed-fee]');
+  await clickText('.modal button', 'Create matter');
+  await page.waitForFunction(() => !document.querySelector('.modal'), { timeout: 4000 });
+
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const cm = cms.find((c) => c.cm_number === '700009-000001');
+  if (!cm) throw new Error('site-code matter not found via API');
+  if (cm.fixed_fee !== 1) throw new Error(`fixed_fee not saved: ${cm.fixed_fee}`);
+  if (cm.narrative_prefix !== '(ABC89 - Water Agreement)') {
+    throw new Error(`narrative_prefix wrong: ${cm.narrative_prefix}`);
+  }
+
+  // a new entry on it starts with the prefix; picking the matter fills the box
+  await page.goto(`${base}/#/`, { waitUntil: 'domcontentloaded' });
+  await waitFor('.btn-primary');
+  await page.keyboard.press('n');
+  await waitFor('.modal .cmpicker input');
+  await page.type('.modal .cmpicker input', 'ABC89', { delay: 5 });
+  await clickText('.cmpicker-item .name', 'ABC89 - Water Agreement');
+  await page.waitForFunction(
+    () => (document.querySelector('.modal-wide .narrative-preview textarea')?.value || '')
+      .startsWith('(ABC89 - Water Agreement) '),
+    { timeout: 4000 });
+  await page.keyboard.press('Escape');
+});
+
 await browser.close();
 server.close();
 db.close();

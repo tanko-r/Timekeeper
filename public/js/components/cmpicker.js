@@ -129,6 +129,8 @@ function EditCmModal({ existing, onCreated, onClose }) {
   const hasClient = existing.client_id != null;
   const [clientName, setClientName] = useState(existing.client_name || '');
   const [taskBilling, setTaskBilling] = useState(existing.client_task_billing ?? 1);
+  const [siteCodes, setSiteCodes] = useState(!!existing.client_site_code_prefix);
+  const [fixedFee, setFixedFee] = useState(!!existing.fixed_fee);
   const [billable, setBillable] = useState(!!existing.billable);
   const [favorite, setFavorite] = useState(!!existing.favorite);
   const [error, setError] = useState(null);
@@ -139,7 +141,10 @@ function EditCmModal({ existing, onCreated, onClose }) {
     e.preventDefault();
     setError(null);
     try {
-      const body = { cm_number: num, short_name: name, billable: billable ? 1 : 0, favorite: favorite ? 1 : 0 };
+      const body = {
+        cm_number: num, short_name: name, billable: billable ? 1 : 0, favorite: favorite ? 1 : 0,
+        fixed_fee: fixedFee ? 1 : 0,
+      };
       const cm = await api.patch(`/api/cms/${existing.id}`, body);
       const trimmedClientName = clientName.trim();
       if (hasClient && trimmedClientName !== (existing.client_name || '')) {
@@ -147,6 +152,9 @@ function EditCmModal({ existing, onCreated, onClose }) {
       }
       if (hasClient && (taskBilling ? 1 : 0) !== (existing.client_task_billing ?? 1)) {
         await api.patch(`/api/clients/${existing.client_id}`, { task_billing: taskBilling ? 1 : 0 });
+      }
+      if (hasClient && siteCodes !== !!existing.client_site_code_prefix) {
+        await api.patch(`/api/clients/${existing.client_id}`, { site_code_prefix: siteCodes ? 1 : 0 });
       }
       emitToast('CM updated');
       onCreated(cm);
@@ -172,12 +180,21 @@ function EditCmModal({ existing, onCreated, onClose }) {
             <input type="checkbox" checked=${taskBilling} onChange=${(e) => setTaskBilling(e.target.checked)} />
             Task billing — narratives get per-task allocations like "(0.5)"
           </label>` : null}
+        ${hasClient ? html`
+          <label class="checkbox-row">
+            <input type="checkbox" data-cm-site-codes checked=${siteCodes} onChange=${(e) => setSiteCodes(e.target.checked)} />
+            Site-code narratives — new narratives start with the site code from the short name, like "(ABC02)"
+          </label>` : null}
         <${Field} label="Short name" hint="Your own shorthand — searchable">
           <input type="text" value=${name} onInput=${(e) => setName(e.target.value)} />
         <//>
         <label class="checkbox-row">
           <input type="checkbox" checked=${billable} onChange=${(e) => setBillable(e.target.checked)} />
           Billable by default
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" data-cm-fixed-fee checked=${fixedFee} onChange=${(e) => setFixedFee(e.target.checked)} />
+          Fixed fee${siteCodes ? html`<span class="muted small"> · the narrative prefix carries the short name's descriptor, like "(ABC89 - Water Agreement)"</span>` : null}
         </label>
         <label class="checkbox-row">
           <input type="checkbox" checked=${favorite} onChange=${(e) => setFavorite(e.target.checked)} />
@@ -212,6 +229,8 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
   // New clients start block-billed: task lines are the exception, so a matter
   // created in a hurry must not silently demand them at finalize time.
   const [taskBilling, setTaskBilling] = useState(false);
+  const [siteCodes, setSiteCodes] = useState(false);
+  const [fixedFee, setFixedFee] = useState(false);
   const [wantNew, setWantNew] = useState(false); // explicit "＋ New client…" mode
   const [groupId, setGroupId] = useState('');
   const [error, setError] = useState(null);
@@ -239,7 +258,10 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
   // Show the existing client's own setting once one is chosen, so the checkbox
   // never claims a matter is block-billed when its client is task-billed.
   useEffect(() => {
-    if (effective) setTaskBilling(!!effective.task_billing);
+    if (effective) {
+      setTaskBilling(!!effective.task_billing);
+      setSiteCodes(!!effective.site_code_prefix);
+    }
   }, [effective ? effective.id : null]);
 
   function startNewClient() {
@@ -255,15 +277,22 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
       const body = {
         cm_number: `${clientNumber}-${matterNum.trim()}`,
         short_name: name, billable: billable ? 1 : 0, favorite: favorite ? 1 : 0,
+        fixed_fee: fixedFee ? 1 : 0,
       };
       if (needsName && clientName.trim()) body.client_name = clientName.trim();
       body.client_task_billing = taskBilling ? 1 : 0;
+      body.client_site_code_prefix = siteCodes ? 1 : 0;
       const cm = await api.post('/api/cms', body);
       // The server only honors client_task_billing for a client it just
       // created; an existing client takes a deliberate PATCH instead.
       if (effective && (taskBilling ? 1 : 0) !== (effective.task_billing ?? 1)) {
         await api.patch(`/api/clients/${effective.id}`, { task_billing: taskBilling ? 1 : 0 });
         cm.client_task_billing = taskBilling ? 1 : 0;
+      }
+      if (effective && siteCodes !== !!effective.site_code_prefix) {
+        await api.patch(`/api/clients/${effective.id}`, { site_code_prefix: siteCodes ? 1 : 0 });
+        // the prefix depends on the client flag, so re-read the finished record
+        Object.assign(cm, await api.get(`/api/cms/${cm.id}`));
       }
       emitToast(`CM ${cm.cm_number} created`);
       if (alsoCreateTimer) {
@@ -361,6 +390,17 @@ function CreateMatterModal({ initialQ = '', alsoCreateTimer = true, onCreated, o
             onChange=${(e) => setTaskBilling(e.target.checked)} />
           Task billing — this client needs task lines and allocations like "(0.5)"
           ${effective ? html`<span class="muted small"> · applies to every matter under ${effective.client_number}</span>` : null}
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" data-nc-site-codes checked=${siteCodes}
+            onChange=${(e) => setSiteCodes(e.target.checked)} />
+          Site-code narratives — new narratives start with the site code from the short name, like "(ABC02)"
+          ${effective ? html`<span class="muted small"> · applies to every matter under ${effective.client_number}</span>` : null}
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" data-nc-fixed-fee checked=${fixedFee}
+            onChange=${(e) => setFixedFee(e.target.checked)} />
+          Fixed fee${siteCodes ? html`<span class="muted small"> · the narrative prefix carries the short name's descriptor, like "(ABC89 - Water Agreement)"</span>` : null}
         </label>
         <label class="checkbox-row">
           <input type="checkbox" checked=${favorite} onChange=${(e) => setFavorite(e.target.checked)} />
