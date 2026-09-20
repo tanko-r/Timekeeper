@@ -477,3 +477,38 @@ test('splitNarrativeSegments: empty segments drop; blank text is []', () => {
   assert.deepEqual(splitNarrativeSegments('  '), []);
   assert.equal(splitNarrativeSegments('one thing;; another.').length, 2);
 });
+
+// ---------- site-code prefix (2026-09-19 feedback) ----------
+
+test('generateNarrative: the site-code prefix leads the generated text', () => {
+  const lines = [
+    { fragment: 'review lease', task_code: 'Review', duration: 1.0 },
+    { fragment: 'draft memo', task_code: 'Draft', duration: 0.5 },
+  ];
+  assert.equal(generateNarrative(lines, { increment: 0.1, prefix: '(ABC02)' }),
+    '(ABC02) Review lease (1.0); draft memo (0.5).');
+  assert.equal(generateNarrative(lines, { increment: 0.1, prefix: '(ABC02)', taskBilling: false }),
+    '(ABC02) Review lease; draft memo.');
+});
+
+test('parseNarrativeEdit: round-trips prefixed AUTO text without folding the prefix into line 1', () => {
+  const opts = { prefix: '(ABC02)' };
+  const parsed = parseNarrativeEdit('(ABC02) Review lease (1.0); draft memo (0.5).', 2, opts);
+  assert.deepEqual(parsed.segments, [
+    { fragment: 'Review lease', duration: 1.0 },
+    { fragment: 'draft memo', duration: 0.5 },
+  ]);
+  // an edit INSIDE the prefix is discarded: AUTO owns that parenthetical
+  const typo = parseNarrativeEdit('(ABC0) Review lease (1.0); draft memo (0.5).', 2, opts);
+  assert.equal(typo.segments[0].fragment, 'Review lease');
+  // a deleted prefix still parses; AUTO puts it back on the next generate
+  const gone = parseNarrativeEdit('Review lease (1.0); draft memo (0.5).', 2, opts);
+  assert.equal(gone.segments[0].fragment, 'Review lease');
+  // with no prefix configured, a leading parenthetical is ordinary text
+  const noPrefix = parseNarrativeEdit('(ABC02) Review lease (1.0); draft memo (0.5).', 2, {});
+  assert.equal(noPrefix.segments[0].fragment, '(ABC02) Review lease');
+});
+
+test('parseNarrativeEdit: a structural break still detaches on a prefixed narrative', () => {
+  assert.equal(parseNarrativeEdit('(ABC02) Review lease; draft memo (0.5).', 2, { prefix: '(ABC02)' }), null);
+});

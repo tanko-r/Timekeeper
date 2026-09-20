@@ -31,3 +31,7 @@ test('splitPrefix: prose apart from its prefix, round-trips through afterPrefix'
   const { lead, body } = splitPrefix('(ABC02) Call.', '(ABC02)');
   assert.equal(afterPrefix(lead, body.toUpperCase()), '(ABC02) CALL.');
 });
+
+test('afterPrefix: borrowed text that already carries the prefix is not doubled', () => {
+  assert.equal(afterPrefix('(ABC02)', '(ABC02) Call re lease.'), '(ABC02) Call re lease.');
+});

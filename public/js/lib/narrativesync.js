@@ -27,7 +27,7 @@ function cleanFragment(text) {
 
 // ---------- generateNarrative ----------
 
-export function generateNarrative(lines, { increment = 0.1, taskBilling = true } = {}) {
+export function generateNarrative(lines, { increment = 0.1, taskBilling = true, prefix = '' } = {}) {
   const substantive = (lines || [])
     .map((l) => ({
       text: cleanFragment(l.fragment) || cleanFragment(l.task_code),
@@ -42,7 +42,9 @@ export function generateNarrative(lines, { increment = 0.1, taskBilling = true }
     if (i === 0) text = text.charAt(0).toUpperCase() + text.slice(1);
     return taskBilling ? `${text} (${formatHours(l.duration, increment)})` : text;
   });
-  return parts.join('; ') + '.';
+  const body = parts.join('; ') + '.';
+  const lead = String(prefix || '').trim();
+  return lead ? `${lead} ${body}` : body;
 }
 
 // ---------- parseNarrativeEdit ----------
@@ -52,8 +54,14 @@ export function generateNarrative(lines, { increment = 0.1, taskBilling = true }
 // the segment, which lets a fragment legitimately contain its own parens.
 const TRAILING_PAREN_RE = /^([\s\S]*)\(([^)]*)\)\s*$/;
 
-export function parseNarrativeEdit(text, lineCount, { taskBilling = true } = {}) {
-  const raw = String(text || '').trim().replace(/\.\s*$/, '');
+export function parseNarrativeEdit(text, lineCount, { taskBilling = true, prefix = '' } = {}) {
+  // With a site-code prefix configured, the leading parenthetical belongs to
+  // AUTO, not to task line 1: drop it before parsing, whether the attorney
+  // left it alone, edited inside it, or deleted it. The next generate writes
+  // the canonical prefix back (2026-09-19 feedback).
+  const withoutPrefix = String(prefix || '').trim()
+    ? String(text || '').replace(/^\s*\([^)]*\)\s*/, '') : text;
+  const raw = String(withoutPrefix || '').trim().replace(/\.\s*$/, '');
   if (!raw) return null;
 
   const rawSegments = raw.split(';');

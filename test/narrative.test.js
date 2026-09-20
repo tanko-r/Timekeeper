@@ -106,3 +106,19 @@ test('duration label precision follows increment', () => {
   assert.equal(durationLabel(1.5, 0.25), '1.50');
   assert.equal(durationLabel(0.3, undefined), '0.3'); // default 0.1-style
 });
+
+// 2026-09-19 feedback: on a site-code client the prefix leads the narrative,
+// including the generated task-billed one.
+test('prefix leads the generated narrative, task-billed or block-billed', () => {
+  const lines = [
+    { fragment: 'review lease', taskCode: 'Review', duration: 1.0 },
+    { fragment: 'draft memo', taskCode: 'Draft', duration: 0.5 },
+  ];
+  assert.equal(buildNarrative(lines, { ...INC, prefix: '(ABC02)' }),
+    '(ABC02) Review lease (1.0); draft memo (0.5).');
+  assert.equal(buildNarrative(lines, { ...INC, prefix: '(ABC02)', taskBilling: false }),
+    '(ABC02) Review lease; draft memo.');
+  assert.equal(buildNarrative(lines, { ...INC, prefix: '' }), 'Review lease (1.0); draft memo (0.5).');
+  // still null below two lines — a prefix is not a narrative
+  assert.equal(buildNarrative(lines.slice(0, 1), { ...INC, prefix: '(ABC02)' }), null);
+});

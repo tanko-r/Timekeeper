@@ -8,6 +8,22 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-20
+
+- **Task-billed AUTO narratives now keep the site-code prefix.** Follow-up to
+  yesterday's site-code work: a task-billed entry with two or more task lines
+  rebuilds its narrative from the lines, which threw the prefix away. Now the
+  prefix leads the generated text on both sides of the two-way AUTO box —
+  "(ABC89 - Water Agreement) Review easement (1.2); draft email (0.3)." —
+  server (`buildNarrative` + `syncNarrative`) and browser
+  (`generateNarrative`) alike. Editing through the AUTO box strips the
+  leading parenthetical before parsing, so the prefix never leaks into task
+  line 1, and an edit inside the prefix is discarded rather than doubled. The
+  inline card editor gets the same treatment (entry payloads now carry
+  `cm.narrative_prefix`), and borrowed text that already opens with the
+  prefix no longer gets it twice. No "FLAT FEE" text is added anywhere, as
+  requested.
+
 ## 2026-09-19
 
 - **Site-code narratives + a fixed-fee checkbox on matters.** UI feedback:

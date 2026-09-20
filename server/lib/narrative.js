@@ -6,6 +6,9 @@
 //   "Review lease; draft email to landlord; telephone conference with client."
 // Only applies to entries with two or more substantive task lines; single-line
 // entries keep their free-text narrative (caller receives null).
+// On a site-code client the matter prefix leads the result (2026-09-19
+// feedback) — "(ABC02) Review lease (1.2); draft memo (0.3)." The prefix is
+// app-owned text, never one of the task fragments.
 
 function incrementDecimals(increment) {
   const s = String(increment ?? 0.1);
@@ -21,7 +24,7 @@ function cleanFragment(text) {
   return String(text || '').trim().replace(/[.;\s]+$/, '');
 }
 
-export function buildNarrative(lines, { increment, taskBilling = true } = {}) {
+export function buildNarrative(lines, { increment, taskBilling = true, prefix = '' } = {}) {
   const substantive = (lines || [])
     .map((l) => ({
       text: cleanFragment(l.fragment) || cleanFragment(l.taskCode ?? l.task_code),
@@ -36,5 +39,7 @@ export function buildNarrative(lines, { increment, taskBilling = true } = {}) {
     if (i === 0) text = text.charAt(0).toUpperCase() + text.slice(1);
     return taskBilling ? `${text} (${durationLabel(l.duration, increment)})` : text;
   });
-  return parts.join('; ') + '.';
+  const body = parts.join('; ') + '.';
+  const lead = String(prefix || '').trim();
+  return lead ? `${lead} ${body}` : body;
 }

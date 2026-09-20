@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { isValidDate, todayLocal } from '../lib/dates.js';
 import { buildNarrative } from '../lib/narrative.js';
+import { narrativePrefix } from '../lib/sitecode.js';
+import { withNarrativePrefix } from './cms.js';
 import { validateEntry, canFinalize } from '../lib/validation.js';
 import { extractPeople } from '../lib/people.js';
 import { extractEntities } from '../lib/entities.js';
@@ -21,13 +23,16 @@ export function enrich(db, row) {
   const tasks = db.prepare(
     'SELECT id, task_code, duration, fragment, sort_order FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id'
   ).all(row.id);
-  const cm = db.prepare(`
+  // narrative_prefix rides along so the inline card editor parses an AUTO
+  // narrative the same way the main editor does (2026-09-19 feedback).
+  const cm = withNarrativePrefix(db.prepare(`
     SELECT matters.id, matters.cm_number, matters.short_name, matters.billable,
-      matters.status, matters.favorite,
-      clients.name AS client_name, COALESCE(clients.task_billing, 1) AS client_task_billing
+      matters.status, matters.favorite, matters.fixed_fee,
+      clients.name AS client_name, COALESCE(clients.task_billing, 1) AS client_task_billing,
+      COALESCE(clients.site_code_prefix, 0) AS client_site_code_prefix
     FROM matters LEFT JOIN clients ON clients.id = matters.client_id
     WHERE matters.id=?
-  `).get(row.cm_id);
+  `).get(row.cm_id));
   const sum = tasks.reduce((a, t) => a + (Number(t.duration) || 0), 0);
   const total = row.total_override != null ? row.total_override : Math.round(sum * 10000) / 10000;
   const customFields = loadEffectiveFields(db, row.cm_id);
@@ -114,6 +119,8 @@ export function syncNarrative(db, entryId) {
   const rounding = getSetting(db, 'rounding') || {};
   const client = db.prepare(`
     SELECT COALESCE(clients.task_billing, 1) AS task_billing,
+      COALESCE(clients.site_code_prefix, 0) AS site_code_prefix,
+      matters.short_name AS short_name, matters.fixed_fee AS fixed_fee,
       entries.narrative_manual AS narrative_manual, entries.narrative AS narrative
     FROM entries
     LEFT JOIN matters ON matters.id = entries.cm_id
@@ -127,7 +134,10 @@ export function syncNarrative(db, entryId) {
   // "task filling doesn't seem to be working here").
   if (client && client.narrative_manual && String(client.narrative || '').trim()) return;
   const taskBilling = !client || !!client.task_billing;
-  const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling });
+  // The site-code prefix leads the generated narrative too (2026-09-19
+  // feedback) — an AUTO narrative is still this matter's narrative.
+  const prefix = client && client.site_code_prefix ? narrativePrefix(client) : null;
+  const generated = buildNarrative(tasks, { increment: rounding.increment, taskBilling, prefix });
   if (generated != null) {
     // Clear the detach flag alongside the refill, or the entry would keep a
     // regenerated narrative that no longer tracks its task lines, and reopen

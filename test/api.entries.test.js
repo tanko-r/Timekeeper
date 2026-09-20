@@ -510,3 +510,45 @@ test('a person hidden in the dictionary leaves the AI prompt roster too', async 
     assert.ok(!after.body.people.some((p) => p.name === 'A. Turner'));
   } finally { await t.close(); }
 });
+
+// 2026-09-19 feedback: the site-code prefix survives the generated narrative,
+// so a task-billed multi-line entry keeps it too.
+test('site-code client: the generated task-billed narrative keeps the matter prefix', () =>
+  withServer(async (t) => {
+    const m = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '700009-000001', short_name: 'ABC89 - Water Agreement',
+      fixed_fee: 1, client_site_code_prefix: 1, client_task_billing: 1,
+    })).body;
+    const created = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-09-19', cm_id: m.id, narrative: 'ignored once multi-line',
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review easement' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to client' },
+      ],
+    })).body;
+    assert.equal(created.narrative,
+      '(ABC89 - Water Agreement) Review easement (1.2); draft email to client (0.3).');
+    assert.equal(created.narrative_auto, true);
+
+    const patched = (await t.fetchJson('PATCH', `/api/entries/${created.id}`, {
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review easement' },
+        { task_code: 'Draft', duration: 0.4, fragment: 'draft email to client' },
+      ],
+    })).body;
+    assert.equal(patched.narrative,
+      '(ABC89 - Water Agreement) Review easement (1.2); draft email to client (0.4).');
+
+    // a client that never opted in is unchanged
+    const plain = (await t.fetchJson('POST', '/api/cms', {
+      cm_number: '700010-000001', short_name: 'ABC02 - Cedar Point',
+    })).body;
+    const other = (await t.fetchJson('POST', '/api/entries', {
+      date: '2026-09-19', cm_id: plain.id,
+      tasks: [
+        { task_code: 'Review', duration: 1.2, fragment: 'review easement' },
+        { task_code: 'Draft', duration: 0.3, fragment: 'draft email to client' },
+      ],
+    })).body;
+    assert.equal(other.narrative, 'Review easement (1.2); draft email to client (0.3).');
+  }));

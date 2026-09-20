@@ -195,7 +195,8 @@ export function EntryEditor({ spec, settings, onClose }) {
   const substantiveIdx = (local?.tasks || []).map((t, i) => i).filter((i) => isSubstantiveTask(local.tasks[i]));
   const substantiveLines = substantiveIdx.map((i) => local.tasks[i]);
   const taskBilling = local?.cm?.client_task_billing ?? 1;
-  const generated = generateNarrative(substantiveLines, { increment, taskBilling });
+  const prefix = local?.cm?.narrative_prefix || null;
+  const generated = generateNarrative(substantiveLines, { increment, taskBilling, prefix });
   const autoAvailable = generated !== null;
   const autoOn = autoAvailable && !!local?.auto;
   const autoText = autoOn ? generated : null;
@@ -203,11 +204,10 @@ export function EntryEditor({ spec, settings, onClose }) {
   const total = tenth(local?.total || 0);
   const remaining = tenth(total - sum);
   const finalized = local?.status === 'finalized';
-  const prefix = local?.cm?.narrative_prefix || null;
   // The site-code prefix is not prose: AI and split work on what follows it,
   // and a box holding only the prefix counts as empty (2026-09-19 feedback).
-  const { lead: seedLead, body: seedBody } = autoOn
-    ? { lead: null, body: autoText || '' } : splitPrefix(local?.narrative, prefix);
+  const { lead: seedLead, body: seedBody } = splitPrefix(
+    autoOn ? (autoText || '') : local?.narrative, prefix);
   const seedText = seedBody;
   const suggestionChips = !autoOn && isPrefixOnly(local?.narrative, prefix) ? suggestChips(phrases) : [];
 
@@ -224,7 +224,7 @@ export function EntryEditor({ spec, settings, onClose }) {
     // protect, so AUTO stays on and refills from the task lines instead of
     // detaching into a permanently blank manual narrative (2026-08-14).
     if (!String(text).trim()) { update({ narrative: '' }); return; }
-    const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling });
+    const parsed = parseNarrativeEdit(text, substantiveIdx.length, { taskBilling, prefix });
     if (!parsed) { update({ narrative: text, auto: false }); return; }
     let changed = false;
     const tasks = local.tasks.slice();

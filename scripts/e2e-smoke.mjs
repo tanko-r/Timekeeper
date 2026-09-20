@@ -1936,6 +1936,7 @@ await step('site-code narratives: new matter with the client flag + fixed fee se
   await type('[data-nc-client-name]', 'Sitecode Client');
   await type('[data-nc-matter]', '000001');
   await type('[data-nc-name]', 'ABC89 - Water Agreement');
+  await page.click('[data-nc-task-billing]'); // the prefix must survive AUTO allocations
   await page.click('[data-nc-site-codes]');
   await page.click('[data-nc-fixed-fee]');
   await clickText('.modal button', 'Create matter');
@@ -1960,7 +1961,61 @@ await step('site-code narratives: new matter with the client flag + fixed fee se
     () => (document.querySelector('.modal-wide .narrative-preview textarea')?.value || '')
       .startsWith('(ABC89 - Water Agreement) '),
     { timeout: 4000 });
+
+  // two task lines → the AUTO narrative keeps the prefix, and editing a
+  // fragment through the AUTO box must not fold the prefix into line 1
+  await waitFor('.modal-wide .task-line');
+  await page.evaluate(() => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const line1 = document.querySelector('.modal-wide .task-line');
+    const frag = line1.querySelector('input[type="text"]');
+    set.call(frag, 'review easement');
+    frag.dispatchEvent(new Event('input', { bubbles: true }));
+    const hours = line1.querySelector('input[type="number"]');
+    set.call(hours, '1.2');
+    hours.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await clickText('.modal-wide button', 'Add task line');
+  await page.waitForFunction(() => document.querySelectorAll('.modal-wide .task-line').length === 2);
+  await page.evaluate(() => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
+    const frag = line2.querySelector('input[type="text"]');
+    set.call(frag, 'draft email to client');
+    frag.dispatchEvent(new Event('input', { bubbles: true }));
+    const hours = line2.querySelector('input[type="number"]');
+    set.call(hours, '0.5');
+    hours.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await waitFor('.modal-wide .auto-badge');
+  await page.waitForFunction(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    return ta && ta.value === '(ABC89 - Water Agreement) Review easement (0.7); draft email to client (0.5).';
+  }, { timeout: 4000 });
+
+  await page.evaluate(() => {
+    const ta = document.querySelector('.modal-wide .narrative-preview textarea');
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    set.call(ta, '(ABC89 - Water Agreement) Review easement (0.7); send draft to client (0.5).');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.waitForFunction(() => {
+    const line2 = [...document.querySelectorAll('.modal-wide .task-line')][1];
+    return line2.querySelector('input[type="text"]').value === 'send draft to client';
+  }, { timeout: 4000 });
+  const l1 = await page.evaluate(() =>
+    document.querySelector('.modal-wide .task-line input[type="text"]').value);
+  if (l1 !== 'review easement') throw new Error(`prefix leaked into task line 1: "${l1}"`);
   await page.keyboard.press('Escape');
+
+  // and it survives the round trip through the server
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 4000 });
+  const entries = await (await fetch(`${base}/api/entries?from=${todayLocal()}&to=${todayLocal()}`)).json();
+  const saved = entries.find((e) => e.cm && e.cm.cm_number === '700009-000001');
+  if (!saved) throw new Error('site-code entry not found via API');
+  if (!saved.narrative.startsWith('(ABC89 - Water Agreement) Review easement (')) {
+    throw new Error(`stored narrative lost the prefix: "${saved.narrative}"`);
+  }
 });
 
 await browser.close();

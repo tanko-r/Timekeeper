@@ -164,7 +164,8 @@ function InlineNarrative({ entry, onChanged, ai, openEditor }) {
     const body = { narrative: t };
     if (entry.narrative_auto && substantive.length >= 2) {
       const taskBilling = entry.cm?.client_task_billing !== 0;
-      const parsed = parseNarrativeEdit(t, substantive.length, { taskBilling });
+      const parsed = parseNarrativeEdit(t, substantive.length,
+        { taskBilling, prefix: entry.cm?.narrative_prefix || '' });
       if (parsed) {
         body.tasks = substantive.map((x, k) => ({
           task_code: x.task_code,

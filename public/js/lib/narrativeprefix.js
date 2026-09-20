@@ -23,7 +23,9 @@ export function prefixForMatter(narrative, oldPrefix, newPrefix) {
 // Text added to a box that holds only the prefix goes after it, not in place
 // of it (suggestion chips, "insert from history").
 export function afterPrefix(prefix, text) {
-  const t = String(text || '').trim();
+  // Borrowed text (a chip, a past narrative) may already open with the
+  // prefix — carry it once, not twice.
+  const t = splitPrefix(text, prefix).body;
   return prefix ? `${prefix} ${t}` : t;
 }
 
