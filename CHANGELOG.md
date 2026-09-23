@@ -8,6 +8,16 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-22
+
+- **Entry cards: validation flags are now icons beside the narrative.** Each
+  finding used to take a full-width row under the card ("Narrative is
+  empty.", "Entry total is zero."), so a draft with two warnings was twice as
+  tall as it needed to be. The card now shows at most one ⛔ and one ⚠️ in
+  the narrative row (with a count when a level has several), and the
+  messages appear on hover. The entry editor and the close-out sweep keep the
+  full list.
+
 ## 2026-09-20
 
 - **Task-billed AUTO narratives now keep the site-code prefix.** Follow-up to

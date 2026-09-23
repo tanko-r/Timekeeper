@@ -1,6 +1,7 @@
 // Shared UI toolkit: htm binding, hooks, formatting, and small widgets.
 import htm from '/vendor/htm.module.js';
 import { Icon } from '/js/icons.js';
+import { groupFindings } from '/js/lib/validationflags.js';
 
 export const React = window.React;
 export const html = htm.bind(React.createElement);
@@ -260,4 +261,20 @@ export function ValidationList({ findings, compact }) {
           <span>${f.message}</span>
         </div>`)}
     </div>`;
+}
+
+// Icon-only validation flags for the entry card's narrative row: one icon per
+// level, a count when a level has several, every message in the hover text.
+// The editor and close-out keep the full ValidationList.
+export function ValidationFlags({ findings }) {
+  const flags = groupFindings(findings);
+  if (flags.length === 0) return null;
+  return html`
+    <span class="validation-flags">
+      ${flags.map((f) => html`
+        <span key=${f.level} class=${'validation-flag level-' + f.level} title=${f.title}
+          role="img" aria-label=${f.title}>
+          ${f.level === 'block' ? '⛔' : '⚠️'}${f.count > 1 ? html`<span class="validation-flag-count">${f.count}</span>` : null}
+        </span>`)}
+    </span>`;
 }

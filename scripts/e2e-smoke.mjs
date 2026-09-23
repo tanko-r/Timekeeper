@@ -426,6 +426,21 @@ await step('quick timer: stop files a matterless entry → assign from the entry
   // the entry is real but blocked — its card carries the Assign matter button
   await page.waitForFunction(() => [...document.querySelectorAll('.entry-card')]
     .some((c) => c.textContent.includes('No matter yet')), { timeout: 5000 });
+  // its findings sit beside the narrative as icons, messages on hover —
+  // no full-width validation rows making the card tall (2026-09-21 feedback)
+  const flagCheck = await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.entry-card')]
+      .find((x) => x.textContent.includes('No matter yet'));
+    const flag = c.querySelector('.narrative-row .validation-flag.level-block');
+    return {
+      title: flag ? flag.getAttribute('title') : null,
+      rows: document.querySelectorAll('.entry-card .validation-list').length,
+    };
+  });
+  if (!flagCheck.title || !flagCheck.title.includes('Narrative is empty')) {
+    throw new Error(`matterless card missing inline block flag: ${JSON.stringify(flagCheck)}`);
+  }
+  if (flagCheck.rows) throw new Error(`entry cards still render ${flagCheck.rows} validation list(s)`);
   await clickText('.entry-card button', 'Assign matter');
   await waitFor('.modal-wide .cmpicker input');
   await page.click('.modal-wide .cmpicker input');

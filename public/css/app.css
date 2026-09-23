@@ -606,6 +606,12 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 .validation-item.level-block { border-left: 3px solid var(--status-critical); }
 .validation-item.level-warn { border-left: 3px solid var(--status-warning); }
 .validation-list.compact .validation-item { padding: 3px 8px; font-size: 12px; }
+/* entry card: icon-only flags beside the narrative, details in the tooltip */
+.validation-flags { display: inline-flex; gap: 4px; flex: none; align-items: center; line-height: 1.5; }
+.validation-flag { display: inline-flex; align-items: center; gap: 1px; font-size: 13px; cursor: help; }
+.validation-flag-count { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
+.validation-flag.level-block .validation-flag-count { color: var(--status-critical); }
+.validation-flag.level-warn .validation-flag-count { color: var(--status-warning); }
 
 /* ---------- alerts banner ---------- */
 .alert-banner {

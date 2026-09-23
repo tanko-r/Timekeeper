@@ -1,7 +1,7 @@
 import { api, streamNdjson } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, fmtHours, fmtTenths, fmtClock, emitToast, BillableBadge, StatusChip,
-  ValidationList, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm, clientLabel, ContextMenu,
+  ValidationFlags, fmtStamp, Icon, markJustFinalized, fmtDateFull, Confirm, clientLabel, ContextMenu,
 } from '/js/ui.js';
 import { startAlignedTick, liveTimerSeconds } from '/js/lib/tick.js';
 import { parseNarrativeEdit } from '/js/lib/narrativesync.js';
@@ -139,7 +139,7 @@ function InlineAiAssist({ ai, assist, entry, openEditor }) {
 // parses folds back into the task lines (fragments + allocations, staying
 // AUTO); a structural break detaches to a durable manual narrative
 // (narrative_manual=1). Single/no-line entries just save the text.
-function InlineNarrative({ entry, onChanged, ai, openEditor }) {
+function InlineNarrative({ entry, onChanged, ai, openEditor, flags }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState('');
   // Same deterministic assists as the main editor (2026-07-14 feedback —
@@ -192,6 +192,7 @@ function InlineNarrative({ entry, onChanged, ai, openEditor }) {
     return html`
       <div class="narrative-row">
         <p class="narrative">${assist.streamText || html`<em class="muted">Working…</em>`}</p>
+        ${flags}
         <${InlineAiAssist} ai=${ai} assist=${assist} entry=${entry} openEditor=${openEditor} />
       </div>`;
   }
@@ -203,6 +204,7 @@ function InlineNarrative({ entry, onChanged, ai, openEditor }) {
           onClick=${() => { setText(entry.narrative); setEditing(true); }}>
           ${entry.narrative || html`<em class="muted">No narrative yet</em>`}
         </p>
+        ${flags}
         <${InlineAiAssist} ai=${ai} assist=${assist} entry=${entry} openEditor=${openEditor} />
       </div>`;
   }
@@ -429,13 +431,13 @@ export function EntryList({
                   <${Icon} name="timer" size=${12} /> running</span>`
               : e.source === 'timer' ? html`<span class="chip" title="Created by a timer"><${Icon} name="timer" size=${12} /></span>` : null}
             </div>
-            <${InlineNarrative} entry=${e} onChanged=${onChanged} ai=${ai} openEditor=${openEditor} />
+            <${InlineNarrative} entry=${e} onChanged=${onChanged} ai=${ai} openEditor=${openEditor}
+              flags=${e.status === 'draft' ? html`<${ValidationFlags} findings=${e.validation} />` : null} />
             ${e.tasks.length > 1 ? html`
               <div class="muted small">
                 ${e.tasks.map((t) => `${t.task_code || '—'} ${fmtHours(t.duration, increment)}`).join(' · ')}
               </div>` : e.tasks.length === 1 && e.tasks[0].task_code ? html`
               <div class="muted small">${e.tasks[0].task_code}</div>` : null}
-            ${e.status === 'draft' ? html`<${ValidationList} findings=${e.validation} compact=${true} />` : null}
           </div>
           <div style=${{ textAlign: 'right' }}>
             <${InlineHours} entry=${e} increment=${increment} onChanged=${onChanged}
