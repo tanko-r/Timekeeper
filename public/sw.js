@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v123';
+const CACHE = 'timekeeper-v124';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -35,10 +35,12 @@ const SHELL = [
   './js/components/customfields.js',
   './js/components/entryeditor.js',
   './js/components/entrylist.js',
+  './js/components/exportgate.js',
   './js/components/feedback.js',
   './js/components/ghosttext.js',
   './js/components/narrativehistory.js',
   './js/components/quickcapture.js',
+  './js/components/runtodo.js',
   './js/components/shortcuts.js',
   './js/components/stopchips.js',
   './js/components/summary.js',
@@ -47,11 +49,13 @@ const SHELL = [
   './js/components/timerimport.js',
   './js/components/todayfooter.js',
   './js/lib/activity.js',
+  './js/lib/cmparse.js',
   './js/lib/daterange.js',
   './js/lib/daysummary.js',
   './js/lib/expand.js',
   './js/lib/ghost.js',
   './js/lib/narrativejoin.js',
+  './js/lib/narrativeprefix.js',
   './js/lib/narrativesync.js',
   './js/lib/notify.js',
   './js/lib/pip.js',

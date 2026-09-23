@@ -10,6 +10,13 @@ Newest entries first.
 
 ## 2026-09-22
 
+- **Service worker now precaches four modules it had missed**
+  (`exportgate.js`, `runtodo.js`, `cmparse.js`, `narrativeprefix.js`). Found
+  while shipping the item below. Unlisted modules still loaded, but through
+  the browser's HTTP cache, so after an update a remote client could run a
+  fresh file next to a stale copy of one of these. A new test fails if any
+  app module under `public/js` is left out of the list again.
+
 - **Entry cards: validation flags are now icons beside the narrative.** Each
   finding used to take a full-width row under the card ("Narrative is
   empty.", "Entry total is zero."), so a draft with two warnings was twice as
