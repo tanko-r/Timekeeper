@@ -26,11 +26,10 @@ export function runningTitle(timers, nowMs, fetchedAtMs, base = 'Timekeeper') {
   return { title: `▶ ${fmtClock(secs)} ${t.name}`, running: true };
 }
 
-// Favicons as data URIs: the idle one mirrors index.html's ⏱; the running
-// one is a red disc with a white play triangle — a whole-icon color change,
-// because a small badge dot is invisible at 16px tab size. Kept together so
-// they can't drift apart.
-export const IDLE_ICON =
-  "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x23F1;</text></svg>";
+// Favicons: the idle one is the orange app icon (same file index.html
+// links); the running one is a red disc with a white play triangle — a
+// whole-icon color change, because a small badge dot is invisible at 16px
+// tab size. Kept together so they can't drift apart.
+export const IDLE_ICON = '/icons/icon.svg';
 export const RUNNING_ICON =
   "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23e11d48'/><polygon points='38,28 80,50 38,72' fill='white'/></svg>";

@@ -8,6 +8,15 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-25
+
+- **The app icon is now orange.** The tab favicon (was the ⏱ emoji) and the
+  installed-app icon (was blue) are now an orange rounded square with a white
+  stopwatch, so the app is easy to find on the Windows taskbar. One file,
+  `public/icons/icon.svg`, is the source; `scripts/build-app-icons.mjs`
+  renders the PNG icons from it. The red "timer running" tab icon is
+  unchanged.
+
 ## 2026-09-22
 
 - **Service worker now precaches four modules it had missed**
