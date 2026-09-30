@@ -142,8 +142,17 @@ export async function streamNdjson(path, body, onLine, signal) {
   }
 }
 
+// CSVs get a UTF-8 byte-order mark (2026-09-30 feedback): without one, Excel
+// opens the file as Windows-1252 and a curly apostrophe turns into "â€™".
+// Other types (.TIM, text summaries) go out exactly as given. Pure —
+// unit-tested in test/downloadparts.test.js.
+export function downloadParts(text, mime) {
+  if (mime === 'text/csv' && !String(text).startsWith('﻿')) return ['﻿', text];
+  return [text];
+}
+
 export function downloadText(filename, text, mime = 'text/csv') {
-  const blob = new Blob([text], { type: mime });
+  const blob = new Blob(downloadParts(text, mime), { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

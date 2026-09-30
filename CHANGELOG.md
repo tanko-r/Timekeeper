@@ -8,6 +8,14 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-30
+
+- **CSV exports no longer garble curly quotes and dashes in Excel.** A
+  narrative with "Seller’s" opened in Excel as "Sellerâ€™s". Excel reads a
+  CSV with no encoding marker as an old Windows encoding; every CSV download
+  now starts with the UTF-8 marker (a byte-order mark), so Excel reads it
+  correctly. The .TIM file and text summaries are unchanged.
+
 ## 2026-09-29
 
 - **Calendar: new Status view (unfinalized / unexported time per day).** A

@@ -1351,6 +1351,26 @@ await step('export view offers CSV, .TIM, and text', async () => {
   await shot('export');
 });
 
+await step('CSV downloads are UTF-8 with a BOM, so Excel keeps curly quotes', async () => {
+  // capture the Blob downloadText builds, instead of saving a real file
+  const bytes = await page.evaluate(async () => {
+    const { downloadText } = await import('/js/api.js');
+    const orig = URL.createObjectURL;
+    let blob;
+    URL.createObjectURL = (b) => { blob = b; return 'blob:about:blank'; };
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {};
+    try { downloadText('t.csv', 'narrative\r\nSeller\u2019s\r\n'); } finally {
+      URL.createObjectURL = orig; HTMLAnchorElement.prototype.click = click;
+    }
+    return [...new Uint8Array(await blob.arrayBuffer())];
+  });
+  const head = bytes.slice(0, 3).join(',');
+  if (head !== '239,187,191') throw new Error(`expected BOM EF BB BF, got ${head}`);
+  const text = Buffer.from(bytes.slice(3)).toString('utf8');
+  if (!text.includes('Seller\u2019s')) throw new Error(`body did not round-trip: ${JSON.stringify(text)}`);
+});
+
 await step('export view: row actions edit and finalize a not-finalized entry', async () => {
   const cms = await (await fetch(`${base}/api/cms`)).json();
   const created = await (await fetch(`${base}/api/entries`, {
