@@ -674,6 +674,26 @@ div:first-child > .entry-day-head { margin-top: 4px; }
 }
 .week-day-btn:hover { text-decoration: underline; }
 .cal-selected-panel { margin-top: 14px; }
+/* Status lens (2026-09-29 feedback): unfinalized / finalized-not-exported /
+   exported per day. Text colors are pulled toward the text color so the
+   orange and green stay readable on light cards; bars use the raw tokens. */
+.cal-lens { margin-left: 8px; }
+.dot-unfinalized, .cal-split .uf { background: var(--status-serious); }
+.dot-unexported, .cal-split .ux { background: var(--accent); }
+.dot-exported, .cal-split .ex { background: color-mix(in srgb, var(--status-good) 45%, var(--surface-2)); }
+.pipe-lines { display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; line-height: 1.25; color: var(--text-secondary); }
+.pipe-line strong { font-size: 14px; font-variant-numeric: tabular-nums; }
+.pipe-unfinalized { color: color-mix(in srgb, var(--status-serious) 72%, var(--text-primary)); }
+.pipe-unexported { color: var(--accent); }
+.pipe-exported { color: var(--text-muted); }
+.pipe-done { color: var(--status-good); font-weight: 700; }
+.week-col .pipe-lines { margin-bottom: 6px; }
+.week-col .cal-split { margin-bottom: 6px; }
+.week-col .cal-status { display: none; }
+/* narrow calendar (phone, or a small window): the cells are too narrow for
+   the words; the colors and the legend carry the meaning */
+.cal-grid { container-type: inline-size; }
+@container (max-width: 820px) { .cal-day .pipe-word { display: none; } }
 
 /* ---------- stats bars ---------- */
 .bar-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr 64px; gap: 10px; align-items: center; font-size: 13.5px; padding: 4px 0; }

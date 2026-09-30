@@ -6,7 +6,7 @@
 // as a standalone PWA. No writes are ever queued or replayed while offline.
 //
 // Bump CACHE to invalidate all previously cached shell assets on next visit.
-const CACHE = 'timekeeper-v125';
+const CACHE = 'timekeeper-v126';
 
 // Same-origin static assets pre-cached on install. Keep this list in sync
 // with the actual public/ tree (index.html, css, vendor, and every js/**
@@ -61,6 +61,7 @@ const SHELL = [
   './js/lib/narrativesync.js',
   './js/lib/notify.js',
   './js/lib/pip.js',
+  './js/lib/pipeline.js',
   './js/lib/tick.js',
   './js/lib/timersort.js',
   './js/lib/titlebar.js',

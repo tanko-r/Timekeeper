@@ -3,6 +3,7 @@ import {
   html, useState, useAsync, Spinner, ErrorBox, fmtHours, fmtDateLong, addDays, todayStr, emitToast, Icon,
 } from '/js/ui.js';
 import { rangeFor } from '/js/lib/daterange.js';
+import { pipelineByDay, sumPipeline } from '/js/lib/pipeline.js';
 import { EntryList } from '/js/components/entrylist.js';
 import { nav } from '/js/app.js';
 
@@ -114,10 +115,38 @@ function SelectedPanel({ selected, settings, openEditor, refreshKey, bumpRefresh
     </div>`;
 }
 
+// Status-lens body of one day: what is still to finalize, what is still to
+// export, or a check when every hour of the day has gone out.
+function PipeDay({ p }) {
+  if (!p || p.total === 0) return null;
+  const done = p.unfinalized === 0 && p.unexported === 0;
+  const pct = (h) => `${(h / p.total) * 100}%`;
+  return html`
+    ${done ? html`<span class="cal-status good" title="Everything on this day is exported">✓</span>` : null}
+    <span class="pipe-lines">
+      ${p.unfinalized > 0 ? html`<span class="pipe-line pipe-unfinalized" title="Draft hours — finalize these">
+        <strong class="mono">${fmtHours(p.unfinalized)}</strong><span class="pipe-word"> unfinalized</span></span>` : null}
+      ${p.unexported > 0 ? html`<span class="pipe-line pipe-unexported" title="Finalized hours not yet exported">
+        <strong class="mono">${fmtHours(p.unexported)}</strong><span class="pipe-word"> unexported</span></span>` : null}
+      ${done ? html`<span class="pipe-line pipe-exported"><strong class="mono">${fmtHours(p.exported)}</strong><span class="pipe-word"> exported</span></span>` : null}
+    </span>
+    <span class="cal-split" title=${`${fmtHours(p.unfinalized)} unfinalized / ${fmtHours(p.unexported)} unexported / ${fmtHours(p.exported)} exported`}>
+      ${p.unfinalized > 0 ? html`<span class="uf" style=${{ width: pct(p.unfinalized) }}></span>` : null}
+      ${p.unexported > 0 ? html`<span class="ux" style=${{ width: pct(p.unexported) }}></span>` : null}
+      ${p.exported > 0 ? html`<span class="ex" style=${{ width: pct(p.exported) }}></span>` : null}
+    </span>`;
+}
+
 export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) {
   const [mode, setMode] = useState('month');
   const [anchor, setAnchor] = useState(todayStr());
   const [selected, setSelected] = useState(null);
+  // Lens (2026-09-29 feedback): 'hours' = billable/non-billable totals;
+  // 'status' = how much of each day is still unfinalized or unexported.
+  const [lens, setLensState] = useState(() => {
+    try { return localStorage.getItem('tk:calLens') === 'status' ? 'status' : 'hours'; } catch { return 'hours'; }
+  });
+  const setLens = (v) => { try { localStorage.setItem('tk:calLens', v); } catch { /* per-browser nicety only */ } setLensState(v); };
 
   const weekStart = settings?.calendar?.weekStartsOn === 1 ? 1 : 0; // default Sunday
 
@@ -150,7 +179,11 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
     return a;
   }, { billable: 0, total: 0 });
 
+  const pipe = pipelineByDay(data);
+  const periodPipe = sumPipeline([...pipe].filter(([d]) => inPeriod(d)).map(([, p]) => p));
+
   const target = settings?.targets?.dailyHours || 0;
+  const status = lens === 'status';
   const statusFor = (day, info) => {
     if (!target || !info || info.total === 0 || day.weekend) return null;
     const pct = info.total / target;
@@ -188,17 +221,34 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
         <button class=${'btn btn-sm' + (mode === 'month' ? ' btn-primary' : '')} onClick=${() => setMode('month')}>Month</button>
         <button class=${'btn btn-sm' + (mode === 'week' ? ' btn-primary' : '')} onClick=${() => setMode('week')}>Week</button>
       </div>
+      <div class="seg cal-lens" role="group" aria-label="Calendar view">
+        <button class=${lens === 'hours' ? 'on' : ''} title="Billable / non-billable hours per day"
+          onClick=${() => setLens('hours')}>Hours</button>
+        <button class=${status ? 'on' : ''} title="Unfinalized and unexported hours per day"
+          onClick=${() => setLens('status')}>Status</button>
+      </div>
     </div>
+    ${status ? html`
+    <div class="meter-legend" style=${{ marginBottom: '10px' }}>
+      <span><span class="dot dot-unfinalized"></span>Unfinalized</span>
+      <span><span class="dot dot-unexported"></span>Finalized, not exported</span>
+      <span><span class="dot dot-exported"></span>Exported</span>
+      <span class="muted">Click a day to see its entries below · double-click opens it</span>
+      <span class="cal-period-total" style=${{ marginLeft: 'auto' }}>
+        <strong class="mono pipe-unfinalized">${fmtHours(periodPipe.unfinalized)}h</strong> unfinalized ·${' '}
+        <strong class="mono pipe-unexported">${fmtHours(periodPipe.unexported)}h</strong> unexported this ${mode}
+      </span>
+    </div>` : html`
     <div class="meter-legend" style=${{ marginBottom: '10px' }}>
       <span><span class="dot dot-billable"></span>Billable</span>
       <span><span class="dot dot-nonbillable"></span>Non-billable</span>
       ${target ? html`<span class="muted">✓ ≥${fmtHours(target)}h · ◐ ≥50% · ! under 50%</span>` : null}
       <span class="muted">Click a day to see its entries below · double-click opens it</span>
       <span class="cal-period-total" style=${{ marginLeft: 'auto' }}>
-        <strong class="mono">${fmtHours(periodTotals.billable)}h</strong> billed ·
+        <strong class="mono">${fmtHours(periodTotals.billable)}h</strong> billed ·${' '}
         <strong class="mono">${fmtHours(periodTotals.total)}h</strong> total this ${mode}
       </span>
-    </div>
+    </div>`}
     ${loading && !data ? html`<${Spinner} />` : mode === 'month' ? html`
       <div class="cal-grid">
         ${dowLabels(weekStart).map((d) => html`<div key=${d} class="cal-dow">${d}</div>`)}
@@ -206,16 +256,25 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
         ${chunk7(gridFor(monthOf(anchor), weekStart)).flatMap((week, wi) => [
           ...week.map((cell) => {
             const info = byDay.get(cell.date);
-            const status = statusFor(cell, info);
+            const hit = statusFor(cell, info);
             const scale = Math.max(target || 0, info ? info.total : 0, 0.1);
+            const cellClass = 'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '')
+              + (cell.date === todayStr() ? ' today' : '') + (cell.date === selected ? ' selected' : '');
+            if (status) {
+              return html`
+                <button key=${cell.date} class=${cellClass}
+                  onClick=${() => pick(cell.date)}
+                  onDoubleClick=${() => nav(`#/day/${cell.date}`)}>
+                  <span class="cal-num">${cell.dayNum}</span>
+                  <${PipeDay} p=${pipe.get(cell.date)} />
+                </button>`;
+            }
             return html`
-              <button key=${cell.date}
-                class=${'cal-day' + (cell.inMonth ? '' : ' other-month') + (cell.weekend ? ' weekend' : '')
-                  + (cell.date === todayStr() ? ' today' : '') + (cell.date === selected ? ' selected' : '')}
+              <button key=${cell.date} class=${cellClass}
                 onClick=${() => pick(cell.date)}
                 onDoubleClick=${() => nav(`#/day/${cell.date}`)}>
                 <span class="cal-num">${cell.dayNum}</span>
-                ${status ? html`<span class=${'cal-status ' + status[0]} title=${'vs ' + fmtHours(target) + 'h target'}>${status[1]}</span>` : null}
+                ${hit ? html`<span class=${'cal-status ' + hit[0]} title=${'vs ' + fmtHours(target) + 'h target'}>${hit[1]}</span>` : null}
                 ${info ? html`
                   <span class="cal-hours mono">${fmtHours(info.total)}</span>
                   <span class="cal-split" title=${`${fmtHours(info.billable)} billable / ${fmtHours(info.nonbillable)} non-billable`}>
@@ -224,7 +283,17 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
                   </span>` : null}
               </button>`;
           }),
-          (() => {
+          status ? (() => {
+            const wp = sumPipeline(week.map((cell) => pipe.get(cell.date)));
+            return html`
+              <div key=${'wt' + wi} class="cal-week-total"
+                title=${`${fmtHours(wp.unfinalized)} unfinalized / ${fmtHours(wp.unexported)} finalized, not exported this week`}>
+                ${wp.unfinalized > 0 ? html`<span class="cal-wt-b mono pipe-unfinalized">${fmtHours(wp.unfinalized)}</span>` : null}
+                ${wp.unexported > 0 ? html`<span class="cal-wt-nb mono pipe-unexported">${fmtHours(wp.unexported)}</span>` : null}
+                ${wp.total > 0 && wp.unfinalized === 0 && wp.unexported === 0
+                  ? html`<span class="pipe-done" title="Everything this week is exported">✓</span>` : null}
+              </div>`;
+          })() : (() => {
             const wk = week.reduce((a, cell) => {
               const info = byDay.get(cell.date);
               if (info) { a.billable += info.billable; a.nonbillable += info.nonbillable; }
@@ -251,6 +320,7 @@ export function CalendarView({ settings, openEditor, refreshKey, bumpRefresh }) 
                   onClick=${() => pick(day)} onDoubleClick=${() => nav(`#/day/${day}`)}>${day.slice(5)}</button>
                 <span class="mono muted">${info ? fmtHours(info.total) : ''}</span>
               </div>
+              ${status ? html`<${PipeDay} p=${pipe.get(day)} />` : null}
               ${(info?.entries || []).map((e) => html`
                 <div key=${e.id} class="week-entry" title=${e.narrative}
                   onClick=${() => openEditor({ id: e.id })}>

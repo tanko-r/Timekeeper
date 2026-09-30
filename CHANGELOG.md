@@ -8,6 +8,17 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-09-29
+
+- **Calendar: new Status view (unfinalized / unexported time per day).** A
+  new Hours | Status switch at the top right of the Calendar. Status shows,
+  for each day, the draft hours still to finalize (orange) and the finalized
+  hours still to export (blue), with a bar that also shows the exported part
+  (green). A day that is fully exported shows a green check. The week column
+  and the header show the same two totals for the week or month. Works in
+  both Month and Week mode; the choice is remembered per browser. On a
+  narrow calendar (phone) the cells show only the colored numbers.
+
 ## 2026-09-25
 
 - **The app icon is now orange.** The tab favicon (was the ⏱ emoji) and the

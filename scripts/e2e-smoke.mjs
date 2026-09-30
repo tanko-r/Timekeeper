@@ -1265,6 +1265,17 @@ await step('calendar renders month grid with data', async () => {
   await page.waitForFunction(() => document.querySelectorAll('.cal-day').length === 42);
 });
 
+await step('calendar Status lens shows unfinalized/unexported hours per day', async () => {
+  await clickText('.cal-lens button', 'Status');
+  await page.waitForFunction(() =>
+    document.querySelector('.meter-legend')?.textContent.includes('Unfinalized')
+      && document.querySelectorAll('.cal-day .pipe-line').length >= 1, { timeout: 4000 });
+  // the lens is remembered per browser; switch back so later steps see the default
+  await clickText('.cal-lens button', 'Hours');
+  await page.waitForFunction(() => document.querySelector('.meter-legend')?.textContent.includes('Billable'),
+    { timeout: 4000 });
+});
+
 await step('search finds the entry', async () => {
   await page.goto(`${base}/#/search`, { waitUntil: 'networkidle0' });
   await type('[data-search-q]', 'lease');
