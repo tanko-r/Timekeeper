@@ -74,7 +74,9 @@ export function validateEntry(entry, settings = {}) {
       `Task lines sum to ${sum.toFixed(2)} but total is ${Number(entry.total_override).toFixed(2)}.`);
   }
 
-  if (tasks.length === 1 && Number(tasks[0].duration) > blockBillingHours) {
+  // A threshold of 0 (or blank) turns this warning off (2026-10-06 feedback).
+  if (Number(blockBillingHours) > 0 && tasks.length === 1
+      && Number(tasks[0].duration) > blockBillingHours) {
     add('warn', 'block_billing',
       `Single ${Number(tasks[0].duration).toFixed(1)}h line exceeds ${blockBillingHours}h — consider breaking it down.`);
   }

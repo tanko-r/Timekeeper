@@ -89,6 +89,15 @@ test('block billing: single line over threshold warns; broken-down does not', ()
   assert.ok(!codes(validateEntry(broken, SETTINGS)).includes('block_billing'));
 });
 
+test('block billing: a threshold of 0 (or null) turns the warning off', () => {
+  const big = entry({
+    narrative: 'Draft and revise motion for summary judgment and supporting papers.',
+    tasks: [{ task_code: 'Draft', duration: 9.5, fragment: '' }],
+  });
+  assert.ok(!codes(validateEntry(big, { ...SETTINGS, blockBillingHours: 0 })).includes('block_billing'));
+  assert.ok(!codes(validateEntry(big, { ...SETTINGS, blockBillingHours: null })).includes('block_billing'));
+});
+
 test('durations under minimum increment warn', () => {
   const v = validateEntry(entry({
     tasks: [{ task_code: 'Review', duration: 0.05, fragment: '' }],

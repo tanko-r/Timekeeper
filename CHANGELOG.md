@@ -8,6 +8,14 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-10-06
+
+- **The "Single line exceeds 3h — consider breaking it down" warning is off.**
+  The block-billing threshold in Settings → Narrative validation now accepts
+  0, and 0 means "off" (before, 0 snapped back to 3). Your saved setting is
+  now 0, so the warning no longer shows on cards or in "Finalize with
+  warnings?". Type a number of hours there to turn it back on.
+
 ## 2026-09-30
 
 - **CSV exports no longer garble curly quotes and dashes in Excel.** A

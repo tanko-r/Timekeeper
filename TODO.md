@@ -10,3 +10,4 @@ ask David a question when the codebase itself can't answer it.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
+- [ ] 2026-10-06 09:39 — Every day, the new day's dashboard should open to the Recent group. (no screenshot · #/)

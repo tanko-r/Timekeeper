@@ -394,9 +394,9 @@ function ValidationCard({ settings, reloadSettings }) {
           <input type="number" min="0" defaultValue=${v.minNarrativeChars}
             onBlur=${(e) => save({ validation: { minNarrativeChars: Number(e.target.value) || 0 } }, reloadSettings)} />
         <//>
-        <${SettingRow} label="Block-billing threshold" hint="warn on a single line over N hours">
-          <input type="number" min="0.5" step="0.5" defaultValue=${v.blockBillingHours}
-            onBlur=${(e) => save({ validation: { blockBillingHours: Number(e.target.value) || 3 } }, reloadSettings)} />
+        <${SettingRow} label="Block-billing threshold" hint="warn on a single line over N hours (0 = off)">
+          <input type="number" min="0" step="0.5" defaultValue=${v.blockBillingHours || 0}
+            onBlur=${(e) => save({ validation: { blockBillingHours: Math.max(0, Number(e.target.value) || 0) } }, reloadSettings)} />
         <//>
         <${SettingRow} label="Minimum increment" hint="warn on durations under this">
           <input type="number" min="0.01" step="0.01" defaultValue=${v.minIncrement}
