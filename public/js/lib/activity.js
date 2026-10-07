@@ -31,3 +31,14 @@ export function activityWindows(nowMs) {
 export function inWindow(ms, win) {
   return ms >= win.since && (win.until == null || ms < win.until);
 }
+
+// Which timer tab the dashboard lands on (2026-10-06 feedback). The default
+// "group" view opens on Recent at the start of every new day; a tab picked
+// earlier the same day still sticks across reloads and navigation. A saved
+// tab with no saved day (stored before this rule) counts as an earlier day.
+// "By client" keeps its saved tab across days and defaults to All (see the
+// 2026-09-14 note in timergrid.js).
+export function landingTab({ grouping, saved, savedDay, today }) {
+  if (grouping === 'group') return saved && savedDay === today ? saved : 'act-recent';
+  return saved || 'all';
+}

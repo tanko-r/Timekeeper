@@ -1,14 +1,14 @@
 import { api } from '/js/api.js';
 import {
   html, useState, useEffect, useRef, useCallback,
-  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel,
+  fmtClock, fmtTenths, fmtHours, emitToast, Modal, Confirm, ContextMenu, Field, Icon, clientLabel, todayStr,
 } from '/js/ui.js';
 import { CmPicker } from '/js/components/cmpicker.js';
 import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
-import { activityWindows, lastActivityMs, inWindow } from '/js/lib/activity.js';
+import { activityWindows, lastActivityMs, inWindow, landingTab } from '/js/lib/activity.js';
 import { compareTimersAZ, groupTimersByClient } from '/js/lib/timersort.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
@@ -88,15 +88,47 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   // Switching INTO "By client" for the first time still lands on All: that's
   // a deliberate secondary view, and defaulting it to Recent too would hide
   // any client whose timers just haven't run in the last two weeks.
-  const [activeTab, setActiveTabState] = useState(() => localStorage.getItem('tk:timerTab:group') || 'act-recent');
+  // Each NEW day the default view lands on Recent again (2026-10-06
+  // feedback): the saved tab carries the day it was picked
+  // (tk:timerTabDay:<mode>), and landingTab() drops it once that day is past.
+  const readLandingTab = (mode) => landingTab({
+    grouping: mode,
+    saved: localStorage.getItem(`tk:timerTab:${mode}`),
+    savedDay: localStorage.getItem(`tk:timerTabDay:${mode}`),
+    today: todayStr(),
+  });
+  const [activeTab, setActiveTabState] = useState(() => readLandingTab('group'));
   useEffect(() => {
-    const fallback = grouping === 'group' ? 'act-recent' : 'all';
-    setActiveTabState(localStorage.getItem(`tk:timerTab:${grouping}`) || fallback);
+    setActiveTabState(readLandingTab(grouping));
   }, [grouping]);
   const setActiveTab = (key) => {
     localStorage.setItem(`tk:timerTab:${grouping}`, key);
+    localStorage.setItem(`tk:timerTabDay:${grouping}`, todayStr());
     setActiveTabState(key);
   };
+  // The dashboard often stays open overnight, so also catch the date
+  // changing under an open page: re-pick the landing tab when the window
+  // comes back to the foreground on a new day, or (checked each minute)
+  // while it sits unfocused — never under the cursor of someone using it.
+  const landedDayRef = useRef(todayStr());
+  useEffect(() => {
+    const check = (force) => {
+      const today = todayStr();
+      if (today === landedDayRef.current) return;
+      if (!force && document.hasFocus()) return;
+      landedDayRef.current = today;
+      setActiveTabState(readLandingTab(grouping));
+    };
+    const onWake = () => { if (document.visibilityState === 'visible') check(true); };
+    const minute = setInterval(() => check(false), 60000);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    return () => {
+      clearInterval(minute);
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [grouping]);
 
   // Keyboard focus model (spec §4): ONE focused timer via roving tabindex.
   const [focusId, setFocusId] = useState(null);

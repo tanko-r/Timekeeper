@@ -1,7 +1,7 @@
 process.env.TZ = 'America/Los_Angeles';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lastActivityMs, activityWindows, inWindow } from '../public/js/lib/activity.js';
+import { lastActivityMs, activityWindows, inWindow, landingTab } from '../public/js/lib/activity.js';
 
 // Wed 2026-07-15 15:00 local
 const NOW = new Date(2026, 6, 15, 15, 0, 0).getTime();
@@ -50,4 +50,24 @@ test('a timer used yesterday AND today counts as Today, not Yesterday', () => {
   const ms = lastActivityMs(t, NOW);
   assert.equal(inWindow(ms, w['act-today']), true);
   assert.equal(inWindow(ms, w['act-yesterday']), false);
+});
+
+// 2026-10-06 feedback: each new day the dashboard opens on Recent; a tab
+// picked earlier the same day still sticks (reloads, navigating away and back).
+test('landingTab (group view): same-day saved tab sticks', () => {
+  assert.equal(landingTab({ grouping: 'group', saved: 'all', savedDay: '2026-10-06', today: '2026-10-06' }), 'all');
+});
+
+test('landingTab (group view): a tab saved on an earlier day resets to Recent', () => {
+  assert.equal(landingTab({ grouping: 'group', saved: 'all', savedDay: '2026-10-05', today: '2026-10-06' }), 'act-recent');
+});
+
+test('landingTab (group view): no saved day (older browsers) or no saved tab lands on Recent', () => {
+  assert.equal(landingTab({ grouping: 'group', saved: 'g-3', savedDay: null, today: '2026-10-06' }), 'act-recent');
+  assert.equal(landingTab({ grouping: 'group', saved: null, savedDay: '2026-10-06', today: '2026-10-06' }), 'act-recent');
+});
+
+test('landingTab (by-client view): keeps its saved tab across days, defaults to All', () => {
+  assert.equal(landingTab({ grouping: 'client', saved: 'c-9', savedDay: '2026-10-01', today: '2026-10-06' }), 'c-9');
+  assert.equal(landingTab({ grouping: 'client', saved: null, savedDay: null, today: '2026-10-06' }), 'all');
 });

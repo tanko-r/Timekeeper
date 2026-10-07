@@ -1509,6 +1509,17 @@ await step('dashboard timer grid: default tab is Recent, not All (2026-09-14 fee
   await waitFor('.timer-tab.on');
   const active = await page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
   if (active !== 'Recent') throw new Error(`default tab should be Recent, got "${active}"`);
+
+  // 2026-10-06 feedback: a tab picked on an EARLIER day resets to Recent
+  // (same-day picks still persist — see the groups step above).
+  await page.evaluate(() => {
+    localStorage.setItem('tk:timerTab:group', 'all');
+    localStorage.setItem('tk:timerTabDay:group', '2000-01-01');
+  });
+  await page.reload({ waitUntil: 'networkidle0' });
+  await waitFor('.timer-tab.on');
+  const nextDay = await page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
+  if (nextDay !== 'Recent') throw new Error(`a new day should land on Recent, got "${nextDay}"`);
   // Restore "All" so later steps see every timer again, same as before this check.
   await clickText('.timer-tab', 'All');
 });

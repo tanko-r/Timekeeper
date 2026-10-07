@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-10-06
 
+- **Each new day the dashboard opens on the Recent timer tab.** A tab you
+  pick (All, a group, Week…) still sticks for the rest of that day, through
+  reloads and page changes. The next day the board starts on Recent again.
+  If the app stays open overnight, the switch happens when you come back to
+  the window (or within a minute while the window is not in use) — never
+  while you are clicking in it. "By client" view keeps its old behavior.
 - **The "Single line exceeds 3h — consider breaking it down" warning is off.**
   The block-billing threshold in Settings → Narrative validation now accepts
   0, and 0 means "off" (before, 0 snapped back to 3). Your saved setting is
