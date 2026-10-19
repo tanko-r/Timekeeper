@@ -1,6 +1,6 @@
 import { api } from '/js/api.js';
 import { html, useState, useEffect, useRef, useCallback } from '/js/ui.js';
-import { ghostMatch } from '/js/lib/ghost.js';
+import { ghostMatch, applyGhost, ghostCandidates } from '/js/lib/ghost.js';
 
 // Ghost-text narrative autocomplete (spec §6): a grey inline completion from
 // the matter's phrasebook; Tab accepts. Deterministic — no LLM. Reusable:
@@ -15,31 +15,39 @@ const TTL = 60_000;
 // returning an object: useMatterSuggestions' string[] contract is used by
 // StopChips, the entry list and the close-out, and changing it would touch
 // all of them for no gain.
+const EMPTY = { phrases: [], entities: [], people: [] };
+
+// The fetch behind both hooks, exported for the float timer's plain-DOM
+// ghost field (lib/pip.js) — it shares this page's JS context, so it shares
+// this cache too. Resolves to { phrases: string[], entities, people }; never
+// rejects (a failed fetch just means no suggestions).
+export function fetchMatterMemory(cmId) {
+  if (!cmId) return Promise.resolve(EMPTY);
+  const hit = cache.get(cmId);
+  // Only trust a cached HIT once the phrasebook has something in it — a
+  // matter with zero phrases (brand new, or picked before its first entry
+  // is saved) would otherwise wedge "no suggestions" in place for the
+  // full TTL, hiding phrases added moments later in the same session.
+  if (hit && hit.phrases.length > 0 && Date.now() - hit.at < TTL) return Promise.resolve(hit);
+  return api.get(`/api/matters/${cmId}/suggestions`)
+    .then((r) => {
+      const next = {
+        phrases: r.phrases.map((p) => p.text),
+        entities: r.entities || [],
+        people: r.people || [],
+      };
+      if (next.phrases.length > 0) cache.set(cmId, { at: Date.now(), ...next });
+      return next;
+    })
+    .catch(() => EMPTY);
+}
+
 function useMatterMemory(cmId) {
-  const [mem, setMem] = useState({ phrases: [], entities: [], people: [] });
+  const [mem, setMem] = useState(EMPTY);
   useEffect(() => {
-    if (!cmId) { setMem({ phrases: [], entities: [], people: [] }); return undefined; }
-    const hit = cache.get(cmId);
-    // Only trust a cached HIT once the phrasebook has something in it — a
-    // matter with zero phrases (brand new, or picked before its first entry
-    // is saved) would otherwise wedge "no suggestions" in place for the
-    // full TTL, hiding phrases added moments later in the same session.
-    if (hit && hit.phrases.length > 0 && Date.now() - hit.at < TTL) {
-      setMem(hit);
-      return undefined;
-    }
+    if (!cmId) { setMem(EMPTY); return undefined; }
     let alive = true;
-    api.get(`/api/matters/${cmId}/suggestions`)
-      .then((r) => {
-        const next = {
-          phrases: r.phrases.map((p) => p.text),
-          entities: r.entities || [],
-          people: r.people || [],
-        };
-        if (next.phrases.length > 0) cache.set(cmId, { at: Date.now(), ...next });
-        if (alive) setMem(next);
-      })
-      .catch(() => { if (alive) setMem({ phrases: [], entities: [], people: [] }); });
+    fetchMatterMemory(cmId).then((next) => { if (alive) setMem(next); });
     return () => { alive = false; };
   }, [cmId]);
   return mem;
@@ -92,14 +100,7 @@ export function GhostInput({
 
   // The candidates behind the ghost: the same two lists, minus anything
   // already written. Five is enough to choose from without becoming a menu.
-  function candidates() {
-    const used = String(value || '').toLowerCase();
-    const all = [
-      ...(entities?.entities || []).map((e) => e.name),
-      ...(entities?.people || []).map((p) => p.name),
-    ];
-    return all.filter((n) => !used.includes(n.toLowerCase())).slice(0, 5);
-  }
+  const candidates = () => ghostCandidates(value, entities);
 
   // The candidate list appends a full, already-correctly-cased name, so it
   // never needs a case fix.
@@ -117,10 +118,7 @@ export function GhostInput({
   // produces the candidate's real casing.
   function acceptGhost() {
     if (!ghost) return;
-    const base = ghost.prefixFix
-      ? value.slice(0, value.length - ghost.prefixFix.length) + ghost.prefixFix.text
-      : value;
-    const next = base + ghost.text;
+    const next = applyGhost(value, ghost);
     pendingCaret.current = next.length;
     setGhost(null);
     setList(null);

@@ -154,3 +154,30 @@ function firstUnused(names, text) {
   for (const name of names) if (!already(text, name)) return name;
   return null;
 }
+
+// The text after Tab-accepting a ghost (a ghostMatch result) at the end of
+// `value`. What's already typed may be a case-insensitive match (typed "s",
+// candidate "S. Minhas"), so the typed prefix takes the candidate's real
+// casing before the remainder is appended. Shared by the React GhostInput
+// and the float timer's plain-DOM field (lib/ghostfield.js).
+export function applyGhost(value, ghost) {
+  const text = String(value ?? '');
+  if (!ghost) return text;
+  const base = ghost.prefixFix
+    ? text.slice(0, text.length - ghost.prefixFix.length) + ghost.prefixFix.text
+    : text;
+  return base + ghost.text;
+}
+
+// The ↓ candidate list behind a ghost: the matter's entities, then its
+// people, minus anything already written. Five is enough to choose from
+// without becoming a menu. `mem` is { entities, people } (either may be
+// absent).
+export function ghostCandidates(value, mem) {
+  const used = String(value ?? '').toLowerCase();
+  const all = [
+    ...((mem && mem.entities) || []).map(nameOf),
+    ...((mem && mem.people) || []).map(nameOf),
+  ];
+  return all.filter((n) => n && !used.includes(n.toLowerCase())).slice(0, 5);
+}

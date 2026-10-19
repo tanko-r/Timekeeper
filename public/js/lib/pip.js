@@ -207,6 +207,31 @@ const PIP_CSS = `
     padding: 4px 6px; resize: none;
   }
   textarea:focus { outline: none; border-color: var(--accent); }
+  /* Ghost text (2026-10-08 feedback) — same classes as the main app's
+     GhostInput. The mirror overlays the textarea and must match its text
+     metrics exactly: font, plus padding + 1px border (4px 6px + 1px). */
+  .ghost-wrap { position: relative; min-width: 0; }
+  .ghost-wrap textarea { display: block; }
+  .ghost-mirror {
+    position: absolute; inset: 0; z-index: 2; pointer-events: none; overflow: hidden;
+    padding: 5px 7px; font: 12px/1.35 'InterVariable', system-ui, sans-serif;
+    white-space: pre-wrap; overflow-wrap: break-word;
+  }
+  .ghost-typed { color: transparent; }
+  .ghost-hint { color: var(--text-muted); opacity: .75; }
+  /* in flow, not floating: the float window is too small for a popup that
+     could be clipped at its bottom edge */
+  .ghost-list {
+    margin-top: 2px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 5px; overflow: hidden;
+  }
+  .ghost-list button {
+    display: block; width: 100%; text-align: left; padding: 3px 7px; border: 0;
+    background: none; cursor: pointer; color: var(--text-primary);
+    font: 12px 'InterVariable', system-ui, sans-serif;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .ghost-list button.on, .ghost-list button:hover { background: var(--surface-2); }
   .ro { color: var(--text-secondary); }
   .hint { color: var(--text-muted); font-size: 10px; margin-top: 2px; }
   .detail-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; }
@@ -238,7 +263,10 @@ const PIP_CSS = `
   .co-title { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .co-time { color: var(--text-secondary); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .co-time b { font-family: 'ClockFace', ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--text-primary); }
-  .closeout textarea { flex: 1; min-height: 48px; }
+  /* the narrative box sits in a .ghost-wrap (lib/ghostfield.js), so the
+     wrap is what stretches in the close-out pane */
+  .closeout .ghost-wrap { flex: 1; min-height: 48px; display: flex; flex-direction: column; }
+  .closeout textarea { flex: 1; }
   .co-foot { display: flex; align-items: center; justify-content: space-between; }
   .foot-btns { display: flex; gap: 5px; }
   .find-btn { width: auto; padding: 0 8px; font: 600 11px 'InterVariable', system-ui, sans-serif; }
@@ -311,6 +339,11 @@ export async function toggleTimerPip() {
   // browser-absolute specifier at module scope, and pip.test.js imports
   // this file). expand.js itself is zero-dep.
   const { expandShortcuts } = await import('/js/lib/expand.js');
+  // Ghost text in the float (2026-10-08 feedback): the plain-DOM twin of the
+  // React GhostInput, fed by the same per-matter fetch + cache (this window
+  // shares the main page's JS context, so it shares that module's cache).
+  const { attachGhost } = await import('/js/lib/ghostfield.js');
+  const { fetchMatterMemory } = await import('/js/components/ghosttext.js');
   const doc = pipWin.document;
 
   // Text-expansion dictionary (2026-07-14 feedback: expansions must work in
@@ -506,6 +539,19 @@ export async function toggleTimerPip() {
         ta.blur();
       }
     });
+    // Attached AFTER the listeners above, so the ghost recomputes on the
+    // shortcut-expanded text. The matter's suggestions load on first focus,
+    // not at build time — the 5s poll rebuilds an unfocused row each time,
+    // and a fetch per rebuild would be waste.
+    const ghost = attachGhost(ta);
+    if (t.cm_id) {
+      let asked = false;
+      ta.addEventListener('focus', () => {
+        if (asked) return;
+        asked = true;
+        fetchMatterMemory(t.cm_id).then((m) => ghost.setMemory(m));
+      });
+    }
     const saved = doc.createElement('span');
     saved.className = 'saved';
     saved.dataset.saved = '';
@@ -513,7 +559,8 @@ export async function toggleTimerPip() {
     const rowErr = doc.createElement('div');
     rowErr.className = 'rowerr';
     rowErr.dataset.rowerr = '';
-    return { ta, saved, rowErr };
+    // append `wrap` (the textarea inside its ghost wrapper), not `ta`
+    return { ta, wrap: ghost.wrap, saved, rowErr };
   }
 
   // "Open entry" jumps to the full editor in the main app window (2026-07-15
@@ -560,7 +607,7 @@ export async function toggleTimerPip() {
     }
 
     const f = buildNarrativeField(t, () => { expandedId = null; });
-    detail.append(f.ta);
+    detail.append(f.wrap);
     if (t.linked_entry_id) {
       const foot = doc.createElement('div');
       foot.className = 'detail-foot';
@@ -616,7 +663,7 @@ export async function toggleTimerPip() {
     } else {
       const f = buildNarrativeField(t, () => { closeoutId = null; });
       f.ta.placeholder = 'What did you do? Saved automatically.';
-      kids.push(f.ta, f.rowErr);
+      kids.push(f.wrap, f.rowErr);
       foot.append(f.saved, btns);
     }
     kids.push(foot);

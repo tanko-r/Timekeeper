@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ghostCompletion, ghostMatch } from '../public/js/lib/ghost.js';
+import { ghostCompletion, ghostMatch, applyGhost, ghostCandidates } from '../public/js/lib/ghost.js';
 
 const PHRASES = [
   'revise lease legal description',
@@ -123,4 +123,30 @@ test('phrase-tier completions never carry a prefix fix — typed casing is left 
   const m = ghostMatch('Rev', 3, PHRASES);
   assert.equal(m.text, 'ise lease legal description');
   assert.equal(m.prefixFix, null);
+});
+
+// Shared by the React GhostInput and the float timer's plain-DOM field
+// (lib/ghostfield.js, 2026-10-08 feedback) so Tab-accept and the ↓ list
+// behave the same in both.
+test('applyGhost appends the remainder', () => {
+  assert.equal(applyGhost('rev', { text: 'ise lease', prefixFix: null }), 'revise lease');
+});
+
+test('applyGhost fixes the typed prefix case before appending', () => {
+  assert.equal(applyGhost('call with s', { text: '. Minhas', prefixFix: { length: 1, text: 'S' } }),
+    'call with S. Minhas');
+});
+
+test('applyGhost with no ghost leaves the text alone', () => {
+  assert.equal(applyGhost('abc', null), 'abc');
+});
+
+test('ghostCandidates: entities then people, minus names already written, max five', () => {
+  const mem = {
+    entities: [{ name: 'Cedar Utility Easement' }, { name: 'Purchase Agreement' }],
+    people: [{ name: 'A. Turner' }, { name: 'B. Lane' }, { name: 'C. Park' }, { name: 'D. Ross' }],
+  };
+  assert.deepEqual(ghostCandidates('Revise the cedar utility easement; ', mem),
+    ['Purchase Agreement', 'A. Turner', 'B. Lane', 'C. Park', 'D. Ross']);
+  assert.deepEqual(ghostCandidates('', null), []);
 });

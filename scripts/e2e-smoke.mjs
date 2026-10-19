@@ -1812,6 +1812,66 @@ await step('ghost text: a trigger word predicts an entity; ↓ opens the list', 
   if (!seeded.every((e) => e && e.id)) throw new Error('entry seeding failed');
 });
 
+// 2026-10-08 feedback: "ghost text should work on the float timer too". The
+// float is plain DOM in a Document PiP window, which headless Chromium can't
+// open, so this drives the exact module the float attaches to its narrative
+// box (lib/ghostfield.js) on a probe textarea in the main page — fed by the
+// same fetchMatterMemory the float uses, against the dictionary seeded above.
+await step('ghost text (float timer field): predicts, ↓ lists, Esc closes only the list, Tab accepts', async () => {
+  const cms = await (await fetch(`${base}/api/cms`)).json();
+  const acme = cms.find((c) => c.short_name === 'Acme lease dispute') || cms[0];
+  await page.goto(base, { waitUntil: 'networkidle0' });
+  await page.evaluate(async (cmId) => {
+    const { attachGhost } = await import('/js/lib/ghostfield.js');
+    const { fetchMatterMemory } = await import('/js/components/ghosttext.js');
+    const ta = document.createElement('textarea');
+    ta.id = 'float-ghost-probe';
+    ta.rows = 2;
+    window.__probe = { inputs: [], escapes: 0 };
+    // the float's own listeners: autosave on input, Esc collapses the row
+    ta.addEventListener('input', () => window.__probe.inputs.push(ta.value));
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.__probe.escapes++; });
+    const g = attachGhost(ta);
+    const host = document.createElement('div');
+    host.style.cssText = 'position:fixed;top:10px;left:10px;width:300px;z-index:9999;background:#fff';
+    host.appendChild(g.wrap);
+    document.body.appendChild(host);
+    g.setMemory(await fetchMatterMemory(cmId));
+  }, acme.id);
+  await page.click('#float-ghost-probe');
+  await page.type('#float-ghost-probe', 'Review and analyze ', { delay: 5 });
+  await page.waitForFunction(() => document.querySelector('#float-ghost-probe')
+    .parentNode.querySelector('.ghost-hint')?.textContent.includes('Cedar Utility Easement'),
+  { timeout: 4000 });
+
+  await page.keyboard.press('ArrowDown');
+  await page.waitForFunction(() => document.querySelector('#float-ghost-probe')
+    .parentNode.querySelector('.ghost-list button'), { timeout: 4000 });
+  await page.keyboard.press('Escape');
+  const afterEsc = await page.evaluate(() => ({
+    list: !!document.querySelector('#float-ghost-probe').parentNode.querySelector('.ghost-list'),
+    escapes: window.__probe.escapes,
+    focused: document.activeElement?.id,
+  }));
+  if (afterEsc.list) throw new Error('Escape left the candidate list open');
+  if (afterEsc.escapes) throw new Error('Escape reached the float row handler — it would collapse the row');
+  if (afterEsc.focused !== 'float-ghost-probe') throw new Error('Escape moved focus off the field');
+
+  await page.keyboard.press('Tab');
+  const res = await page.evaluate(() => ({
+    value: document.querySelector('#float-ghost-probe').value,
+    focused: document.activeElement?.id,
+    lastInput: window.__probe.inputs.at(-1),
+  }));
+  if (!res.value.startsWith('Review and analyze ') || !res.value.includes('Cedar Utility Easement')) {
+    throw new Error(`Tab did not accept the ghost: "${res.value}"`);
+  }
+  if (res.focused !== 'float-ghost-probe') throw new Error('Tab moved focus instead of accepting');
+  if (res.lastInput !== res.value) throw new Error('accepting fired no input event — the float would not save it');
+  await shot('ghost-float-field');
+  await page.evaluate(() => document.querySelector('#float-ghost-probe').closest('div[style]').remove());
+});
+
 // 2026-09-07 feedback: "ghost text is misaligned" — the entry-CARD's inline
 // editor gave its textarea its own margin-top (to keep the card's footprint
 // tight) without moving the ghost-text mirror the same amount, so the grey

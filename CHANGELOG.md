@@ -10,6 +10,12 @@ Newest entries first.
 
 ## 2026-10-19
 
+- **Ghost text now works in the float timer.** The narrative box in the
+  float (and its close-out pane after you stop a timer) shows the same grey
+  suggestions as the main app. Tab accepts a suggestion. While a suggestion
+  shows, ↓ opens a short list of the matter's documents and people; Esc
+  closes only that list, not the row. Suggestions appear only for a timer
+  that has a matter.
 - **The Summary lists entries in the same order as the screen.** Before, the
   Summary sorted entries by client and matter, so it did not line up with the
   cards you see. Now it follows the screen: newest entry first. In Week, Month
