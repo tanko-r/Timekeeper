@@ -10,6 +10,9 @@ Newest entries first.
 
 ## 2026-10-19
 
+- **Test fix (no app change):** the automated "stalled time → Export" check
+  sometimes failed because it read the Export list before the list finished
+  loading. The check now waits for the list.
 - **Ghost text now works in the float timer.** The narrative box in the
   float (and its close-out pane after you stop a timer) shows the same grey
   suggestions as the main app. Tab accepts a suggestion. While a suggestion

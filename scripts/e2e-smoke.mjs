@@ -1447,6 +1447,12 @@ await step('stalled time: banner pill → Export filtered to exactly those entri
 
   await page.waitForFunction(() =>
     [...document.querySelectorAll('.seg button')].some((b) => b.classList.contains('on') && b.textContent.includes('Not finalized')));
+  // The Export page mounts on today's range and widens to the stalled date a
+  // render later, so the first table can be today's. Wait for the widened
+  // fetch to land; a real miss still fails below once the timeout passes.
+  await page.waitForFunction(() => [...document.querySelectorAll('table.tk tbody tr')]
+    .some((r) => r.textContent.includes('stalled matter correspondence')), { timeout: 5000 })
+    .catch(() => {});
   const { fromVal, rows } = await page.evaluate(() => ({
     fromVal: document.querySelectorAll('input[type="date"]')[0].value,
     rows: [...document.querySelectorAll('table.tk tbody tr')].map((r) => r.textContent),
