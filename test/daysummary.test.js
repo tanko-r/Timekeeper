@@ -83,7 +83,9 @@ test('preserves line breaks inside a narrative and indents each line', () => {
   assert.match(text, /\n {2}First line\.\n {2}Second line\.$/);
 });
 
-test('sorts by client, then matter, then id — case-insensitively', () => {
+test('keeps entries in the order given — the order the entry screen shows', () => {
+  // 2026-10-19 feedback: the summary re-sorted by client/matter, so it did not
+  // line up with the cards on screen. It now follows the caller's order.
   const mk = (id, client, matter) => entry({
     id, total: 0.1, cm: { cm_number: '123456-00000' + id, short_name: matter, client_name: client },
   });
@@ -95,13 +97,19 @@ test('sorts by client, then matter, then id — case-insensitively', () => {
   ], { title: 'Day' });
   const heads = text.split('\n').filter((l) => l.includes(' — 0.1h'));
   assert.deepEqual(heads.map((h) => h.split(' (')[0]), [
-    'Acme Holdings — Series B',
-    'Acme Holdings — Series B',
-    'Acme Holdings — trademark',
     'beta corp — Zoning',
+    'Acme Holdings — trademark',
+    'Acme Holdings — Series B',
+    'Acme Holdings — Series B',
   ]);
-  assert.match(heads[0], /000001/);
-  assert.match(heads[1], /000002/);
+  assert.match(heads[2], /000001/);
+  assert.match(heads[3], /000002/);
+});
+
+test('does not reorder the caller\'s array', () => {
+  const list = [entry({ id: 2 }), entry({ id: 1 })];
+  buildDaySummary(list, { title: 'Day', showDates: true });
+  assert.deepEqual(list.map((e) => e.id), [2, 1]);
 });
 
 test('showDates groups entries under date headings with per-day subtotals', () => {
@@ -109,9 +117,10 @@ test('showDates groups entries under date headings with per-day subtotals', () =
     entry({ id: 2, date: '2026-07-24', total: 0.5 }),
     entry({ id: 1, date: '2026-07-22', total: 1.0 }),
   ], { title: 'Week of July 20, 2026', showDates: true });
-  const iSecond = text.indexOf('Wednesday, July 22, 2026 — 1.0h');
-  const iFirst = text.indexOf('Friday, July 24, 2026 — 0.5h');
-  assert.ok(iSecond > 0 && iFirst > iSecond, 'days ascend, each with a subtotal');
+  const iFri = text.indexOf('Friday, July 24, 2026 — 0.5h');
+  const iWed = text.indexOf('Wednesday, July 22, 2026 — 1.0h');
+  // days follow the order given (the list shows newest first), each with a subtotal
+  assert.ok(iFri > 0 && iWed > iFri, 'days in the order given');
   assert.equal(text.split('\n')[0], 'Week of July 20, 2026 — 1.5h');
 });
 

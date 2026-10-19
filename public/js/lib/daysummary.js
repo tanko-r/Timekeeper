@@ -10,6 +10,11 @@
 // matterless entries all appear. The Export page's own terser text blob
 // (server/routes/export.js) stays as it is; that one is tied to what was
 // actually sent to billing.
+//
+// Order: entries (and, with showDates, day groups) appear exactly in the order
+// the caller passes them — the same order the entry list on screen renders —
+// so the read-back lines up card for card (2026-10-19 feedback; it used to
+// re-sort by client and matter).
 
 const WRAP = 76;
 const INDENT = '  ';
@@ -43,14 +48,6 @@ function matterLabel(cm) {
   const name = [client, matter].filter(Boolean).join(' — ');
   if (!name) return number ? `(${number})` : '(no matter)';
   return number ? `${name} (${number})` : name;
-}
-
-const cmp = (a, b) => String(a || '').localeCompare(String(b || ''), undefined, { sensitivity: 'base' });
-
-function byClientThenMatter(a, b) {
-  return cmp(a.cm?.client_name, b.cm?.client_name)
-    || cmp(a.cm?.short_name, b.cm?.short_name)
-    || ((Number(a.id) || 0) - (Number(b.id) || 0));
 }
 
 // Greedy word wrap. A token longer than the width overruns rather than being
@@ -95,14 +92,14 @@ export function buildDaySummary(entries, { title = '', increment = 0.1, showDate
 
   let sections;
   if (showDates) {
-    const dates = [...new Set(all.map((e) => e.date))].sort();
+    const dates = [...new Set(all.map((e) => e.date))];
     sections = dates.map((date) => {
-      const ofDay = all.filter((e) => e.date === date).sort(byClientThenMatter);
+      const ofDay = all.filter((e) => e.date === date);
       return [`${dateFull(date)} — ${hours(sum(ofDay), decimals)}`,
         ...ofDay.map((e) => block(e, decimals))].join('\n\n');
     });
   } else {
-    sections = all.sort(byClientThenMatter).map((e) => block(e, decimals));
+    sections = all.map((e) => block(e, decimals));
   }
 
   return [header, ...sections].join('\n\n');

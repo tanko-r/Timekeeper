@@ -8,6 +8,13 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-10-19
+
+- **The Summary lists entries in the same order as the screen.** Before, the
+  Summary sorted entries by client and matter, so it did not line up with the
+  cards you see. Now it follows the screen: newest entry first. In Week, Month
+  and Range views, the days also follow the screen (newest day first).
+
 ## 2026-10-06
 
 - **Each new day the dashboard opens on the Recent timer tab.** A tab you

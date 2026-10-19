@@ -109,14 +109,15 @@ Rules:
   boundaries. Long unbreakable tokens (a URL) are allowed to overrun rather than
   be hyphenated. Multi-line narratives keep their own line breaks; each
   resulting line is wrapped and indented.
-- **Sort:** client name, then matter short name, then entry id — all
-  case-insensitive via `localeCompare` with `sensitivity: 'base'`, matching the
-  collation `buildExport` uses for custom-field columns.
+- **Sort:** *(changed 2026-10-19 per David's feedback)* the order the caller
+  passes — the same order the entry list on screen shows (newest first) — so
+  the summary lines up card for card. Originally client, then matter, then id.
 - **Hours:** formatted with the same decimal precision as the rest of the UI,
   derived from the rounding increment (`fmtHours` semantics — `increment` 0.1 →
   one decimal). Stored values are formatted, never re-rounded.
 - **Multi-day (`showDates`):** entries group under a `fmtDateFull` date heading
-  followed by that day's subtotal, in ascending date order. Days with no
+  followed by that day's subtotal, in the order given (newest day first, like
+  the list on screen — changed 2026-10-19; was ascending). Days with no
   entries are skipped entirely.
 
 Degradation:

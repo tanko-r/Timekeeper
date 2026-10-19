@@ -10,3 +10,4 @@ ask David a question when the codebase itself can't answer it.
 
 Captured in-app with Alt+drag. Address the item, then DELETE the
 referenced screenshot (see CLAUDE.md).
+- [ ] 2026-10-08 11:17 — Ghost text should work on the float timer too. (no screenshot · #/)
