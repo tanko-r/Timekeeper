@@ -214,13 +214,12 @@ export const FEW_SHOT_NOTE = `\n\nThe earlier turns of this conversation are wor
 
 export const NAME_RESOLUTION_RULE = `\n\nThe context may list people and phrases from this matter's history. When the description refers to someone informally (first name, initials, or nickname), use the matching name from that history — e.g. "jeff" becomes "J. Larson" if that is the only plausible match. Keep names with no clear match exactly as written; never invent people who appear in neither the description nor the history.`;
 
-// How long Ollama holds the model in memory after a request. Its own default
-// is 5 minutes, which is shorter than the gaps between entries on a normal
-// day — and reloading a 13 GB model (qwen3.6-35b) off disk costs about 2.5
-// minutes. The browser re-warms on a heartbeat while its window is visible,
-// so this deadline keeps moving out while the app is in use and expires once
-// it is not, which hands the memory back.
-const KEEP_ALIVE = '15m';
+// How long Ollama holds the model in memory after a request. David wants the
+// model gone 10 minutes after he stops using it (2026-10-31). The browser
+// re-warms on a heartbeat only while he is giving real input (see
+// public/js/lib/warm.js), so this deadline keeps moving out during work and
+// expires shortly after it stops, which hands the memory back.
+const KEEP_ALIVE = '10m';
 
 export async function checkOllamaReachable(url) {
   try {

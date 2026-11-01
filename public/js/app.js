@@ -15,6 +15,7 @@ import { QuickCapture } from '/js/components/quickcapture.js';
 import { FeedbackCapture } from '/js/components/feedback.js';
 import { RunTodo } from '/js/components/runtodo.js';
 import { pipSupported, toggleTimerPip } from '/js/lib/pip.js';
+import { shouldWarm, WARM_EVERY_MS } from '/js/lib/warm.js';
 
 const { createRoot } = window.ReactDOM;
 
@@ -40,9 +41,6 @@ const NAV = [
   ['settings', 'Settings', 'settings'],
 ];
 
-// Model-warming heartbeat: comfortably inside the server's 15m keep-alive,
-// so two missed beats still leave the model loaded.
-const WARM_EVERY_MS = 5 * 60 * 1000;
 
 // ---------- theme ----------
 
@@ -238,26 +236,39 @@ function App() {
     };
   }, [settings, refreshKey]);
 
-  // Keep the local model hot for as long as the app is in use (2026-08-26).
-  // A reasoning model such as qwen3.6-35b takes about 2.5 minutes to load off
-  // disk, so waiting for the entry editor to ask for it is too late: warm the
-  // moment the app opens, then re-warm every WARM_EVERY_MS while the window
-  // is visible. Each warm pushes Ollama's unload deadline out, so the model
-  // stays resident while David works and is dropped once the app has been out
-  // of sight for a while. The server no-ops the whole thing when AI is off.
+  // Keep the local model hot while David is working, and only then
+  // (2026-08-26, tightened 2026-10-31). A reasoning model such as qwen3.6-35b
+  // takes about 2.5 minutes to load off disk, so waiting for the entry editor
+  // to ask for it is too late: warm when the app opens and on the first input
+  // after a quiet spell, and re-warm every WARM_EVERY_MS while there has been
+  // recent input. A visible window with no input does not count, so a tab
+  // left open on the desktop no longer holds the model in memory forever.
+  // Each warm pushes Ollama's unload deadline out. The server no-ops the whole
+  // thing when AI is off.
   const aiEnabled = !!settings?.ai?.enabled;
   useEffect(() => {
     if (!aiEnabled) return undefined;
+    let lastInput = Date.now();
+    let lastWarm = 0;
     const warm = () => {
-      if (document.visibilityState !== 'visible') return;
+      lastWarm = Date.now();
       api.post('/api/ai/warm').catch(() => {});
     };
-    warm();
-    const iv = setInterval(warm, WARM_EVERY_MS);
-    document.addEventListener('visibilitychange', warm);
+    const visible = () => document.visibilityState === 'visible';
+    const beat = () => {
+      if (shouldWarm({ visible: visible(), nowMs: Date.now(), lastInputMs: lastInput })) warm();
+    };
+    const onInput = () => {
+      lastInput = Date.now();
+      if (visible() && lastInput - lastWarm >= WARM_EVERY_MS) warm();
+    };
+    const EVENTS = ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart'];
+    EVENTS.forEach((e) => window.addEventListener(e, onInput, { passive: true }));
+    beat();
+    const iv = setInterval(beat, WARM_EVERY_MS);
     return () => {
       clearInterval(iv);
-      document.removeEventListener('visibilitychange', warm);
+      EVENTS.forEach((e) => window.removeEventListener(e, onInput));
     };
   }, [aiEnabled]);
 

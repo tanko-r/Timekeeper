@@ -112,7 +112,7 @@ test('ai warm fires an empty-message preload request without waiting on it', asy
 
     releaseChat();
     for (let i = 0; i < 40 && !state.lastChat; i++) await new Promise((res2) => setTimeout(res2, 25));
-    assert.deepEqual(state.lastChat, { model: 'llama3.1:8b', messages: [], keep_alive: '15m' });
+    assert.deepEqual(state.lastChat, { model: 'llama3.1:8b', messages: [], keep_alive: '10m' });
   } finally { await t.close(); await new Promise((resolve) => srv.close(resolve)); }
 });
 
@@ -556,10 +556,10 @@ test('warm and generating calls both extend the model keep-alive', async () => {
 
     await t.fetchJson('POST', '/api/ai/warm');
     for (let i = 0; i < 40 && !stub.state.lastChat; i++) await new Promise((r) => setTimeout(r, 25));
-    assert.equal(stub.state.lastChat.keep_alive, '15m', 'warm holds the model in memory');
+    assert.equal(stub.state.lastChat.keep_alive, '10m', 'warm holds the model in memory');
 
     await t.fetchJson('POST', '/api/ai/expand', { brief: 'lease work' });
-    assert.equal(stub.state.lastChat.keep_alive, '15m', 'a generation also pushes the deadline out');
+    assert.equal(stub.state.lastChat.keep_alive, '10m', 'a generation also pushes the deadline out');
   } finally { await t.close(); await stub.close(); }
 });
 
