@@ -12,6 +12,7 @@ import { containsTimeAmounts } from '/js/lib/timeamounts.js';
 import { insertNarrative } from '/js/lib/narrativejoin.js';
 import { isPrefixOnly, prefixForMatter, afterPrefix, splitPrefix } from '/js/lib/narrativeprefix.js';
 import { NarrativeHistory } from '/js/components/narrativehistory.js';
+import { RunRow } from '/js/components/runrow.js';
 import {
   generateNarrative, parseNarrativeEdit, rebalanceHours, formatSuggestion, splitNarrativeSegments,
   alignTasksToClauses,
@@ -173,6 +174,19 @@ export function EntryEditor({ spec, settings, onClose }) {
       }
     })();
   }, []); // eslint-disable-line
+
+  // Re-read the entry after the timer's run times were corrected: the
+  // server re-filed its total behind the editor's back.
+  async function reloadEntry() {
+    try {
+      const e = await api.get(`/api/entries/${spec.id || entryRef.current?.id}`);
+      changedRef.current = true;
+      setEntry(e);
+      setLocal(toLocal(e));
+    } catch (err) {
+      emitToast(err.message, { error: true });
+    }
+  }
 
   function toLocal(e) {
     return {
@@ -740,6 +754,9 @@ export function EntryEditor({ spec, settings, onClose }) {
           </label>
         </div>
       </div>
+
+      ${entry && entry.id && !finalized ? html`
+        <${RunRow} entryId=${entry.id} onApplied=${reloadEntry} />` : null}
 
       ${customFields.length > 0 ? html`
         <div class="custom-fields-row">

@@ -107,6 +107,8 @@ test('migration v3 flips a pre-existing rounding mode to up', () => {
   // against a column that's still there errors "duplicate column name".
   db1.prepare(`UPDATE settings SET value='{"enabled":true,"increment":0.1,"mode":"nearest"}' WHERE key='rounding'`).run();
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN run_prev_entry_id;
+    ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
     DROP TABLE matter_entities;
@@ -162,6 +164,8 @@ test('migration v4 backfills clients and links matters', () => {
   // survives untouched across all of this, so its later ADD COLUMN
   // (narrative_manual) must be dropped too or the replay errors on it.
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN run_prev_entry_id;
+    ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
     DROP TABLE matter_entities;
@@ -233,6 +237,8 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
   // user_version back by fifteen (positional — no hardcoded version numbers)
   const v = db1.pragma('user_version', { simple: true });
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN run_prev_entry_id;
+    ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
     DROP INDEX idx_entries_exemplar;
@@ -252,7 +258,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 15}`);
+  db1.pragma(`user_version = ${v - 16}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -338,6 +344,8 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
   // (rebuild + template column + custom fields + AI voice + dictionary) applies
   // cleanly
   db1.exec(`
+    ALTER TABLE timers DROP COLUMN run_prev_entry_id;
+    ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
     DROP INDEX idx_entries_exemplar;
@@ -350,7 +358,7 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
     ALTER TABLE timers DROP COLUMN narrative_template;
   `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 7}`);
+  db1.pragma(`user_version = ${v - 8}`);
   db1.close();
 
   const db2 = openDb(path);

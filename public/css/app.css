@@ -1102,3 +1102,7 @@ tr.import-skip td { opacity: 0.55; }
 .dictionary-card { min-width: 0; }
 .dictionary-card .table-wrap { min-width: 0; max-width: 100%; }
 .dictionary-card table.tk { min-width: 520px; }
+
+/* Entry editor: compact start/stop line for the timer behind the entry. */
+.run-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 2px 0 10px; }
+.run-input { width: auto; min-width: 0; padding: 2px 6px; font-size: inherit; }

@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { getSetting } from '../db.js';
-import { todayLocal, localMidnightMs } from '../lib/dates.js';
+import { todayLocal, localMidnightMs, addDays } from '../lib/dates.js';
 import { secondsToHours } from '../lib/rounding.js';
-import { elapsedSeconds, rollover } from '../lib/timerlogic.js';
+import { elapsedSeconds, rollover, adjustRun } from '../lib/timerlogic.js';
 import { parseCsv } from '../lib/csv.js';
 import { detectMapping, normalizeMapping, planImport } from '../lib/timerimport.js';
 import { loadEntry, syncNarrative, rebuildMatterMemory } from './entries.js';
@@ -23,7 +23,7 @@ const QUICK_TIMER_NAME = 'Quick timer';
 const TIMER_COLS = `id, name, cm_id, task_code, sort_order, running,
   accumulated_seconds, last_started_at, last_reset_date, created_at,
   group_id, linked_entry_id, last_stopped_at, suggested_narrative, held_since,
-  pinned, draft_narrative, narrative_template`;
+  pinned, draft_narrative, narrative_template, last_run_started_at, run_prev_entry_id`;
 
 const TENTH_SECONDS = 360;
 
@@ -136,16 +136,21 @@ export function applyRollovers(db, clock) {
     // a matterless entry dated the day it was worked, and the clock resets —
     // the old carry-the-clock/held_since model is retired.
     const hours = secondsToHours(r.bankSeconds, rounding);
+    let bankedEntryId = null;
     if (hours >= minInc - 1e-9 && hours > 0) {
-      syncToEntry(db, timer, hours, r.bankDate, nowIso);
+      bankedEntryId = syncToEntry(db, timer, hours, r.bankDate, nowIso).entryId;
     } else if (r.bankSeconds > 0) {
       console.log(`timer ${timer.id} (${timer.name}): dropped ${r.bankSeconds}s below minimum increment at midnight reset`);
     }
     // The midnight reset NEVER deletes: whatever entry the timer was linked
     // to is preserved as-is (David, 2026-07-10) — it only banks and unlinks.
+    // run_prev_entry_id remembers where the pre-midnight part of a run that
+    // is still going was banked, so its stop time can be moved back into
+    // yesterday later (POST /:id/adjust).
     db.prepare(
-      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_reset_date=?, linked_entry_id=NULL WHERE id=?'
-    ).run(timer.running ? r.restartIso : null, today, timer.id);
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_reset_date=?, linked_entry_id=NULL, run_prev_entry_id=? WHERE id=?'
+    ).run(timer.running ? r.restartIso : null, today,
+      timer.running ? bankedEntryId : null, timer.id);
     if (timer.running) {
       // running through midnight: the new day's entry exists from its first
       // moment, same as a fresh start
@@ -423,7 +428,7 @@ export function timersRouter({ db, clock }) {
     }
 
     const seconds = elapsedSeconds(timer, clock().getTime());
-    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=? WHERE id=?')
+    db.prepare('UPDATE timers SET running=0, accumulated_seconds=?, last_started_at=NULL, last_stopped_at=?, run_prev_entry_id=NULL WHERE id=?')
       .run(seconds, now(), timer.id);
 
     // No matter yet? Doesn't matter (2026-07-13): the time files into the
@@ -479,8 +484,8 @@ export function timersRouter({ db, clock }) {
       .all(timer.id).map((other) => stopAndFile(other));
 
     if (startMs != null) {
-      db.prepare('UPDATE timers SET running=1, last_started_at=? WHERE id=?')
-        .run(new Date(startMs).toISOString(), timer.id);
+      db.prepare('UPDATE timers SET running=1, last_started_at=?, last_run_started_at=?, run_prev_entry_id=NULL WHERE id=?')
+        .run(new Date(startMs).toISOString(), new Date(startMs).toISOString(), timer.id);
       // Pre-compute the likely narrative NOW so it's ready before stop (spec
       // §6): deterministic phrasebook top hit synchronously; the optional
       // local-LLM pass refines it in the background and never blocks. Skip
@@ -577,6 +582,115 @@ export function timersRouter({ db, clock }) {
     res.json(stopAndFile(timer));
   });
 
+  // --- Fix the run: see and change when the last run started / stopped ---
+
+  // The run shown in the entry editor's compact "Started … Stopped …" line.
+  // `start`/`stop` are ISO times; `stop` is null while running.
+  function runInfo(timer) {
+    const midnight = localMidnightMs(todayLocal(clock()));
+    const ls = timer.last_started_at ? Date.parse(timer.last_started_at) : null;
+    const rs = timer.last_run_started_at ? Date.parse(timer.last_run_started_at) : null;
+    const lstop = timer.last_stopped_at ? Date.parse(timer.last_stopped_at) : null;
+    const running = !!timer.running;
+    const startMs = running ? (rs ?? ls) : rs;
+    return {
+      timer: withElapsed(timer),
+      running,
+      start: startMs != null ? new Date(startMs).toISOString() : null,
+      stop: !running && lstop != null ? new Date(lstop).toISOString() : null,
+      canEditStart: startMs != null && startMs >= midnight && (running || (lstop != null && lstop >= midnight)),
+      canEditStop: running || (lstop != null && lstop >= midnight),
+    };
+  }
+
+  // The timer behind an entry — linked to it, or (for a run left going
+  // through midnight) the one still running whose pre-midnight time was
+  // banked into it.
+  r.get('/for-entry/:entryId', (req, res) => {
+    applyRollovers(db, clock);
+    const id = Number(req.params.entryId);
+    const timer = id ? db.prepare(
+      `SELECT ${TIMER_COLS} FROM timers WHERE linked_entry_id=? OR (running=1 AND run_prev_entry_id=?)
+       ORDER BY (linked_entry_id=?) DESC LIMIT 1`).get(id, id, id) : null;
+    // 200 + null (not 404): most entries have no timer, and the browser logs
+    // every 404 as a console error
+    res.json(timer ? runInfo(timer) : null);
+  });
+
+  // Set the start and/or stop of the timer's last run ({start, stop} ISO).
+  // Stopping a running timer at an earlier time is the "forgot to stop" fix.
+  // Re-files the day total into the linked entry; a stop moved back across
+  // midnight also takes the extra time back out of yesterday's entry.
+  r.post('/:id/adjust', (req, res) => {
+    applyRollovers(db, clock);
+    const timer = getTimer.get(req.params.id);
+    if (!timer) return res.status(404).json({ error: 'Timer not found.' });
+    const b = req.body || {};
+    const parse = (v) => (v == null || v === '' ? null : Date.parse(v));
+    const startMs = parse(b.start);
+    const stopMs = parse(b.stop);
+    if (Number.isNaN(startMs) || Number.isNaN(stopMs)) {
+      return res.status(400).json({ error: 'Start and stop must be valid times.' });
+    }
+    const today = todayLocal(clock());
+    const out = adjustRun(timer, { startMs, stopMs }, {
+      nowMs: clock().getTime(),
+      midnightMs: localMidnightMs(today),
+      prevMidnightMs: localMidnightMs(addDays(today, -1)),
+    });
+    if (out.error) return res.status(400).json({ error: out.error });
+
+    let prev = null;
+    if (out.rewindSeconds > 0) {
+      prev = timer.run_prev_entry_id ? db.prepare(
+        'SELECT id, status, deleted_at, total_override FROM entries WHERE id=?').get(timer.run_prev_entry_id) : null;
+      if (!prev || prev.deleted_at || prev.status !== 'draft') {
+        return res.status(409).json({
+          error: 'Yesterday\u2019s entry for this run is finalized or gone. Unlock or fix its hours first.',
+        });
+      }
+    }
+
+    const nowIso = now();
+    db.transaction(() => {
+      if (prev) {
+        const total = prev.total_override ?? 0;
+        const hours = secondsToHours(
+          Math.max(0, Math.round(total * 3600) - out.rewindSeconds), roundingCfg(db));
+        db.prepare('UPDATE entries SET total_override=?, updated_at=? WHERE id=?').run(hours, nowIso, prev.id);
+        const lines = db.prepare(
+          'SELECT id FROM entry_tasks WHERE entry_id=? ORDER BY sort_order, id').all(prev.id);
+        if (lines.length === 1) {
+          db.prepare('UPDATE entry_tasks SET duration=? WHERE id=?').run(hours, lines[0].id);
+        }
+        syncNarrative(db, prev.id);
+        deleteIfUntouched(db, prev.id, nowIso);
+      }
+      db.prepare(`UPDATE timers SET running=?, accumulated_seconds=?, last_started_at=?,
+        last_run_started_at=?, last_stopped_at=?, run_prev_entry_id=? WHERE id=?`)
+        .run(out.running, out.accumulatedSeconds, out.lastStartedAt, out.lastRunStartedAt,
+          out.lastStoppedAt, out.running ? timer.run_prev_entry_id : null, timer.id);
+    })();
+
+    const fresh = getTimer.get(timer.id);
+    let entry = null;
+    if (out.rewindSeconds > 0 && fresh.linked_entry_id) {
+      // the whole run was yesterday's: today's overnight entry has nothing left
+      if (deleteIfUntouched(db, fresh.linked_entry_id, nowIso)) {
+        db.prepare('UPDATE timers SET linked_entry_id=NULL WHERE id=?').run(fresh.id);
+      } else {
+        syncToEntry(db, fresh, 0, today, nowIso);
+      }
+    } else {
+      const hours = secondsToHours(elapsedSeconds(fresh, clock().getTime()), roundingCfg(db));
+      if (fresh.running || fresh.linked_entry_id || hours >= minIncrement(db) - 1e-9) {
+        const synced = syncToEntry(db, fresh, hours, today, nowIso);
+        entry = loadEntry(db, synced.entryId);
+      }
+    }
+    res.json({ timer: withElapsed(getTimer.get(timer.id)), entry });
+  });
+
   // Zero the clock and unlink — the next stop files a brand-new entry.
   r.post('/:id/fresh', (req, res) => {
     applyRollovers(db, clock);
@@ -585,8 +699,8 @@ export function timersRouter({ db, clock }) {
     // an untouched empty entry isn't "kept" — it never had anything to keep
     deleteIfUntouched(db, timer.linked_entry_id, now());
     db.prepare(
-      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
-    ).run(timer.running ? now() : null, timer.id);
+      'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_run_started_at=?, run_prev_entry_id=NULL, linked_entry_id=NULL WHERE id=?'
+    ).run(timer.running ? now() : null, timer.running ? now() : null, timer.id);
     // invariant: a RUNNING timer always has a linked entry (matterless too)
     let entry = null;
     const freshTimer = getTimer.get(timer.id);
@@ -621,8 +735,8 @@ export function timersRouter({ db, clock }) {
     }
     const snapped = Math.max(0, Math.round(target / TENTH_SECONDS) * TENTH_SECONDS);
 
-    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?')
-      .run(snapped, timer.running ? now() : null, timer.id);
+    db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_run_started_at=?, run_prev_entry_id=NULL WHERE id=?')
+      .run(snapped, timer.running ? now() : null, timer.running ? now() : null, timer.id);
 
     let entry = null;
     const fresh = getTimer.get(timer.id);

@@ -395,6 +395,15 @@ const MIGRATIONS = [
   ALTER TABLE matters ADD COLUMN fixed_fee INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE clients ADD COLUMN site_code_prefix INTEGER NOT NULL DEFAULT 0;
   `,
+  // v28 — fix-the-run (2026-11-01 feedback): remember when the LAST continuous
+  // run began (it survives the midnight reset, unlike last_started_at, so a
+  // timer left on overnight still knows it started yesterday evening), and,
+  // for a run that crossed midnight, which entry the pre-midnight part was
+  // banked into — so the stop time can be moved back into yesterday.
+  `
+  ALTER TABLE timers ADD COLUMN last_run_started_at TEXT;
+  ALTER TABLE timers ADD COLUMN run_prev_entry_id INTEGER;
+  `,
 ];
 
 const SEED_SETTINGS = {

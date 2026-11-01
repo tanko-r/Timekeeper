@@ -173,8 +173,8 @@ export function syncTimersToEntry(db, entryId, nowIso, todayStr) {
   if (!e || e.deleted_at || e.status !== 'draft' || e.date !== todayStr) return [];
   const seconds = Math.max(0, Math.round(effectiveTotal(db, entryId) * 3600));
   const timers = db.prepare('SELECT id, running FROM timers WHERE linked_entry_id=?').all(entryId);
-  const upd = db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=? WHERE id=?');
-  for (const t of timers) upd.run(seconds, t.running ? nowIso : null, t.id);
+  const upd = db.prepare('UPDATE timers SET accumulated_seconds=?, last_started_at=?, last_run_started_at=?, run_prev_entry_id=NULL WHERE id=?');
+  for (const t of timers) upd.run(seconds, t.running ? nowIso : null, t.running ? nowIso : null, t.id);
   return timers.map((t) => t.id);
 }
 
@@ -583,8 +583,8 @@ export function finalizeOne(db, id, ack, nowIso) {
     // restarts its count from this moment.
     for (const t of db.prepare('SELECT id, running FROM timers WHERE linked_entry_id=?').all(id)) {
       db.prepare(
-        'UPDATE timers SET accumulated_seconds=0, last_started_at=?, linked_entry_id=NULL WHERE id=?'
-      ).run(t.running ? nowIso : null, t.id);
+        'UPDATE timers SET accumulated_seconds=0, last_started_at=?, last_run_started_at=?, run_prev_entry_id=NULL, linked_entry_id=NULL WHERE id=?'
+      ).run(t.running ? nowIso : null, t.running ? nowIso : null, t.id);
     }
   })();
   return { ok: true };

@@ -2141,6 +2141,50 @@ await step('site-code narratives: new matter with the client flag + fixed fee se
   }
 });
 
+await step('forgot to stop: editor shows the timer start and stops it at an earlier time', async () => {
+  const now = new Date();
+  if (now.getHours() === 0 && now.getMinutes() < 45) return; // start would clamp to midnight
+  const post = async (path, body) => (await fetch(`${base}${path}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
+  })).json();
+  const cm = await post('/api/cms', { cm_number: '100001-000777', short_name: 'Runrow matter', billable: 1 });
+  const timer = await post('/api/timers', { name: 'Runrow timer', cm_id: cm.id });
+  await post(`/api/timers/${timer.id}/start`, { minutesAgo: 30 });
+
+  await page.goto(`${base}/#/day/${now.toLocaleDateString('en-CA')}`, { waitUntil: 'networkidle0' });
+  await page.waitForFunction(() => [...document.querySelectorAll('.entry-card')]
+    .some((c) => c.textContent.includes('000777')), { timeout: 5000 });
+  await page.evaluate(() => {
+    [...document.querySelectorAll('.entry-card')].find((c) => c.textContent.includes('000777'))
+      .querySelector('button[title="Edit"]').click();
+  });
+  await waitFor('.modal-wide [data-testid="run-row"]');
+  const text = await page.$eval('.modal-wide [data-testid="run-row"]', (el) => el.textContent);
+  if (!text.includes('Timer running since')) throw new Error(`unexpected run row: ${text}`);
+  await shot('run-row');
+
+  // stop it 10 minutes ago (time boxes take HH:MM)
+  const tenAgo = new Date(Date.now() - 10 * 60_000);
+  const hhmm = `${String(tenAgo.getHours()).padStart(2, '0')}:${String(tenAgo.getMinutes()).padStart(2, '0')}`;
+  await page.evaluate((v) => {
+    const el = document.querySelector('.modal-wide [aria-label="Timer stop time"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, hhmm);
+  await clickText('.modal-wide button', 'Stop at this time');
+  await page.waitForFunction(() => document.querySelector('.modal-wide [data-testid="run-row"]')
+    ?.textContent.includes('Timer ran'), { timeout: 5000 });
+  const after = (await (await fetch(`${base}/api/timers`)).json()).find((t) => t.id === timer.id);
+  if (after.running) throw new Error('timer is still running after "Stop at this time"');
+  if (after.elapsed_seconds < 15 * 60 || after.elapsed_seconds > 25 * 60) {
+    throw new Error(`expected ~20 minutes on the clock, got ${after.elapsed_seconds}s`);
+  }
+  await clickText('.modal-wide button', 'Delete');
+  await clickText('.modal:not(.modal-wide) button', 'Delete');
+  await page.waitForFunction(() => !document.querySelector('.modal-wide'), { timeout: 5000 });
+  await fetch(`${base}/api/timers/${timer.id}`, { method: 'DELETE' });
+});
+
 await browser.close();
 server.close();
 db.close();

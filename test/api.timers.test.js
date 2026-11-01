@@ -1353,3 +1353,96 @@ test('site-code client: timer entries start with the matter prefix unless the ti
     const s3 = (await t.fetchJson('POST', `/api/timers/${other.id}/start`)).body;
     assert.equal(s3.entry.narrative, '');
   }));
+
+// --- Fix the run (2026-11-01 feedback): set the start/stop of the last run ---
+
+const hm = (iso) => new Date(iso).toTimeString().slice(0, 5);
+
+test('adjust: stopping a forgotten running timer at an earlier time files only that time', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(5 * 3600); // 14:00 — forgot to stop
+    const found = (await t.fetchJson('GET', '/api/timers/for-entry/99999'));
+    assert.equal(found.body, null, 'an entry with no timer → null');
+
+    const entryId = (await t.fetchJson('GET', '/api/timers')).body[0].linked_entry_id;
+    const info = (await t.fetchJson('GET', `/api/timers/for-entry/${entryId}`)).body;
+    assert.equal(info.timer.id, timer.id);
+    assert.equal(info.running, true);
+    assert.equal(hm(info.start), '09:00');
+    assert.equal(info.canEditStart, true);
+
+    const res = await t.fetchJson('POST', `/api/timers/${timer.id}/adjust`,
+      { stop: '2026-07-06T10:30:00-07:00' });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.timer.running, 0);
+    assert.equal(res.body.timer.elapsed_seconds, 90 * 60);
+    assert.equal(res.body.entry.total, 1.5);
+    const after = (await t.fetchJson('GET', `/api/timers/for-entry/${entryId}`)).body;
+    assert.equal(after.running, false);
+    assert.equal(hm(after.stop), '10:30');
+  }));
+
+test('adjust: editing a stopped timer\'s stop and start moves the entry total', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    const stop = (await t.fetchJson('POST', `/api/timers/${timer.id}/stop`)).body;
+    assert.equal(stop.entry.total, 1);
+    clock.advance(3600); // 11:00 now
+
+    const later = await t.fetchJson('POST', `/api/timers/${timer.id}/adjust`,
+      { stop: '2026-07-06T10:30:00-07:00' });
+    assert.equal(later.body.entry.total, 1.5);
+    const earlier = await t.fetchJson('POST', `/api/timers/${timer.id}/adjust`,
+      { start: '2026-07-06T09:30:00-07:00' });
+    assert.equal(earlier.body.entry.total, 1);
+    assert.equal(earlier.body.entry.id, stop.entry.id, 'same entry');
+  }));
+
+test('adjust: bad input is rejected with 400 and changes nothing', () =>
+  withServer('2026-07-06T09:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.advance(3600);
+    for (const body of [{}, { stop: 'nonsense' }, { stop: '2026-07-06T08:00:00-07:00' },
+      { stop: '2026-07-06T12:00:00-07:00' }]) {
+      const r = await t.fetchJson('POST', `/api/timers/${timer.id}/adjust`, body);
+      assert.equal(r.status, 400, JSON.stringify(body));
+    }
+    assert.equal((await t.fetchJson('POST', '/api/timers/9999/adjust', { stop: '2026-07-06T09:30:00-07:00' })).status, 404);
+    const still = (await t.fetchJson('GET', '/api/timers')).body[0];
+    assert.equal(still.running, 1);
+  }));
+
+test('adjust: a timer left on overnight can be stopped back in yesterday evening', () =>
+  withServer('2026-07-06T21:00:00-07:00', async (t, cm, clock) => {
+    const timer = (await t.fetchJson('POST', '/api/timers', { name: 'Acme', cm_id: cm.id })).body;
+    await t.fetchJson('POST', `/api/timers/${timer.id}/start`);
+    clock.set('2026-07-07T08:00:00-07:00'); // forgot overnight
+    const list = (await t.fetchJson('GET', '/api/timers')).body; // rollover banks yesterday
+    const todayEntryId = list[0].linked_entry_id;
+    const yday = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(yday.length, 1);
+    assert.equal(yday[0].total, 3, '21:00 → midnight banked to yesterday');
+
+    // the YESTERDAY entry also finds the still-running timer
+    const info = (await t.fetchJson('GET', `/api/timers/for-entry/${yday[0].id}`)).body;
+    assert.equal(info.running, true);
+    assert.equal(hm(info.start), '21:00', 'shows the real start, not midnight');
+    assert.equal(info.canEditStart, false);
+
+    const res = await t.fetchJson('POST', `/api/timers/${timer.id}/adjust`,
+      { stop: '2026-07-06T22:00:00-07:00' });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.timer.running, 0);
+    assert.equal(res.body.timer.elapsed_seconds, 0);
+    const y2 = (await t.fetchJson('GET', '/api/entries?date=2026-07-06')).body;
+    assert.equal(y2[0].total, 1, 'yesterday keeps only 21:00–22:00');
+    const today = (await t.fetchJson('GET', '/api/entries?date=2026-07-07')).body;
+    assert.ok(today.every((e) => e.id !== todayEntryId || e.deleted_at || e.total === 0),
+      'today\'s overnight entry is gone or zero');
+    assert.equal(today.reduce((s, e) => s + e.total, 0), 0);
+  }));

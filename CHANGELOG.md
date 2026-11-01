@@ -8,6 +8,10 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-11-01
+
+- Entry editor: a compact row shows when the timer behind the entry last started and stopped, and lets you fix either time. A timer left running can be stopped at an earlier time — even back in yesterday evening if it ran overnight (yesterday's entry is trimmed, today's overnight entry is cleared).
+
 ## 2026-10-19
 
 - **Test fix (no app change):** the automated "stalled time → Export" check
