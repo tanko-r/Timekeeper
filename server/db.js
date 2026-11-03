@@ -423,7 +423,7 @@ const SEED_SETTINGS = {
   // pin the float regardless of the app (2026-07-15 feedback).
   pip: { theme: 'app' },
   // Local-LLM narrative assist (Ollama). Off until enabled in Settings.
-  ai: { enabled: false, model: 'llama3.1:8b', url: 'http://127.0.0.1:11434' },
+  ai: { enabled: false, model: 'timekeeper-narrative:v2', url: 'http://127.0.0.1:11434' },
   // DTE Axiom / Intapp TimeSaver .TIM export constants (from David's prototype).
   tim: { email: 'TIMEKEEPER@EXAMPLE.COM', timekeeperId: '1001', u2: 'GEN01' },
   // CSV timer import: matters whose Group matches one of these (case-insensitive)
