@@ -1,3 +1,5 @@
+import { reviewedNarrative, reviewedTaskCode, reviewedFragments } from '../lib/reviewedNarrative.js';
+import { NARRATIVE_MODEL, narrativeInstructions, calibratedMessages } from '../lib/narrativeProfile.js';
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
@@ -77,7 +79,7 @@ export function formatContract(codes) {
   return `Rules for tasks:
 - The tasks account for every distinct piece of work in the description. Where the attorney separated clauses with semicolons, give one task per clause, in the same order. Up to 8 tasks.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter from the description that belong to that task, and name nothing the description did not. The first word is a verb; no trailing period.
+- fragment: the billing-narrative clause for that task, in the same voice and at the same length as the attorney's entries above. Keep the documents, parties and subject matter that belong to that task. Use matter context to identify the subject and expand plausible steps within the stated work. The first word is a verb; no trailing period.
 - share: fraction of the total time for that task; all shares sum to 1.
 
 Respond with ONLY this JSON, no other text:
@@ -97,16 +99,16 @@ export function rewriteContract(codes, n) {
 - Answer with exactly ${n} tasks, one for each numbered line, in the same order.
 - Task 1 rewrites line 1, task 2 rewrites line 2, and so on. Each task covers its own line and no other.
 - task_code MUST be one of: ${codes.join(', ')}.
-- fragment: that line rewritten. Expand the attorney's abbreviations into full document names and keep every party, document and subject it names. Name nothing the line did not. The first word is a verb; no trailing punctuation.
+- fragment: that line rewritten. Expand the attorney's abbreviations into full document names and keep every party, document and subject it names. Use matter context to identify the subject and expand plausible steps within that line; retain its distinct work. The first word is a verb; no trailing punctuation.
 
 Respond with ONLY this JSON, no other text:
 {"tasks": [{"task_code": "...", "fragment": "..."}]}`;
 }
 
-export function systemPrompt(codes, custom, voice, { clauseCount = 0 } = {}) {
-  const instructions = String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
+export function systemPrompt(codes, custom, voice, { clauseCount = 0, model } = {}) {
+  const instructions = model === NARRATIVE_MODEL ? narrativeInstructions(custom).replace('Return only the narrative', 'Return the requested JSON') : String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   const contract = clauseCount >= 2 ? rewriteContract(codes, clauseCount) : formatContract(codes);
-  return `${instructions}${(voice && voice.prompt) || ''}\n\n${contract}`;
+  return `${instructions}${model === NARRATIVE_MODEL ? '' : (voice && voice.prompt) || ''}\n\n${contract}`;
 }
 
 // When a call knows its matter, the roster + recurring phrases ride along so
@@ -290,7 +292,8 @@ export function rewriteShots(mode, overrides) {
 // Plain-text narrative prompt (NO JSON contract — unlike /ai/expand) shared
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
-export function buildNarrateMessages({ instructions, brief, narrative, mode = 'draft', context, totalHours, voice, rewriteShotsOverride }) {
+export function buildNarrateMessages({ model, instructions, brief, narrative, mode = 'draft', context, totalHours, voice, rewriteShotsOverride }) {
+  if (model === NARRATIVE_MODEL) return calibratedMessages({ brief, narrative, mode, context, totalHours, instructions });
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   const rewriting = mode === 'shorter' || mode === 'longer';
   const voicePrompt = (voice && voice.prompt) || '';
@@ -328,6 +331,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   if (!timer) return;
   const brief = `Matter: ${timer.short_name || timer.name}. Timer label: ${timer.name}. Draft the single most likely billing narrative for today's work session on this matter.`;
   const messages = buildNarrateMessages({
+    model: cfg.model,
     instructions: cfg.systemPrompt,
     brief,
     context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
@@ -339,7 +343,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: cfg.model, stream: false, think: false, keep_alive: KEEP_ALIVE, options: { temperature: 0.3 }, messages }),
+    body: JSON.stringify({ model: cfg.model, stream: false, think: false, keep_alive: KEEP_ALIVE, options: { temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3 }, messages }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!resp.ok) return;
@@ -411,13 +415,28 @@ export function aiRouter({ db }) {
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
     const voice = buildVoiceContext(db, { cmId: b.cm_id, brief, seedPairs: cfg.seedPairs });
 
+    if (cfg.model === NARRATIVE_MODEL) {
+      const sourceClauses = rewriting ? clauses : brief.split(';').map(x=>x.trim()).filter(Boolean).slice(0,8);
+      if(!sourceClauses.length)return res.status(400).json({error:'Describe the work first.'});
+      const controller=new AbortController();
+      res.once('close',()=>{if(!res.writableEnded)controller.abort();});
+      try {
+        const result=await reviewedNarrative(cfg,{mode:'longer',brief,narrative:brief,context:matterCtx,totalHours},controller.signal);
+        const mapped=reviewedFragments(sourceClauses,result.narrative);
+        const fragments=mapped||sourceClauses.map(x=>x.replace(/^./,s=>s.toUpperCase()).replace(/[.;]+$/,''));
+        const hours=totalHours?allocateTenths(totalHours,fragments.map(()=>1)):null;
+        const tasks=fragments.map((fragment,i)=>({task_code:reviewedTaskCode(sourceClauses[i],codes),fragment,hours:hours?hours[i]:null}));
+        return res.json({narrative:tasks.map(x=>x.fragment).join('; ')+'.',tasks,debug:{model:cfg.model,mode:'expand',...result,narrative:undefined,generated_narrative:result.narrative,retained_original:!mapped}});
+      }catch(e){if(controller.signal.aborted)return;return res.status(502).json({error:e.code||'ollama_unreachable',message:e.message});}
+    }
+
     // Assembled once so the audit record below is byte-for-byte what Ollama
     // receives (2026-08-31: David wants to see the exact prompt per request).
     const messages = [
       // The voice block sits before the JSON contract so the format
       // rules stay last and closest to the request — the exemplars
       // teach register, the contract still owns the response shape.
-      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') + (voice.turns.length ? FEW_SHOT_NOTE : '') },
+      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length, model: cfg.model }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') + (cfg.model !== NARRATIVE_MODEL && voice.turns.length ? FEW_SHOT_NOTE : '') },
       // The few-shot pairs, which this route built and then dropped on
       // the floor until 2026-08-11. /ai/narrate has always spliced them
       // in, and that is the whole reason plain Expand reads well while
@@ -430,7 +449,7 @@ export function aiRouter({ db }) {
       // nowhere in the brief. They go AFTER the system message for the
       // same reason as in buildNarrateMessages — prior exchanges to
       // imitate, not instructions to follow.
-      ...voice.turns,
+      ...(cfg.model === NARRATIVE_MODEL ? [] : voice.turns),
       {
         role: 'user',
         content: [
@@ -455,7 +474,7 @@ export function aiRouter({ db }) {
           think: false,
           keep_alive: KEEP_ALIVE,
           format: 'json',
-          options: { temperature: 0.3 },
+          options: { temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3 },
           messages,
         }),
         // 12B on CPU can be slow — generous timeout.
@@ -498,7 +517,7 @@ export function aiRouter({ db }) {
       })),
       // The exact request that produced this answer, for the editor's
       // "Last AI request" audit view.
-      debug: { model: cfg.model, temperature: 0.3, messages },
+      debug: { model: cfg.model, temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3, messages },
     });
   });
 
@@ -521,6 +540,7 @@ export function aiRouter({ db }) {
     }
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
     const messages = buildNarrateMessages({
+      model: cfg.model,
       instructions: cfg.systemPrompt, brief, narrative, mode,
       totalHours: b.totalHours,
       context: [b.context ? String(b.context).slice(0, 2000) : null, matterCtx]
@@ -528,6 +548,18 @@ export function aiRouter({ db }) {
       voice: buildVoiceContext(db, { cmId: b.cm_id, brief: brief || narrative, seedPairs: cfg.seedPairs }),
       rewriteShotsOverride: cfg.rewriteShots,
     });
+
+    if (cfg.model === NARRATIVE_MODEL) {
+      const controller = new AbortController();
+      res.once('close',()=>{if(!res.writableEnded)controller.abort();});
+      try {
+        const result=await reviewedNarrative(cfg,{mode,brief,narrative,context:[b.context,matterCtx].filter(Boolean).join('\n\n'),totalHours:b.totalHours},controller.signal);
+        res.setHeader('Content-Type','application/x-ndjson');
+        res.write(JSON.stringify({debug:{model:cfg.model,mode,...result,narrative:undefined}})+'\n');
+        res.write(JSON.stringify({token:result.narrative})+'\n');
+        return res.end(JSON.stringify({done:true,narrative:result.narrative})+'\n');
+      }catch(e){if(controller.signal.aborted)return;return res.status(502).json({error:e.code||'ollama_unreachable',message:e.message});}
+    }
 
     // If the client goes away mid-stream (navigated off, or a regenerate
     // superseded this request), stop pulling tokens — otherwise Ollama keeps
@@ -538,7 +570,7 @@ export function aiRouter({ db }) {
     res.on('close', () => { if (!res.writableEnded) upstream.abort(); });
 
     // regenerate wants a *different* sample; rewrites stay conservative
-    const temperature = mode === 'regenerate' ? 0.8 : 0.3;
+    const temperature = cfg.model === NARRATIVE_MODEL ? 0.2 : mode === 'regenerate' ? 0.8 : 0.3;
 
     let resp;
     try {

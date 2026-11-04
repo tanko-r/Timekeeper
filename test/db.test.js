@@ -45,7 +45,7 @@ test('settings defaults seeded as JSON', () => {
   assert.equal(get('backup').keep, 14);
   assert.equal(get('auth').mode, 'remote-only');
   assert.equal(get('ai').enabled, false);
-  assert.equal(get('ai').model, 'timekeeper-narrative:v2');
+  assert.equal(get('ai').model, 'timekeeper-narrative:v3');
   assert.equal(get('tim').timekeeperId, '1001');
   db.close();
 });
