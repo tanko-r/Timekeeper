@@ -1,9 +1,9 @@
+import { matterHistory } from '../lib/matterHistory.js';
 import { reviewedNarrative, reviewedTaskCode, reviewedFragments } from '../lib/reviewedNarrative.js';
 import { NARRATIVE_MODEL, narrativeInstructions, calibratedMessages } from '../lib/narrativeProfile.js';
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
-import { matterSuggestions, matterPeopleList } from './matters.js';
 import { todayLocal } from '../lib/dates.js';
 import { containsTimeAmounts, stripTimeAmounts } from '../lib/timeAmounts.js';
 import { pickExemplars, pickPairs } from '../lib/exemplars.js';
@@ -111,19 +111,11 @@ export function systemPrompt(codes, custom, voice, { clauseCount = 0, model } = 
   return `${instructions}${model === NARRATIVE_MODEL ? '' : (voice && voice.prompt) || ''}\n\n${contract}`;
 }
 
-// When a call knows its matter, the roster + recurring phrases ride along so
-// the model can resolve informal references ("jeff", "the lease") against
-// real history (2026-07-10 feedback). Deterministic and instant — the same
-// memory layer the phrasebook/people endpoints read.
-export function matterAiContext(db, cmId, today) {
-  if (!cmId) return null;
-  const names = matterPeopleList(db, cmId);
-  const sugg = matterSuggestions(db, cmId, today);
-  const phrases = (sugg ? sugg.phrases : []).slice(0, 6).map((p) => `- ${p.text}`);
-  const parts = [];
-  if (names.length) parts.push(`People from this matter's history: ${names.join(', ')}.`);
-  if (phrases.length) parts.push(`The attorney's recent work on this matter:\n${phrases.join('\n')}`);
-  return parts.length ? parts.join('\n\n') : null;
+// Narrative requests receive attributable finalized history on the exact matter.
+// Use the brief to retrieve older matching work alongside recent chronology.
+// Historical pair export shares this builder with a strict earlier-date cutoff.
+export function matterAiContext(db, cmId, today, brief = '') {
+  return matterHistory(db,cmId,{throughDate:today,brief}).text;
 }
 
 // Hand-authored bootstrap pairs (spec §4). Deliberately generic — they exist
@@ -334,7 +326,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
     model: cfg.model,
     instructions: cfg.systemPrompt,
     brief,
-    context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date())),
+    context: matterAiContext(db, timer.cm_id, todayLocal(clock ? clock() : new Date()), brief),
     voice: buildVoiceContext(db, { cmId: timer.cm_id, brief: timer.name, seedPairs: cfg.seedPairs }),
   });
   // think:false — a reasoning model (qwen3.6-35b) would otherwise spend
@@ -412,7 +404,7 @@ export function aiRouter({ db }) {
 
     const codes = db.prepare(
       'SELECT name FROM task_codes WHERE active=1 ORDER BY sort_order, id').all().map((x) => x.name);
-    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
+    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()), brief);
     const voice = buildVoiceContext(db, { cmId: b.cm_id, brief, seedPairs: cfg.seedPairs });
 
     if (cfg.model === NARRATIVE_MODEL) {
@@ -538,7 +530,7 @@ export function aiRouter({ db }) {
     if ((mode === 'shorter' || mode === 'longer') ? !narrative : !brief) {
       return res.status(400).json({ error: 'Describe the work first.' });
     }
-    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()));
+    const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()), brief || narrative);
     const messages = buildNarrateMessages({
       model: cfg.model,
       instructions: cfg.systemPrompt, brief, narrative, mode,

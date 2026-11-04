@@ -38,3 +38,18 @@ test('split uses validated narrative clauses and returns every task with allocat
   assert.ok(Array.isArray(r.body.debug.messages));
  }finally{await f.close();}
 });
+test('v3 requests use finalized exact-matter history rather than drafts and sibling matters',async()=>{
+ const f=await fixture(['Review license.']);
+ try {
+  const a=(await f.t.fetchJson('POST','/api/cms',{cm_number:'100001-000011',short_name:'License'})).body;
+  const b=(await f.t.fetchJson('POST','/api/cms',{cm_number:'100001-000012',short_name:'Sibling'})).body;
+  const ins=f.t.db.prepare('INSERT INTO entries(date,cm_id,narrative,status) VALUES(?,?,?,?)');
+  ins.run('2026-01-01',a.id,'Review crane swing license; messages with A. Alder.','finalized');
+  ins.run('2026-01-02',a.id,'DRAFT_ONLY_MARKER','draft');
+  ins.run('2026-01-01',b.id,'SIBLING_ONLY_MARKER','finalized');
+  const r=await f.t.fetchJson('POST','/api/ai/narrate',{mode:'longer',narrative:'review license',cm_id:a.id});
+  assert.equal(r.status,200);const user=f.calls[0].messages.at(-1).content;
+  assert.match(user,/crane swing license/);assert.match(user,/2026-01-01/);
+  assert.doesNotMatch(user,/DRAFT_ONLY_MARKER|SIBLING_ONLY_MARKER/);
+ }finally{await f.close();}
+});

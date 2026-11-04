@@ -449,6 +449,7 @@ test('ai narrate/expand carry matter people + phrases so informal names can reso
       narrative: 'Telephone conference with J. Larson regarding Compensation Agreement.',
     });
 
+    t.db.prepare("UPDATE entries SET status='finalized' WHERE cm_id=?").run(cm.id);
     const r = await t.fetchJson('POST', '/api/ai/narrate', {
       mode: 'draft', brief: 'mark up backstop agreement from jeff', cm_id: cm.id,
     });
