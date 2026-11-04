@@ -3,6 +3,7 @@ import {writeFileSync} from 'node:fs';
 import {startTestServer} from '../../test/helpers.js';
 import {setSetting} from '../../server/db.js';
 import {NARRATIVE_POLICY} from '../../server/lib/narrativeProfile.js';
+const outputRoot=process.env.TK_EVAL_DIR||'data/narrative-model/v3';
 const fresh=process.argv.includes('--fresh');const final=process.argv.includes('--final')||fresh;const models=process.argv.slice(2).filter(x=>!['--final','--fresh'].includes(x));if(!models.length)models.push('timekeeper-narrative:v2','timekeeper-narrative:v3');
 let cases=[
  {id:'call-license',input:'all hands call; prepare; messages with K. Rowe; confer with client',context:'This matter concerns an access license. K. Rowe is another lawyer at the firm. Current issues list concerns license revisions.',modes:['longer','regenerate','shorter']},
@@ -37,8 +38,8 @@ for(const model of models){
   setSetting(t.db,'ai',{enabled:true,model,url:'http://127.0.0.1:11434',systemPrompt:NARRATIVE_POLICY});
   for(const c of cases)for(const mode of c.modes){
    const body={mode,brief:c.input,narrative:c.input,context:c.context,totalHours:c.totalHours};
-   const res=await t.fetchJson('POST','/api/ai/narrate',body);if(res.status!==200)throw Error(JSON.stringify(res));
-   const events=res.body.raw.trim().split('\n').map(JSON.parse);const done=events.find(x=>x.done);if(!done)throw Error(JSON.stringify(events));
+   const res=await t.fetchJson('POST','/api/ai/narrate',body);if(res.status!==200){const row={model,id:c.id,mode,input:c.input,status:res.status,error:res.body};all.push(row);console.log(JSON.stringify(row));continue;}
+   const events=res.body.raw.trim().split('\n').map(JSON.parse);const done=events.find(x=>x.done);if(!done){const row={model,id:c.id,mode,input:c.input,error:events};all.push(row);console.log(JSON.stringify(row));continue;}
    const row={model,id:c.id,mode,input:c.input,context:c.context,output:done.narrative,activity_retry:events.find(x=>x.debug)?.debug.activity_retry||false,words:done.narrative.split(/\s+/).length};all.push(row);console.log(JSON.stringify(row));
   }
   if(final){
@@ -46,16 +47,18 @@ for(const model of models){
    if(cm.status>=400)throw Error(JSON.stringify(cm));
    const entry=await t.fetchJson('POST','/api/entries',{date:'2026-11-03',cm_id:cm.body.id,narrative:'Review service agreement issues list; messages with V. Orme regarding service agreement revisions.'});
    if(entry.status>=400)throw Error(JSON.stringify(entry));
+   t.db.prepare("UPDATE entries SET status='finalized' WHERE cm_id=?").run(cm.body.id);
    const input='all hands call; prepare; messages with V. Orme; confer with client';
    const response=await t.fetchJson('POST','/api/ai/narrate',{mode:'longer',brief:input,narrative:input,cm_id:cm.body.id});
-   if(response.status!==200)throw Error(JSON.stringify(response));
+   if(response.status!==200){const row={model,id:'final-db-history',status:response.status,error:response.body};all.push(row);console.log(JSON.stringify(row));}else{
    const events=response.body.raw.trim().split('\n').map(JSON.parse);const done=events.find(x=>x.done);if(!done)throw Error(JSON.stringify(events));
    const row={model,id:'final-db-history',mode:'longer',input,context:'Actual temporary matter history: service agreement issues list and revisions.',output:done.narrative,activity_retry:events.find(x=>x.debug)?.debug.activity_retry||false,words:done.narrative.split(/\s+/).length};all.push(row);console.log(JSON.stringify(row));
+   }
   }
   const splitInput=final?'review plat; email client':'review title report; email client';
   const split=await t.fetchJson('POST','/api/ai/expand',{brief:splitInput,clauses:splitInput.split('; '),totalHours:.7});
   if(final){const unsplit=await t.fetchJson('POST','/api/ai/expand',{brief:splitInput,totalHours:.7});all.push({model,id:'final-unsplit-plat',response:unsplit});console.log(JSON.stringify({model,id:'final-unsplit-plat',response:unsplit}));}
   all.push({model,id:final?'final-split-plat':'split-title',response:split});console.log(JSON.stringify({model,id:'split-title',response:split}));
- }finally{await t.close();}
+ }finally{await t.close();writeFileSync(`${outputRoot}/${fresh?'fresh-route-evaluation':final?'final-route-evaluation':'route-evaluation'}.json`,JSON.stringify(all,null,2));}
 }
-writeFileSync(fresh?'data/narrative-model/v3/fresh-route-evaluation.json':final?'data/narrative-model/v3/final-route-evaluation.json':'data/narrative-model/v3/route-evaluation.json',JSON.stringify(all,null,2));
+writeFileSync(`${outputRoot}/${fresh?'fresh-route-evaluation':final?'final-route-evaluation':'route-evaluation'}.json`,JSON.stringify(all,null,2));

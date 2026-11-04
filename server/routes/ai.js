@@ -1,6 +1,6 @@
 import { matterHistory } from '../lib/matterHistory.js';
 import { reviewedNarrative, reviewedTaskCode, reviewedFragments } from '../lib/reviewedNarrative.js';
-import { NARRATIVE_MODEL, narrativeInstructions, calibratedMessages } from '../lib/narrativeProfile.js';
+import { isNarrativeModel, narrativeInstructions, calibratedMessages } from '../lib/narrativeProfile.js';
 import { Router } from 'express';
 import { getSetting } from '../db.js';
 import { allocateTenths } from '../lib/allocate.js';
@@ -106,9 +106,9 @@ Respond with ONLY this JSON, no other text:
 }
 
 export function systemPrompt(codes, custom, voice, { clauseCount = 0, model } = {}) {
-  const instructions = model === NARRATIVE_MODEL ? narrativeInstructions(custom).replace('Return only the narrative', 'Return the requested JSON') : String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
+  const instructions = isNarrativeModel(model) ? narrativeInstructions(custom).replace('Return only the narrative', 'Return the requested JSON') : String(custom || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   const contract = clauseCount >= 2 ? rewriteContract(codes, clauseCount) : formatContract(codes);
-  return `${instructions}${model === NARRATIVE_MODEL ? '' : (voice && voice.prompt) || ''}\n\n${contract}`;
+  return `${instructions}${isNarrativeModel(model) ? '' : (voice && voice.prompt) || ''}\n\n${contract}`;
 }
 
 // Narrative requests receive attributable finalized history on the exact matter.
@@ -285,7 +285,7 @@ export function rewriteShots(mode, overrides) {
 // by the background suggested-narrative refinement and the streaming
 // /api/ai/narrate endpoint (Task 6 / spec §6 "faster AI narration").
 export function buildNarrateMessages({ model, instructions, brief, narrative, mode = 'draft', context, totalHours, voice, rewriteShotsOverride }) {
-  if (model === NARRATIVE_MODEL) return calibratedMessages({ brief, narrative, mode, context, totalHours, instructions });
+  if (isNarrativeModel(model)) return calibratedMessages({ brief, narrative, mode, context, totalHours, instructions });
   const base = String(instructions || '').trim() || DEFAULT_AI_INSTRUCTIONS;
   const rewriting = mode === 'shorter' || mode === 'longer';
   const voicePrompt = (voice && voice.prompt) || '';
@@ -335,7 +335,7 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   const resp = await fetch(`${cfg.url}/api/chat`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: cfg.model, stream: false, think: false, keep_alive: KEEP_ALIVE, options: { temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3 }, messages }),
+    body: JSON.stringify({ model: cfg.model, stream: false, think: false, keep_alive: KEEP_ALIVE, options: { temperature: isNarrativeModel(cfg.model) ? 0.2 : 0.3 }, messages }),
     signal: AbortSignal.timeout(180_000),
   });
   if (!resp.ok) return;
@@ -407,7 +407,7 @@ export function aiRouter({ db }) {
     const matterCtx = matterAiContext(db, b.cm_id, todayLocal(new Date()), brief);
     const voice = buildVoiceContext(db, { cmId: b.cm_id, brief, seedPairs: cfg.seedPairs });
 
-    if (cfg.model === NARRATIVE_MODEL) {
+    if (isNarrativeModel(cfg.model)) {
       const sourceClauses = rewriting ? clauses : brief.split(';').map(x=>x.trim()).filter(Boolean).slice(0,8);
       if(!sourceClauses.length)return res.status(400).json({error:'Describe the work first.'});
       const controller=new AbortController();
@@ -428,7 +428,7 @@ export function aiRouter({ db }) {
       // The voice block sits before the JSON contract so the format
       // rules stay last and closest to the request — the exemplars
       // teach register, the contract still owns the response shape.
-      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length, model: cfg.model }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') + (cfg.model !== NARRATIVE_MODEL && voice.turns.length ? FEW_SHOT_NOTE : '') },
+      { role: 'system', content: systemPrompt(codes, cfg.systemPrompt, voice, { clauseCount: clauses.length, model: cfg.model }) + timeGroundingRule(totalHours) + (matterCtx ? NAME_RESOLUTION_RULE : '') + (!isNarrativeModel(cfg.model) && voice.turns.length ? FEW_SHOT_NOTE : '') },
       // The few-shot pairs, which this route built and then dropped on
       // the floor until 2026-08-11. /ai/narrate has always spliced them
       // in, and that is the whole reason plain Expand reads well while
@@ -441,7 +441,7 @@ export function aiRouter({ db }) {
       // nowhere in the brief. They go AFTER the system message for the
       // same reason as in buildNarrateMessages — prior exchanges to
       // imitate, not instructions to follow.
-      ...(cfg.model === NARRATIVE_MODEL ? [] : voice.turns),
+      ...(isNarrativeModel(cfg.model) ? [] : voice.turns),
       {
         role: 'user',
         content: [
@@ -466,7 +466,7 @@ export function aiRouter({ db }) {
           think: false,
           keep_alive: KEEP_ALIVE,
           format: 'json',
-          options: { temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3 },
+          options: { temperature: isNarrativeModel(cfg.model) ? 0.2 : 0.3 },
           messages,
         }),
         // 12B on CPU can be slow — generous timeout.
@@ -509,7 +509,7 @@ export function aiRouter({ db }) {
       })),
       // The exact request that produced this answer, for the editor's
       // "Last AI request" audit view.
-      debug: { model: cfg.model, temperature: cfg.model === NARRATIVE_MODEL ? 0.2 : 0.3, messages },
+      debug: { model: cfg.model, temperature: isNarrativeModel(cfg.model) ? 0.2 : 0.3, messages },
     });
   });
 
@@ -541,7 +541,7 @@ export function aiRouter({ db }) {
       rewriteShotsOverride: cfg.rewriteShots,
     });
 
-    if (cfg.model === NARRATIVE_MODEL) {
+    if (isNarrativeModel(cfg.model)) {
       const controller = new AbortController();
       res.once('close',()=>{if(!res.writableEnded)controller.abort();});
       try {
@@ -562,7 +562,7 @@ export function aiRouter({ db }) {
     res.on('close', () => { if (!res.writableEnded) upstream.abort(); });
 
     // regenerate wants a *different* sample; rewrites stay conservative
-    const temperature = cfg.model === NARRATIVE_MODEL ? 0.2 : mode === 'regenerate' ? 0.8 : 0.3;
+    const temperature = isNarrativeModel(cfg.model) ? 0.2 : mode === 'regenerate' ? 0.8 : 0.3;
 
     let resp;
     try {

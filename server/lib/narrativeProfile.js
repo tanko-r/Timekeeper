@@ -1,5 +1,6 @@
 // Mode-aware policy calibrated to David's approved examples, November 2026.
 export const NARRATIVE_MODEL = 'timekeeper-narrative:v3';
+export function isNarrativeModel(model) { return ['timekeeper-narrative:v3','timekeeper-narrative:v4'].includes(model); }
 export const NARRATIVE_POLICY = `Write attorney billing narratives in present tense, with semicolons between tasks and a final period. Return only the narrative, without time amounts or commentary.
 Expand: add useful detail about plausible steps within the stated work and connect related tasks. Infer the subject from supplied matter history. Do not merely capitalize the input.
 Rewrite: improve phrasing and organization at roughly the same level of detail.

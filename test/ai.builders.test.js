@@ -60,3 +60,9 @@ test('calibrated model uses distinct actions and supplied context without unrela
     assert.match(msgs[0].content,/plausible steps/);
   }
 });
+
+test('v3 and v4 share the calibrated profile for a fair comparison',async()=>{
+ const {buildNarrateMessages}=await import('../server/routes/ai.js');
+ const args={mode:'longer',narrative:'review lease; email client',context:'Lease negotiation.'};
+ assert.deepEqual(buildNarrateMessages({...args,model:'timekeeper-narrative:v3'}),buildNarrateMessages({...args,model:'timekeeper-narrative:v4'}));
+});
