@@ -111,6 +111,9 @@ test('migration v3 flips a pre-existing rounding mode to up', () => {
     ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
+    DROP TABLE matter_brief_versions;
+    DROP TABLE matter_briefs;
+    DROP TABLE matter_brief_runs;
     DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
@@ -168,6 +171,9 @@ test('migration v4 backfills clients and links matters', () => {
     ALTER TABLE timers DROP COLUMN last_run_started_at;
     ALTER TABLE clients DROP COLUMN site_code_prefix;
     ALTER TABLE matters DROP COLUMN fixed_fee;
+    DROP TABLE matter_brief_versions;
+    DROP TABLE matter_briefs;
+    DROP TABLE matter_brief_runs;
     DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
@@ -245,6 +251,9 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     ALTER TABLE entries DROP COLUMN ai_draft;
     ALTER TABLE entries DROP COLUMN ai_brief;
     ALTER TABLE entries DROP COLUMN narrative_ai;
+    DROP TABLE matter_brief_versions;
+    DROP TABLE matter_briefs;
+    DROP TABLE matter_brief_runs;
     DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
@@ -258,7 +267,7 @@ test('memory-layer migration replays cleanly on a pre-upgrade db', () => {
     DROP TABLE shortcuts;
     DROP TABLE matter_people;
   `);
-  db1.pragma(`user_version = ${v - 16}`);
+  db1.pragma(`user_version = ${v - 17}`);
   db1.close();
   const db2 = openDb(path);
   assert.ok(db2.prepare(
@@ -352,13 +361,16 @@ test('entries-rebuild migration: cm_id nullable, data + task lines survive, held
     ALTER TABLE entries DROP COLUMN ai_draft;
     ALTER TABLE entries DROP COLUMN ai_brief;
     ALTER TABLE entries DROP COLUMN narrative_ai;
+    DROP TABLE matter_brief_versions;
+    DROP TABLE matter_briefs;
+    DROP TABLE matter_brief_runs;
     DROP TABLE matter_entities;
     DROP TABLE entry_custom_values;
     DROP TABLE custom_fields;
     ALTER TABLE timers DROP COLUMN narrative_template;
   `);
   const v = db1.pragma('user_version', { simple: true });
-  db1.pragma(`user_version = ${v - 8}`);
+  db1.pragma(`user_version = ${v - 9}`);
   db1.close();
 
   const db2 = openDb(path);

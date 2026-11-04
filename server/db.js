@@ -404,6 +404,31 @@ const MIGRATIONS = [
   ALTER TABLE timers ADD COLUMN last_run_started_at TEXT;
   ALTER TABLE timers ADD COLUMN run_prev_entry_id INTEGER;
   `,
+  // v21 — source-linked running matter briefs and durable update history.
+  `
+  CREATE TABLE matter_brief_runs (
+    id INTEGER PRIMARY KEY, mode TEXT NOT NULL,
+    from_date TEXT, through_date TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('running','complete','partial','interrupted')),
+    started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL, finished_at TEXT,
+    total INTEGER NOT NULL DEFAULT 0, updated INTEGER NOT NULL DEFAULT 0,
+    skipped INTEGER NOT NULL DEFAULT 0, errors_json TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE UNIQUE INDEX idx_matter_brief_worker ON matter_brief_runs((1)) WHERE status='running';
+  CREATE TABLE matter_briefs (
+    matter_id INTEGER PRIMARY KEY REFERENCES matters(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL, brief_json TEXT NOT NULL, sources_json TEXT NOT NULL,
+    identity_json TEXT NOT NULL, source_hash TEXT NOT NULL, model TEXT NOT NULL,
+    through_date TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE TABLE matter_brief_versions (
+    id INTEGER PRIMARY KEY, matter_id INTEGER NOT NULL REFERENCES matters(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL, brief_json TEXT NOT NULL, sources_json TEXT NOT NULL,
+    identity_json TEXT NOT NULL, source_hash TEXT NOT NULL, model TEXT NOT NULL,
+    through_date TEXT NOT NULL, updated_at TEXT NOT NULL,
+    run_id INTEGER REFERENCES matter_brief_runs(id), UNIQUE(matter_id,version)
+  );
+  `,
 ];
 
 const SEED_SETTINGS = {
@@ -417,6 +442,7 @@ const SEED_SETTINGS = {
   targets: { dailyHours: 8.0 },
   idleNudgeHours: 3,
   backup: { keep: 14 },
+  matterBriefs: { enabled: false, model: 'qwen3.6-35b:latest', hour: 2 },
   auth: { mode: 'remote-only' },
   theme: 'auto',
   // Always-on-top float: 'app' follows the main app's theme; 'light'/'dark'

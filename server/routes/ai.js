@@ -1,3 +1,4 @@
+import { briefPromptContext } from '../lib/matterBriefs.js';
 import { matterHistory } from '../lib/matterHistory.js';
 import { reviewedNarrative, reviewedTaskCode, reviewedFragments } from '../lib/reviewedNarrative.js';
 import { isNarrativeModel, narrativeInstructions, calibratedMessages } from '../lib/narrativeProfile.js';
@@ -115,7 +116,9 @@ export function systemPrompt(codes, custom, voice, { clauseCount = 0, model } = 
 // Use the brief to retrieve older matching work alongside recent chronology.
 // Historical pair export shares this builder with a strict earlier-date cutoff.
 export function matterAiContext(db, cmId, today, brief = '') {
-  return matterHistory(db,cmId,{throughDate:today,brief}).text;
+  const summary = briefPromptContext(db, cmId, today, {query:brief});
+  const history = matterHistory(db,cmId,{throughDate:today,brief,maxChars:summary?2300:3600}).text;
+  return [summary,history].filter(Boolean).join('\n\n') || null;
 }
 
 // Hand-authored bootstrap pairs (spec §4). Deliberately generic — they exist

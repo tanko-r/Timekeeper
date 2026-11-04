@@ -1,3 +1,4 @@
+import { matterBriefsRouter } from './routes/matterBriefs.js';
 import express from 'express';
 import { join } from 'node:path';
 import { repoRoot } from './config.js';
@@ -38,6 +39,7 @@ export function createApp(deps) {
   app.use('/api/cms', cmsRouter(deps));
   app.use('/api/clients', clientsRouter(deps));
   app.use('/api/matters', mattersRouter(deps));
+  app.use('/api/matter-briefs', matterBriefsRouter(deps));
   app.use('/api/shortcuts', shortcutsRouter(deps));
   app.use('/api', quickCaptureRouter(deps));
   app.use('/api/task-codes', taskCodesRouter(deps));

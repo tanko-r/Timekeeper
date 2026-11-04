@@ -1,3 +1,4 @@
+import { MatterBriefsCard } from '/js/components/matterbriefs.js';
 import { api } from '/js/api.js';
 import { html, useState, useEffect, Field, emitToast } from '/js/ui.js';
 import { useShortcuts, refreshShortcuts } from '/js/components/shortcuts.js';
@@ -22,6 +23,7 @@ export function SettingsView({ page, settings, reloadSettings, authState, reload
     general: [html`<${GeneralCard} key="general" settings=${settings} reloadSettings=${reloadSettings} />`],
     ai: [
       html`<${AiCard} key="ai" settings=${settings} reloadSettings=${reloadSettings} />`,
+      html`<${MatterBriefsCard} key="matterbriefs" settings=${settings} reloadSettings=${reloadSettings} />`,
       html`<${SeedPairsCard} key="seedpairs" settings=${settings} reloadSettings=${reloadSettings} />`,
       html`<${RewriteShotsCard} key="rewriteshots" settings=${settings} reloadSettings=${reloadSettings} />`,
     ],

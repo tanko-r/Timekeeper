@@ -5,7 +5,7 @@ import { getSetting, setSetting } from '../db.js';
 // endpoints with password-change rules.
 const KEYS = [
   'validation', 'rounding', 'targets', 'idleNudgeHours',
-  'backup', 'theme', 'ai', 'tim', 'import', 'pip', 'calendar',
+  'backup', 'theme', 'ai', 'matterBriefs', 'tim', 'import', 'pip', 'calendar',
 ];
 
 export function allSettings(db) {
@@ -24,6 +24,15 @@ export function settingsRouter({ db }) {
     for (const [key, value] of Object.entries(body)) {
       if (!KEYS.includes(key)) {
         return res.status(400).json({ error: `Unknown setting "${key}".` });
+      }
+      if(key === 'matterBriefs') {
+        if(!value || typeof value !== 'object' || Array.isArray(value) ||
+          Object.keys(value).some(k=>!['enabled','model','hour'].includes(k)) ||
+          ('enabled' in value && typeof value.enabled !== 'boolean') ||
+          ('model' in value && (typeof value.model !== 'string' || !value.model.trim() || value.model.length>160)) ||
+          ('hour' in value && (!Number.isInteger(value.hour) || value.hour<0 || value.hour>23))) {
+          return res.status(400).json({error:'Invalid matter brief settings.'});
+        }
       }
       const current = getSetting(db, key);
       const merged =

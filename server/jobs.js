@@ -1,3 +1,4 @@
+import { runMatterBriefJobs } from './lib/matterBriefs.js';
 import { mkdirSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { getSetting, setSetting } from './db.js';
@@ -81,6 +82,8 @@ function backup(db, config, today) {
 export function startJobs(deps) {
   const tick = () => {
     try { runJobs(deps); } catch (e) { console.error('jobs tick failed:', e); }
+    // The model pass is asynchronous; timer banking and HTTP stay responsive.
+    void runMatterBriefJobs(deps).catch(e => console.error('matter brief job failed:', e.message));
   };
   tick();
   const handle = setInterval(tick, 30_000);
