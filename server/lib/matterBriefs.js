@@ -54,7 +54,9 @@ export function validateBrief(value,sources){
    total++;return {text,kind:item.kind==='stated'&&literal?'stated':'inferred',source_entry_ids:[...new Set(item.source_entry_ids)]};
   });
  }
- if(value.overview.some(c=>/^(review|revise|draft|analyze|prepare|messages|emails?|call|confer)\b/i.test(c.text)))throw Error('Brief overview must describe the matter, not repeat billing activities.');
+ const normalized=text=>text.toLowerCase().replace(/\s+/g,' ').trim();
+ if(value.overview.some(c=>/^(review|revise|draft|analyze|prepare|messages|emails?|call|confer)\b/i.test(c.text)&&
+   (c.text.includes(';')||(c.text.length>120&&sources.some(s=>normalized(s.narrative)===normalized(c.text))))))throw Error('Brief overview must describe the matter, not repeat a billing task list.');
  if(!value.overview.length||total>24||BRIEF_SECTIONS.reduce((n,k)=>n+value[k].reduce((a,c)=>a+c.text.length,0),0)>5000)throw Error('Brief lacks an overview or exceeds the summary budget.');
  return value;
 }
