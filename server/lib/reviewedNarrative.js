@@ -12,6 +12,10 @@ export async function reviewedNarrative(cfg,args,signal) {
     const candidate=String(data.message?.content||'').trim().replace(/^Compose (?:a )?call\b/i,'Conduct call');
     if(candidate&&!/^[{[]/.test(candidate)&&data.done_reason!=='length'&&!containsTimeAmounts(candidate)&&activityIssues(source,candidate).ok)return {narrative:candidate,messages,temperature,activity_retry:!!attempt};
   }
+  if(args.fallbackContext&&args.fallbackContext!==args.context){
+    const result=await reviewedNarrative(cfg,{...args,context:args.fallbackContext,fallbackContext:undefined},signal);
+    return {...result,activity_retry:true,context_retry:true};
+  }
   const error=Error('The draft changed or omitted work. Please clarify the notes and try again.');error.code='ai_activity_mismatch';throw error;
 }
 export function reviewedTaskCode(text,codes){

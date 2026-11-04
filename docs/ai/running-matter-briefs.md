@@ -38,7 +38,9 @@ are added, keeping the latest status visible. Status/open-issue/development clai
 show their latest cited date. Nonliteral paraphrases are conservatively labeled
 inferred, and a named person must appear in the cited records. Inference is visibly qualified, historical status is dated,
 and the prompt says past activities are not proof of today's work. Briefs with
-changed source text/eligibility or a future cutoff are omitted. Historical
+changed source text/eligibility or a future cutoff are omitted. If both calibrated drafts fail the existing work-preservation checks, generation
+retries against raw matter history while retaining explicit caller context; the
+same checks still apply and debug output marks `context_retry`. Historical
 training-pair export still uses only its original strictly earlier raw history.
 
 Settings → AI assist → Running matter briefs provides the model, nightly hour,

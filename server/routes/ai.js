@@ -121,6 +121,12 @@ export function matterAiContext(db, cmId, today, brief = '') {
   return [summary,history].filter(Boolean).join('\n\n') || null;
 }
 
+// Keep the original raw-history path available when a compact brief confuses
+// the small calibrated writer. Explicit caller context is retained by the route.
+function matterFallbackContext(db,cmId,today,brief,context){
+  return context?.startsWith('Running matter brief')?matterHistory(db,cmId,{throughDate:today,brief}).text:undefined;
+}
+
 // Hand-authored bootstrap pairs (spec §4). Deliberately generic — they exist
 // only until real (brief → corrected narrative) pairs accumulate, at which
 // point pickPairs displaces them permanently. Kept few and short so they teach
@@ -416,7 +422,7 @@ export function aiRouter({ db }) {
       const controller=new AbortController();
       res.once('close',()=>{if(!res.writableEnded)controller.abort();});
       try {
-        const result=await reviewedNarrative(cfg,{mode:'longer',brief,narrative:brief,context:matterCtx,totalHours},controller.signal);
+        const result=await reviewedNarrative(cfg,{mode:'longer',brief,narrative:brief,context:matterCtx,fallbackContext:matterFallbackContext(db,b.cm_id,todayLocal(new Date()),brief,matterCtx),totalHours},controller.signal);
         const mapped=reviewedFragments(sourceClauses,result.narrative);
         const fragments=mapped||sourceClauses.map(x=>x.replace(/^./,s=>s.toUpperCase()).replace(/[.;]+$/,''));
         const hours=totalHours?allocateTenths(totalHours,fragments.map(()=>1)):null;
@@ -548,7 +554,7 @@ export function aiRouter({ db }) {
       const controller = new AbortController();
       res.once('close',()=>{if(!res.writableEnded)controller.abort();});
       try {
-        const result=await reviewedNarrative(cfg,{mode,brief,narrative,context:[b.context,matterCtx].filter(Boolean).join('\n\n'),totalHours:b.totalHours},controller.signal);
+        const result=await reviewedNarrative(cfg,{mode,brief,narrative,context:[b.context,matterCtx].filter(Boolean).join('\n\n'),fallbackContext:matterCtx?.startsWith('Running matter brief')?[b.context,matterFallbackContext(db,b.cm_id,todayLocal(new Date()),brief||narrative,matterCtx)].filter(Boolean).join('\n\n'):undefined,totalHours:b.totalHours},controller.signal);
         res.setHeader('Content-Type','application/x-ndjson');
         res.write(JSON.stringify({debug:{model:cfg.model,mode,...result,narrative:undefined}})+'\n');
         res.write(JSON.stringify({token:result.narrative})+'\n');
