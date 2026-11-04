@@ -38,6 +38,9 @@ for(const source of sources){
  if(/^(?:Reviewed|Revised|Drafted|Prepared|Called|Conducted|Attended|Analyzed|Finalized)\b/.test(target))warnings.push('past_tense_source');
  if(targetWords<6)warnings.push('short_target_style_only');
  if(ratio>.8)warnings.push('limited_compression');
+ const performedCalls=text=>text.split(';').filter(c=>/\b(?:call|telephone conference)\b/i.test(c)&&(!/\b(?:prep|prepare|preparation)\b/i.test(c)||/\b(?:participate|conduct|attend|hold|join)\b/i.test(c))).length;
+ const sourceCalls=performedCalls(target),noteCalls=performedCalls(shorthand);
+ if(!/\bcalls\b/i.test(target)&&sourceCalls!==noteCalls)warnings.push('call_grouping_changed');
  if(missing.length)warnings.push('activity_missing_in_shorthand');
  if(issues.added.length)warnings.push('extra_activity_in_shorthand');
  if(/\band\s+(?:revisions|drafting|preparation)\s+(?:to|of|for)\b/i.test(target))warnings.push('ambiguous_nominal_activity');
