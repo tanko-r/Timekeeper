@@ -22,6 +22,15 @@ for r in rows:
   assert e['cm_id']==r['matter_id'] and e['date']<r['date']
   assert e['id']!=r['entry_id'];assert prior['narrative'] in r['context'];history_checks+=1
  if r['eligible_for_expansion_training']:assert not r['warnings'] and not r['unsupported_specifics']
+observed=list(map(json.loads,(root/'observed-pairs.jsonl').read_text().splitlines()))
+assert len(observed)==sum(bool(s.get('ai_brief','') and s['ai_brief'].strip()) for s in sources.values())
+for r in observed:
+ assert r['observed_brief']==sources[r['entry_id']]['ai_brief'].strip()
+ assert 'synthetic_shorthand' not in r and 'activity_audit' not in r
+ assert r['messages'][-1]['content']==r['target']
+ for prior in r['history']:
+  e=c.execute('select * from entries where id=?',(prior['entry_id'],)).fetchone()
+  assert e['cm_id']==r['matter_id'] and e['date']<r['date'] and e['status']=='finalized' and e['deleted_at'] is None
 seen=set();fingerprints=set();split_receipts={}
 for split in ['train','valid','test']:
  rs=list(map(json.loads,(root/f'{split}.jsonl').read_text().splitlines()))
@@ -31,5 +40,5 @@ for split in ['train','valid','test']:
  # Within-split duplicates are allowed; cross-split targets are not.
  fingerprints.update(re.sub(r'[^a-z0-9]','',r['target'].lower()) for r in rs)
  split_receipts[split]={'rows':len(rs),'sha256':hashlib.sha256((root/f'{split}.jsonl').read_bytes()).hexdigest()}
-report={'covered_finalized_entries':len(rows),'history_links_checked':history_checks,'checks':['exact one-row-per-finalized-entry coverage','no target, same-day, future, draft, deleted or sibling-matter history','generation input hashes match frozen sources','assistant targets match source-derived targets','candidate IDs and duplicate targets do not cross temporal splits'],'splits':split_receipts}
+report={'covered_finalized_entries':len(rows),'history_links_checked':history_checks,'observed_pairs_checked':len(observed),'checks':['exact one-row-per-finalized-entry coverage','no target, same-day, future, draft, deleted or sibling-matter history','generation input hashes match frozen sources','assistant targets match source-derived targets','candidate IDs and duplicate targets do not cross temporal splits'],'splits':split_receipts}
 (root/'coverage-receipt.json').write_text(json.dumps(report,indent=2));print(json.dumps(report,indent=2))
