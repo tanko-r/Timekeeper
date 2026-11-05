@@ -71,3 +71,9 @@ then independently checks shape, section limits and every source ID. Allowed IDs
 pilots and rollout receipts are under ignored `data/matter-briefs-2026-11-04/`.
 Database migration v21 stores briefs, immutable versions and durable run records;
 the ordinary nightly database backup includes all three tables.
+
+The activity guard treats generic "work on" an item as permitting document
+review, drafting, preparation and revision; explicit distribution still has to
+survive. It continues rejecting unrelated calls and other added work. Content
+mismatches return 422 with an explanation. Actual model-service failures return
+502 and emit a diagnostic code in the server log without logging billing notes.

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {startTestServer} from './helpers.js';
 import {setSetting} from '../server/db.js';
-async function fixture(answers) {
+async function fixture(answers,status=200) {
  const calls=[];
- const server=createServer((req,res)=>{let text='';req.on('data',x=>text+=x);req.on('end',()=>{calls.push(JSON.parse(text));res.setHeader('content-type','application/json');res.end(JSON.stringify({message:{content:answers[Math.min(calls.length-1,answers.length-1)]},done_reason:'stop'}));});});
+ const server=createServer((req,res)=>{let text='';req.on('data',x=>text+=x);req.on('end',()=>{calls.push(JSON.parse(text));res.statusCode=status;res.setHeader('content-type','application/json');res.end(JSON.stringify({message:{content:answers[Math.min(calls.length-1,answers.length-1)]},done_reason:'stop'}));});});
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const t=await startTestServer();setSetting(t.db,'ai',{enabled:true,model:'timekeeper-narrative:v3',url:`http://127.0.0.1:${server.address().port}`});
  return {t,calls,close:async()=>{await t.close();await new Promise(r=>server.close(r));}};
@@ -25,7 +25,7 @@ test('two activity mismatches return an error without writing a candidate',async
  const f=await fixture(['Email client.']);
  try {
   const r=await f.t.fetchJson('POST','/api/ai/narrate',{mode:'longer',narrative:'call with client; prepare'});
-  assert.equal(r.status,502);assert.equal(r.body.error,'ai_activity_mismatch');
+  assert.equal(r.status,422);assert.equal(r.body.error,'ai_activity_mismatch');
  }finally{await f.close();}
 });
 test('split uses validated narrative clauses and returns every task with allocated hours',async()=>{
@@ -52,4 +52,17 @@ test('v3 requests use finalized exact-matter history rather than drafts and sibl
   assert.match(user,/crane swing license/);assert.match(user,/2026-01-01/);
   assert.doesNotMatch(user,/DRAFT_ONLY_MARKER|SIBLING_ONLY_MARKER/);
  }finally{await f.close();}
+});
+test('Expand accepts document detail for Work on form and distribute',async()=>{
+ const f=await fixture(['Review and edit standard lease form; distribute updated form to client.']);
+ try{
+  const r=await f.t.fetchJson('POST','/api/ai/narrate',{mode:'longer',narrative:'Work on form and distribute',totalHours:3.8});
+  assert.equal(r.status,200);assert.equal(f.calls.length,1);
+  assert.equal(r.body.raw.trim().split('\n').map(JSON.parse).find(x=>x.done).narrative,'Review and edit standard lease form; distribute updated form to client.');
+ }finally{await f.close();}
+});
+test('calibrated writer upstream failures remain 502 for both generation routes',async()=>{
+ const f=await fixture(['Model unavailable.'],503);
+ try{for(const path of ['/api/ai/narrate','/api/ai/expand']){const r=await f.t.fetchJson('POST',path,{mode:'longer',brief:'Work on form and distribute',narrative:'Work on form and distribute'});assert.equal(r.status,502);assert.equal(r.body.error,'ollama_unreachable');assert.match(r.body.message,/503/);}}
+ finally{await f.close();}
 });

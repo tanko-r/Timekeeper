@@ -356,6 +356,12 @@ export async function refineSuggestedNarrative({ db, clock }, timerId) {
   db.prepare('UPDATE timers SET suggested_narrative=? WHERE id=? AND running=1').run(text, timerId);
 }
 
+function narrativeFailure(res,error,model,mode){
+  const code=error.code||'ollama_unreachable';
+  console.warn('AI narrative request failed',{model,mode,code,reason:error.message});
+  return res.status(code==='ai_activity_mismatch'?422:502).json({error:code,message:error.message});
+}
+
 export function aiRouter({ db }) {
   const r = Router();
 
@@ -428,7 +434,7 @@ export function aiRouter({ db }) {
         const hours=totalHours?allocateTenths(totalHours,fragments.map(()=>1)):null;
         const tasks=fragments.map((fragment,i)=>({task_code:reviewedTaskCode(sourceClauses[i],codes),fragment,hours:hours?hours[i]:null}));
         return res.json({narrative:tasks.map(x=>x.fragment).join('; ')+'.',tasks,debug:{model:cfg.model,mode:'expand',...result,narrative:undefined,generated_narrative:result.narrative,retained_original:!mapped}});
-      }catch(e){if(controller.signal.aborted)return;return res.status(502).json({error:e.code||'ollama_unreachable',message:e.message});}
+      }catch(e){if(controller.signal.aborted)return;return narrativeFailure(res,e,cfg.model,'expand');}
     }
 
     // Assembled once so the audit record below is byte-for-byte what Ollama
@@ -559,7 +565,7 @@ export function aiRouter({ db }) {
         res.write(JSON.stringify({debug:{model:cfg.model,mode,...result,narrative:undefined}})+'\n');
         res.write(JSON.stringify({token:result.narrative})+'\n');
         return res.end(JSON.stringify({done:true,narrative:result.narrative})+'\n');
-      }catch(e){if(controller.signal.aborted)return;return res.status(502).json({error:e.code||'ollama_unreachable',message:e.message});}
+      }catch(e){if(controller.signal.aborted)return;return narrativeFailure(res,e,cfg.model,mode);}
     }
 
     // If the client goes away mid-stream (navigated off, or a regenerate

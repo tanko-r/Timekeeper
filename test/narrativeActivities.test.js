@@ -22,3 +22,11 @@ test('task mapping preserves order and separates a combined preparation/call cla
  assert.deepEqual(reviewedFragments(['call','prepare','messages with client'],'Prepare for and participate in all-hands call regarding lease; messages with client regarding lease.'),['Participate in all-hands call regarding lease','Prepare for all-hands call regarding lease','messages with client regarding lease']);
  assert.equal(reviewedFragments(['review plat','email client'],'Email client.'),null);
 });
+test('generic work on a form permits document elaboration while preserving distribution',()=>{
+ for(const text of ['Review and edit form and distribute.','Compose standardized lease form; distribute to client.','Review form and prepare for distribution; correspond with client.','Draft and revise form; circulate revised form.'])assert.equal(activityIssues('Work on form and distribute',text).ok,true,text);
+ assert.ok(activityIssues('Work on form and distribute','Review and revise form.').missing.includes('correspond'));
+ assert.equal(activityIssues('Work on form and distribute','Distribute form.').ok,false);
+ assert.equal(activityIssues('Work on form and distribute','Compose email distributing form.').ok,false);
+ assert.ok(activityIssues('Work on form and distribute','Review and revise form; distribute; call client.').added.includes('call'));
+});
+test('update and revision are equivalent document activities',()=>{assert.equal(activityIssues('update insurance language; distribute','Revise insurance language; circulate revisions.').ok,true);});
