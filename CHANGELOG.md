@@ -8,6 +8,10 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-11-16
+
+- Blocked on 1 item, nothing implemented. "Split into Tasks" narrative has no hours: the Microsoft client is set to block billing (`task_billing = 0`), which leaves hours out of the narrative on purpose. Waiting on David to confirm turning task billing on for that client.
+
 ## 2026-11-01
 
 - Entry editor: a compact row shows when the timer behind the entry last started and stopped, and lets you fix either time. A timer left running can be stopped at an earlier time — even back in yesterday evening if it ran overnight (yesterday's entry is trimmed, today's overnight entry is cleared).
