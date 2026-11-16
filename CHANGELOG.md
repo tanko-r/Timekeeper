@@ -10,7 +10,7 @@ Newest entries first.
 
 ## 2026-11-16
 
-- Blocked on 1 item, nothing implemented. "Split into Tasks" narrative has no hours: the Microsoft client is set to block billing (`task_billing = 0`), which leaves hours out of the narrative on purpose. Waiting on David to confirm turning task billing on for that client.
+- "Split into Tasks" narrative had no hours because the Microsoft client was set to block billing. Task billing is now on for Microsoft (client id 2, the only Microsoft client), so its narratives show hours like (0.3) and update as task lines change. Data change only, no code change.
 
 ## 2026-11-01
 
