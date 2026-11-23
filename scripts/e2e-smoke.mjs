@@ -1259,6 +1259,56 @@ await step('/ opens the timer search bar; narrows in place; Esc restores', async
     document.activeElement && document.activeElement.classList.contains('timer-card'), { timeout: 4000 });
 });
 
+await step('timer search flips to All; a tab clicked mid-search sticks; Esc restores the saved tab', async () => {
+  // 2026-11-23 feedback: typing a search on a non-All tab must show All, even
+  // when that tab has hits of its own.
+  const onTab = () => page.$eval('.timer-tab.on .timer-tab-label', (el) => el.textContent);
+  const startTab = await onTab();
+  // a non-All tab that has at least one card, so its own hits exist
+  const tabLabel = await page.$$eval('.timer-tab', (bs) => {
+    const b = bs.find((x) => !x.textContent.startsWith('All')
+      && Number(x.querySelector('.timer-tab-count')?.textContent) > 0);
+    return b && b.querySelector('.timer-tab-label').textContent;
+  });
+  if (!tabLabel) throw new Error('no non-All tab with cards to test from');
+  await clickText('.timer-tab', tabLabel);
+  await page.waitForFunction((l) => document.querySelector('.timer-tab.on .timer-tab-label')?.textContent === l,
+    { timeout: 4000 }, tabLabel);
+  const hit = await page.$eval('.timer-board .timer-card .timer-name', (el) => el.textContent);
+
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  await page.keyboard.press('/');
+  await waitFor('.timer-search');
+  await page.keyboard.type(hit, { delay: 10 });
+  await page.waitForFunction(() => document.querySelector('.timer-tab.on .timer-tab-label')?.textContent === 'All',
+    { timeout: 4000 });
+
+  // clicking the tab during the search narrows to it
+  await clickText('.timer-tab', tabLabel);
+  await page.waitForFunction((l) => document.querySelector('.timer-tab.on .timer-tab-label')?.textContent === l,
+    { timeout: 4000 }, tabLabel);
+
+  // Esc clears the search; the saved tab is still the one shown
+  await page.focus('.timer-search');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.timer-search'), { timeout: 4000 });
+  if ((await onTab()) !== tabLabel) throw new Error(`after Esc expected ${tabLabel}, got ${await onTab()}`);
+
+  // a fresh search flips to All again (the mid-search click doesn't carry over)
+  await page.evaluate(() => { document.activeElement?.blur(); });
+  await page.keyboard.press('/');
+  await waitFor('.timer-search');
+  await page.keyboard.type(hit, { delay: 10 });
+  await page.waitForFunction(() => document.querySelector('.timer-tab.on .timer-tab-label')?.textContent === 'All',
+    { timeout: 4000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.timer-search'), { timeout: 4000 });
+  if ((await onTab()) !== tabLabel) throw new Error(`after 2nd Esc expected ${tabLabel}, got ${await onTab()}`);
+  await clickText('.timer-tab', startTab); // leave the board as later steps expect
+  await page.waitForFunction((l) => document.querySelector('.timer-tab.on .timer-tab-label')?.textContent === l,
+    { timeout: 4000 }, startTab);
+});
+
 await step('calendar renders month grid with data', async () => {
   await page.goto(`${base}/#/calendar`, { waitUntil: 'networkidle0' });
   await waitFor('.cal-grid');

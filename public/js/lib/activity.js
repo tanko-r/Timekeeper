@@ -42,3 +42,22 @@ export function landingTab({ grouping, saved, savedDay, today }) {
   if (grouping === 'group') return saved && savedDay === today ? saved : 'act-recent';
   return saved || 'all';
 }
+
+// Which timer tab the grid actually shows, given the saved one.
+// - A saved tab that isn't in the current tab list (deleted group, client
+//   filtered away, never saved) falls back to All.
+// - Starting a search flips to All so every hit is visible (2026-11-23
+//   feedback), even when the current tab has hits of its own. A tab clicked
+//   DURING the search is honored, so the hits can still be narrowed.
+// - A clicked tab the search empties jumps to All when hits exist elsewhere;
+//   with no hits anywhere it stays put (2026-07-17 feedback).
+// All of it is transient: clearing the search shows the saved tab again.
+export function effectiveTimerTab({
+  activeTab, tabKeys, filtering, pickedDuringSearch, currentTabCount, matchCount,
+}) {
+  if (!tabKeys.includes(activeTab)) return 'all';
+  if (!filtering || activeTab === 'all') return activeTab;
+  if (!pickedDuringSearch) return 'all';
+  if (currentTabCount === 0 && matchCount > 0) return 'all';
+  return activeTab;
+}

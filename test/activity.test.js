@@ -1,7 +1,7 @@
 process.env.TZ = 'America/Los_Angeles';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { lastActivityMs, activityWindows, inWindow, landingTab } from '../public/js/lib/activity.js';
+import { lastActivityMs, activityWindows, inWindow, landingTab, effectiveTimerTab } from '../public/js/lib/activity.js';
 
 // Wed 2026-07-15 15:00 local
 const NOW = new Date(2026, 6, 15, 15, 0, 0).getTime();
@@ -70,4 +70,36 @@ test('landingTab (group view): no saved day (older browsers) or no saved tab lan
 test('landingTab (by-client view): keeps its saved tab across days, defaults to All', () => {
   assert.equal(landingTab({ grouping: 'client', saved: 'c-9', savedDay: '2026-10-01', today: '2026-10-06' }), 'c-9');
   assert.equal(landingTab({ grouping: 'client', saved: null, savedDay: null, today: '2026-10-06' }), 'all');
+});
+
+// effectiveTimerTab — which tab the grid actually shows (2026-11-23 feedback:
+// a search flips to All so every hit is visible).
+const TABS = ['all', 'act-today', 'act-recent', 'group-1', 'group-2'];
+const tabOf = (o) => effectiveTimerTab({
+  activeTab: 'group-1', tabKeys: TABS, filtering: false, pickedDuringSearch: false,
+  currentTabCount: 3, matchCount: 5, ...o,
+});
+
+test('effectiveTimerTab: no search shows the saved tab', () => {
+  assert.equal(tabOf({}), 'group-1');
+  assert.equal(tabOf({ activeTab: 'act-recent' }), 'act-recent');
+});
+
+test('effectiveTimerTab: a saved tab missing from the tab list falls back to All', () => {
+  assert.equal(tabOf({ activeTab: 'group-9' }), 'all');
+});
+
+test('effectiveTimerTab: starting a search flips to All even when the current tab has hits', () => {
+  assert.equal(tabOf({ filtering: true }), 'all');
+  assert.equal(tabOf({ filtering: true, activeTab: 'act-recent' }), 'all');
+});
+
+test('effectiveTimerTab: a tab clicked during the search is honored', () => {
+  assert.equal(tabOf({ filtering: true, pickedDuringSearch: true }), 'group-1');
+});
+
+test('effectiveTimerTab: a clicked tab the search empties still jumps to All when hits exist elsewhere', () => {
+  assert.equal(tabOf({ filtering: true, pickedDuringSearch: true, activeTab: 'act-today', currentTabCount: 0 }), 'all');
+  // nothing matches anywhere: stays put (2026-07-17 rule)
+  assert.equal(tabOf({ filtering: true, pickedDuringSearch: true, activeTab: 'act-today', currentTabCount: 0, matchCount: 0 }), 'act-today');
 });

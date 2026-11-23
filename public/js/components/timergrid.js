@@ -8,7 +8,7 @@ import { TimerImport } from '/js/components/timerimport.js';
 import { StopChips } from '/js/components/stopchips.js';
 import { longRunNotifications } from '/js/lib/notify.js';
 import { startAlignedTick } from '/js/lib/tick.js';
-import { activityWindows, lastActivityMs, inWindow, landingTab } from '/js/lib/activity.js';
+import { activityWindows, lastActivityMs, inWindow, landingTab, effectiveTimerTab } from '/js/lib/activity.js';
 import { compareTimersAZ, groupTimersByClient } from '/js/lib/timersort.js';
 
 // Round-2 timer dashboard: collapsible groups, dense cards, right-click menu,
@@ -160,6 +160,10 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
   const [gridFilter, setGridFilter] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef(null);
+  // Set when a tab is clicked while a search is live, so that click wins
+  // over the "search shows All" rule; cleared whenever the search empties.
+  const [tabPickedDuringSearch, setTabPickedDuringSearch] = useState(false);
+  useEffect(() => { if (!gridFilter.trim()) setTabPickedDuringSearch(false); }, [gridFilter]);
 
   const reload = useCallback(async () => {
     const [t, g] = await Promise.all([api.get('/api/timers'), api.get('/api/timer-groups')]);
@@ -633,20 +637,21 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
         label: sec.label ?? 'Ungrouped', unnamedClient: sec.unnamedClient,
       })),
   ];
-  // Falls back to "All" whenever the persisted/stale tab key isn't in the
-  // current tab list — covers a deleted group, a client filtered to zero
-  // matches, or simply never having a stored tab for this mode.
-  let effectiveTab = tabList.some((t) => t.key === activeTab) ? activeTab : 'all';
-  // A live filter that empties the current tab (an activity tab keeps its slot
-  // even at count 0) but still matches timers elsewhere jumps to "All" so the
-  // hits are visible; when nothing matches anywhere it stays put (2026-07-17
-  // feedback). Transient — clearing the filter restores the persisted tab.
-  if (norm && effectiveTab !== 'all' && shown.length > 0) {
-    const curList = ACTIVITY[effectiveTab]
-      ? activityList(effectiveTab)
-      : (sections.find((sec) => sec.key === effectiveTab)?.list ?? []);
-    if (curList.length === 0) effectiveTab = 'all';
-  }
+  // Which tab is actually shown — rules in lib/activity.js (pure,
+  // unit-tested): a stale saved tab falls back to All, and a live search
+  // flips to All (2026-11-23 feedback) unless a tab was clicked during it.
+  // Transient — clearing the filter restores the persisted tab.
+  const curTabCount = (key) => (ACTIVITY[key]
+    ? activityList(key)
+    : (sections.find((sec) => sec.key === key)?.list ?? [])).length;
+  const effectiveTab = effectiveTimerTab({
+    activeTab,
+    tabKeys: tabList.map((t) => t.key),
+    filtering: !!norm,
+    pickedDuringSearch: tabPickedDuringSearch,
+    currentTabCount: curTabCount(activeTab),
+    matchCount: shown.length,
+  });
   const activeSection = tabsEnabled && effectiveTab !== 'all'
     ? sections.find((sec) => sec.key === effectiveTab) : null;
   // 2026-09-15/16 feedback: the time-based tabs (Today/Yesterday/Week/Recent)
@@ -842,7 +847,7 @@ export function TimerGrid({ settings, onEntryChanged, openEditor }) {
             <button class=${'timer-tab' + (effectiveTab === tab.key ? ' on' : '')}
               role="tab" aria-selected=${effectiveTab === tab.key}
               title=${tab.activity ? { 'act-today': 'Timers that ran today', 'act-yesterday': 'Timers last used yesterday (not yet today)', 'act-week': 'Timers that ran this week (Mon–)', 'act-recent': 'Timers used in the last two weeks' }[tab.key] : undefined}
-              onClick=${() => setActiveTab(tab.key)}
+              onClick=${() => { setActiveTab(tab.key); if (norm) setTabPickedDuringSearch(true); }}
               onDragOver=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => e.preventDefault() : undefined}
               onDrop=${byGroupMode && tab.key !== 'all' && !tab.activity ? (e) => { e.preventDefault(); guard(dropOn({ kind: 'group', groupId: tab.group ? tab.group.id : null })); } : undefined}>
               <span class="timer-tab-label">${tab.label}</span>

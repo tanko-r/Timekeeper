@@ -8,6 +8,10 @@ authoritative record of what actually happened on the last run.
 
 Newest entries first.
 
+## 2026-11-23
+
+- Timer search now always shows the **All** tab, so every match is visible — even when the tab you were on had matches of its own. You can still click a tab during the search to narrow the matches. Clearing the search (Esc) brings back the tab you were on.
+
 ## 2026-11-16
 
 - "Split into Tasks" narrative had no hours because the Microsoft client was set to block billing. Task billing is now on for Microsoft (client id 2, the only Microsoft client), so its narratives show hours like (0.3) and update as task lines change. Data change only, no code change.
